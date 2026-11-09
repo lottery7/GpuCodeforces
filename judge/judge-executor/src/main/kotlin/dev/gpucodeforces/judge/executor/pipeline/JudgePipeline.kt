@@ -25,6 +25,8 @@ import dev.gpucodeforces.judge.executor.problem.ProblemPreparationException
 import dev.gpucodeforces.judge.executor.problem.ProblemStore
 import dev.gpucodeforces.judge.executor.run.HarnessRunner
 import dev.gpucodeforces.judge.executor.run.RunOutcome
+import dev.gpucodeforces.judge.executor.sandbox.Sandbox
+import dev.gpucodeforces.judge.executor.util.FileTrees
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Timer
 import java.io.IOException
@@ -59,8 +61,8 @@ class JudgePipeline(
     fun process(job: JudgeJob, attempt: Int): Disposition {
         inFlight.incrementAndGet()
         val started = System.nanoTime()
-        val reporter = JobReporter(job.submissionId, attempt, props.id, publisher, clock)
-        val runDir = props.paths.work.resolve("${job.submissionId}-a$attempt")
+        val reporter = JobReporter(job.submissionId, attempt, source = props.id, publisher, clock)
+        var runDir: Path? = null
         var keepRunDir = false
         val cancelled = { cancels.isCancelled(job.submissionId) }
         log.info(
@@ -71,7 +73,7 @@ class JudgePipeline(
         try {
             if (cancelled()) return finish(reporter, started, JudgeResult(Verdict.CANCELLED, message = "Cancelled"))
             val errors = SpecValidator.validateSubmission(
-                SubmissionRequest(job.submissionId, job.problem, job.source, job.gpuProfile),
+                SubmissionRequest(job.submissionId, job.problem, source = job.source, gpuProfile = job.gpuProfile),
             )
             if (errors.isNotEmpty() || job.gpuProfile != props.gpuProfile) {
                 log.error("Invalid job rejected: profile={} errors={}", job.gpuProfile, errors)
@@ -87,14 +89,15 @@ class JudgePipeline(
                 )
             }
 
-            // 1. Build
             reporter.status(SubmissionStatus.COMPILING)
-            if (runDir.exists()) runDir.toFile().deleteRecursively()
-            Files.createDirectories(runDir)
-            Builder.makeWorldWritable(runDir)
+            // Created only now: the submission id is part of the name and has just been validated. A fresh name per
+            // delivery keeps a redelivered or re-posted submission away from the directory of a run still in flight.
+            val dir = Files.createTempDirectory(Files.createDirectories(props.paths.work), "${job.submissionId}-a$attempt-")
+            runDir = dir
+            FileTrees.makeReadableByAll(dir)
             val timingMode = job.problem.timing.effectiveMode(job.problem.signature)
             val policy = EffectivePolicy.of(props.profile.policy, job.problem.policy, timingMode)
-            val build = timed("compile") { builder.build(job.source, job.problem.signature, job.problem.compile, policy, runDir) }
+            val build = timed("compile") { builder.build(job.source, job.problem.signature, job.problem.compile, policy, dir) }
             when (build) {
                 is BuildOutcome.CompileError -> {
                     log.info("Compilation error: {}", build.message)
@@ -111,45 +114,45 @@ class JudgePipeline(
             }
             if (cancelled()) return finish(reporter, started, JudgeResult(Verdict.CANCELLED, message = "Cancelled"))
 
-            // 2. Tests (generated once per problem version)
             val prepared = timed("prepare") {
                 problems.acquire(job.problem, onPreparing = { reporter.status(SubmissionStatus.PREPARING) }, cancelled = cancelled)
             }
             try {
-                // 3. Run on an exclusive GPU
                 val total = prepared.tests.size
                 reporter.progress(0, total)
                 val slot = gpus.pool.acquire(job.submissionId, Duration.ofMinutes(2), cancelled)
                 var outcome: RunOutcome? = null
                 MDC.put("gpu", slot.index.toString())
                 try {
-                    outcome = timed("run") {
-                        runner.run(job.problem, prepared, build.binary, runDir, slot, { reporter.progress(it, total) }, cancelled)
+                    val o = timed("run") {
+                        runner.run(job.problem, prepared, binary = build.binary, runDir = dir, slot, onTestStart = { reporter.progress(it, total) }, cancelled)
                     }
+                    outcome = o
+                    if (o.verdict == Verdict.INTERNAL_ERROR) {
+                        keepRunDir = true
+                        log.error("Internal error while running: {}", o.internalReason)
+                        if (o.retryable && attempt < Topology.JOB_DELIVERY_LIMIT) return requeue("run failed: ${o.internalReason}")
+                    }
+                    val result = JudgeResult(
+                        verdict = o.verdict,
+                        failedTest = o.failedTest,
+                        message = o.message,
+                        compileLog = build.compileLog.ifBlank { null },
+                        tests = o.tests,
+                        maxTimeMs = o.tests.filter { it.verdict == Verdict.ACCEPTED }.mapNotNull { it.timeMs }.maxOrNull(),
+                        timingMode = timingMode,
+                        gpu = gpuInfo(slot, o),
+                    )
+                    return finish(reporter, started, result)
                 } finally {
+                    // The verdict is already published: the probe creates a CUDA context, and the contestant
+                    // should not wait for it. The GPU stays taken until it is known to be usable.
                     if (outcome == null || outcome.needsHealthCheck) {
                         gpus.checkAfterFailure(slot, "${outcome?.verdict ?: "exception"} of ${job.submissionId}")
                     }
                     gpus.pool.release(slot)
                     MDC.remove("gpu")
                 }
-                val o = outcome
-                if (o.verdict == Verdict.INTERNAL_ERROR) {
-                    keepRunDir = true
-                    log.error("Internal error while running: {}", o.internalReason)
-                    if (o.retryable && attempt < Topology.JOB_DELIVERY_LIMIT) return requeue("run failed: ${o.internalReason}")
-                }
-                val result = JudgeResult(
-                    verdict = o.verdict,
-                    failedTest = o.failedTest,
-                    message = o.message,
-                    compileLog = build.compileLog.ifBlank { null },
-                    tests = o.tests,
-                    maxTimeMs = o.tests.filter { it.verdict == Verdict.ACCEPTED }.mapNotNull { it.timeMs }.maxOrNull(),
-                    timingMode = timingMode,
-                    gpu = gpuInfo(slot, o),
-                )
-                return finish(reporter, started, result)
             } finally {
                 problems.release(prepared.hash)
             }
@@ -225,24 +228,22 @@ class JudgePipeline(
         }
     }
 
-    private fun cleanup(runDir: Path, keep: Boolean) {
+    /** The run directory held files written by the solution: see [FileTrees] for why nothing here follows links. */
+    private fun cleanup(runDir: Path?, keep: Boolean) {
+        if (runDir == null) return
         try {
-            if (!runDir.exists()) return
             if (keep) {
                 val failed = Files.createDirectories(props.paths.failed)
                 val target = failed.resolve(runDir.name)
-                if (target.exists()) target.toFile().deleteRecursively()
-                runDir.resolve("out").toFile().deleteRecursively() // outputs can be huge
+                FileTrees.delete(runDir.resolve("out")) // outputs can be huge
                 // not Files.move: work is usually tmpfs and failed is a disk, and a directory cannot be moved across file stores
-                runDir.toFile().copyRecursively(target.toFile())
-                runDir.toFile().deleteRecursively()
-                runDir.resolveSibling(runDir.name + ".nsjail.log").takeIf { it.exists() }?.let { Files.move(it, failed.resolve(it.name)) }
+                FileTrees.copyRegularFiles(runDir, target, FAILED_RUN_BYTES)
+                Sandbox.logFile(runDir).takeIf { it.exists() }?.let { Files.move(it, Sandbox.logFile(target)) }
                 log.warn("Run directory kept for investigation: {}", target)
                 pruneFailed(failed)
-            } else {
-                runDir.toFile().deleteRecursively()
-                Files.deleteIfExists(runDir.resolveSibling(runDir.name + ".nsjail.log"))
             }
+            FileTrees.delete(runDir)
+            Sandbox.deleteLog(runDir)
         } catch (e: IOException) {
             log.warn("Cleanup of {} failed", runDir, e)
         }
@@ -252,8 +253,13 @@ class JudgePipeline(
         val entries = Files.list(dir).use { s -> s.filter { Files.isDirectory(it) }.toList() }
             .sortedByDescending { Files.getLastModifiedTime(it).toMillis() }
         entries.drop(props.run.keepFailedRuns).forEach {
-            it.toFile().deleteRecursively()
-            Files.deleteIfExists(it.resolveSibling(it.name + ".nsjail.log"))
+            FileTrees.delete(it)
+            Sandbox.deleteLog(it)
         }
+    }
+
+    private companion object {
+        /** A kept run directory holds the binary, the manifest and logs: megabytes. */
+        const val FAILED_RUN_BYTES = 64L shl 20
     }
 }

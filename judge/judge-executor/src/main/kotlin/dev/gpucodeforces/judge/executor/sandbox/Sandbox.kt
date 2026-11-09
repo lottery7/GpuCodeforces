@@ -1,14 +1,19 @@
 package dev.gpucodeforces.judge.executor.sandbox
 
-import dev.gpucodeforces.judge.executor.util.BoundedBuffer
-import dev.gpucodeforces.judge.executor.util.ProcResult
 import dev.gpucodeforces.judge.executor.util.Proc
+import dev.gpucodeforces.judge.executor.util.ProcResult
+import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
-import java.util.concurrent.TimeUnit
+import kotlin.io.path.exists
+import kotlin.io.path.name
+import kotlin.io.path.readText
 
 /** GPU made visible inside the sandbox. */
-data class GpuAccess(val cudaIndex: Int, val deviceNode: String?)
+data class GpuAccess(val cudaIndex: Int, val deviceNode: String?) {
+    /** Makes CUDA see exactly this GPU. */
+    fun cudaEnv(): Map<String, String> = mapOf("CUDA_DEVICE_ORDER" to "PCI_BUS_ID", "CUDA_VISIBLE_DEVICES" to cudaIndex.toString())
+}
 
 data class SandboxSpec(
     /** Command with paths as seen inside the sandbox (use [Sandbox.inside]). */
@@ -23,6 +28,11 @@ data class SandboxSpec(
     val wallTimeLimit: Duration,
     /** Enforced by cgroups when enabled; the caller also polls RSS. */
     val memoryLimitBytes: Long? = null,
+    /**
+     * RLIMIT_AS. Works without cgroups, but only for processes that do not reserve address space they never
+     * touch: fine for compilers, impossible for anything that initialises CUDA.
+     */
+    val addressSpaceBytes: Long? = null,
     /** RLIMIT_FSIZE. */
     val maxFileBytes: Long = 1L shl 30,
     /** Size of the private /tmp. */
@@ -39,24 +49,22 @@ interface Sandbox {
     fun inside(spec: SandboxSpec, host: Path): String
 
     /** Runs to completion, capturing bounded stdout/stderr (used for compilation). */
-    fun runToCompletion(spec: SandboxSpec, timeout: Duration, maxOutputBytes: Int): ProcResult {
-        val started = System.nanoTime()
-        val process = start(spec)
-        val out = BoundedBuffer(maxOutputBytes)
-        val err = BoundedBuffer(maxOutputBytes)
-        val t1 = out.drain(process.inputStream, "sbx-out")
-        val t2 = err.drain(process.errorStream, "sbx-err")
-        val finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS)
-        if (!finished) Proc.killTree(process)
-        process.waitFor(5, TimeUnit.SECONDS)
-        t1.join(2000)
-        t2.join(2000)
-        val ms = (System.nanoTime() - started) / 1_000_000
-        return ProcResult(spec.command, if (finished) process.exitValue() else -9, out.text(), err.text(), !finished, ms)
-    }
+    fun runToCompletion(spec: SandboxSpec, timeout: Duration, maxOutputBytes: Int): ProcResult =
+        Proc.await(start(spec), spec.command, timeout, maxOutputBytes)
 
     companion object {
         const val WORK = "/work"
+
+        /** Where the sandbox writes its own diagnostics for [workDir]: next to it, out of the sandboxed code's reach. */
+        fun logFile(workDir: Path): Path = workDir.resolveSibling(workDir.name + ".nsjail.log")
+
+        /** Tail of [logFile], or null if the sandbox wrote nothing. */
+        fun logTail(workDir: Path): String? =
+            logFile(workDir).takeIf { it.exists() }?.readText()?.takeLast(2000)?.ifBlank { null }
+
+        fun deleteLog(workDir: Path) {
+            Files.deleteIfExists(logFile(workDir))
+        }
     }
 }
 

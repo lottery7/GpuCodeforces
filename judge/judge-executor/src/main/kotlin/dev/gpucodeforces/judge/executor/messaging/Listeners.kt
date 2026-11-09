@@ -128,10 +128,6 @@ class HeartbeatPublisher(
 
     @Scheduled(fixedDelayString = "\${judge.executor.health-check-interval:10s}")
     fun healthCheck() {
-        try {
-            gpus.periodicCheck()
-        } catch (e: Exception) {
-            log.error("GPU health check failed", e)
-        }
+        gpus.periodicCheck()
     }
 }

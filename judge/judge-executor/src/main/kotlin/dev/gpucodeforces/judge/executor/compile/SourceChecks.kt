@@ -34,17 +34,20 @@ object SourceChecks {
         return violations
     }
 
-    /** Headers actually opened by the compiler (from the -MD dependency file). */
+    /**
+     * Headers actually opened by the compiler (from the -MD dependency file). Unlike the source scan this cannot
+     * be fooled by macros or by a path that merely looks allowed.
+     */
     fun checkDependencies(depFile: String, policy: EffectivePolicy): List<String> {
         val paths = parseDepFile(depFile)
         return paths.drop(1) // first entry is the source itself
-            .mapNotNull { p -> policy.forbiddenPathFragments.firstOrNull { p.contains(it) }?.let { p } }
+            .filter { p -> policy.forbiddenPathFragments.any { it in p } || policy.forbiddenHeaders.any { p.endsWith("/$it") } }
             .distinct()
             .map { "uses a forbidden library header: ${it.substringAfter("/include/")}" }
     }
 
     fun parseDepFile(text: String): List<String> =
-        text.replace("\\\n", " ").substringAfter(':').split(Regex("\\s+")).filter { it.isNotBlank() && it != "\\" }
+        text.replace("\\\n", " ").substringAfter(':').split(WHITESPACE).filter { it.isNotBlank() && it != "\\" }
 
     /** Opcodes of `cuobjdump -sass` output, e.g. FFMA, HMMA, LDG. */
     fun sassOpcodes(cuobjdump: String): Set<String> = buildSet {
@@ -57,27 +60,28 @@ object SourceChecks {
     fun checkSass(opcodes: Set<String>, policy: EffectivePolicy): List<String> =
         opcodes.filter { it in policy.forbiddenSass }.sorted().map { "device code uses forbidden instruction $it" }
 
-    /** `nm` output lines: "                 U cudaMalloc" / "0000000000000000 T _Z5solvePKfPfi". */
+    /**
+     * `nm` output lines: "                 U cudaMalloc" / "0000000000000000 T _Z5solvePKfPfi". A line without an
+     * address is a reference to a symbol defined elsewhere, whatever its type letter (U, w, v).
+     */
     fun parseNm(nm: String): Pair<Set<String>, Set<String>> {
-        val undefined = HashSet<String>()
-        val defined = HashSet<String>()
+        val undefined = mutableSetOf<String>()
+        val defined = mutableSetOf<String>()
         for (line in nm.lineSequence()) {
-            val parts = line.trim().split(Regex("\\s+"))
+            val parts = line.trim().split(WHITESPACE)
             when {
-                parts.size == 2 && (parts[0] == "U" || parts[0] == "w") -> undefined += parts[1]
+                parts.size == 2 -> undefined += parts[1]
                 parts.size == 3 && parts[1].length == 1 && parts[1][0].isUpperCase() && parts[1] != "U" -> defined += parts[2]
             }
         }
         return undefined to defined
     }
 
-    fun checkSymbols(undefined: Set<String>, defined: Set<String>, policy: EffectivePolicy): List<String> = buildList {
-        undefined.filter { s -> policy.forbiddenUndefinedSymbols.any { it.matches(s) } }.sorted()
-            .forEach { add("calls forbidden function $it") }
-        defined.filter { s -> policy.forbiddenDefinedSymbols.any { it.matches(s) } }.sorted()
-            .forEach { add("defines reserved symbol $it") }
-    }
+    fun checkSymbols(undefined: Set<String>, defined: Set<String>, policy: EffectivePolicy): List<String> =
+        undefined.filter { s -> policy.forbiddenUndefinedSymbols.any { it.matches(s) } }.sorted().map { "calls forbidden function $it" } +
+            defined.filter { s -> policy.forbiddenDefinedSymbols.any { it.matches(s) } }.sorted().map { "defines reserved symbol $it" }
 
+    private val WHITESPACE = Regex("\\s+")
     private val INCLUDE_ARG = Regex("""([<"])([^<>"]+)[>"]\s*""")
     private val ASM = Regex("""(?<![\w$])(asm|__asm__|__asm)(?![\w$])""")
     private val SASS_LINE = Regex("""/\*[0-9a-f]{4,}\*/\s+(?:@!?U?P[T0-9]+\s+)?([A-Z][A-Z0-9_]*)""")
@@ -101,19 +105,15 @@ object SourceChecks {
                     out.append(' ')
                     i = stop
                 }
-                c == '"' || c == '\'' -> {
-                    val end = literalEnd(s, i)
-                    out.append(s, i, end)
-                    i = end
-                }
-                c == 'R' && i + 1 < s.length && s[i + 1] == '"' && (i == 0 || !s[i - 1].isLetterOrDigit()) -> {
-                    val end = rawLiteralEnd(s, i + 1)
-                    out.append(s, i, end)
-                    i = end
-                }
                 else -> {
-                    out.append(c)
-                    i++
+                    val end = literalEndAt(s, i)
+                    if (end == null) {
+                        out.append(c)
+                        i++
+                    } else {
+                        out.append(s, i, end)
+                        i = end
+                    }
                 }
             }
         }
@@ -125,14 +125,9 @@ object SourceChecks {
         val out = StringBuilder(s.length)
         var i = 0
         while (i < s.length) {
-            val c = s[i]
-            val end = when {
-                c == '"' || c == '\'' -> literalEnd(s, i)
-                c == 'R' && i + 1 < s.length && s[i + 1] == '"' && (i == 0 || !s[i - 1].isLetterOrDigit()) -> rawLiteralEnd(s, i + 1)
-                else -> -1
-            }
-            if (end < 0) {
-                out.append(c)
+            val end = literalEndAt(s, i)
+            if (end == null) {
+                out.append(s[i])
                 i++
             } else {
                 for (k in i until end) out.append(if (s[k] == '\n') '\n' else ' ')
@@ -140,6 +135,36 @@ object SourceChecks {
             }
         }
         return out.toString()
+    }
+
+    /**
+     * End of the string, char or raw string literal starting at [i], or null if none starts there. The scan has to
+     * agree with the compiler about where literals are: anything it wrongly takes for a literal or a comment
+     * hides the `#include` and `asm` that follow from the checks.
+     */
+    private fun literalEndAt(s: String, i: Int): Int? = when {
+        s[i] == '"' -> literalEnd(s, i)
+        // in 1'000'000 the quote separates digits and opens nothing
+        s[i] == '\'' -> if (isDigitSeparator(s, i)) null else literalEnd(s, i)
+        isRawStringStart(s, i) -> rawLiteralEnd(s, i + 1)
+        else -> null
+    }
+
+    private fun isDigitSeparator(s: String, quote: Int): Boolean {
+        var start = quote
+        while (start > 0 && (s[start - 1].isLetterOrDigit() || s[start - 1] == '_' || s[start - 1] == '\'' || s[start - 1] == '.')) start--
+        return start < quote && s[start].isDigit()
+    }
+
+    /** `R"` with an optional encoding prefix (u8, u, U, L) that is not the tail of an identifier. */
+    private fun isRawStringStart(s: String, i: Int): Boolean {
+        if (s[i] != 'R' || i + 1 >= s.length || s[i + 1] != '"') return false
+        val prefixStart = when {
+            i >= 2 && s[i - 2] == 'u' && s[i - 1] == '8' -> i - 2
+            i >= 1 && s[i - 1] in "uUL" -> i - 1
+            else -> i
+        }
+        return prefixStart == 0 || !(s[prefixStart - 1].isLetterOrDigit() || s[prefixStart - 1] == '_')
     }
 
     private fun literalEnd(s: String, start: Int): Int {

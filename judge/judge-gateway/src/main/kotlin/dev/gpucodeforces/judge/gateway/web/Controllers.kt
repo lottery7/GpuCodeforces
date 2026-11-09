@@ -45,7 +45,7 @@ class SubmissionController(private val service: SubmissionService) {
     }
 
     @DeleteMapping("/{submissionId}")
-    @Operation(summary = "Cancel a queued or running submission (best effort); a FINISHED event with CANCELLED follows if it was caught")
+    @Operation(summary = "Cancel a queued or running submission (best effort); a FINISHED event with CANCELLED follows if it was caught. 400 if the id is malformed")
     fun cancel(@PathVariable submissionId: String): ResponseEntity<Void> {
         service.cancel(submissionId)
         return ResponseEntity.accepted().build()

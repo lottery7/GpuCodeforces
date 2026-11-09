@@ -15,8 +15,21 @@ spring:
 
 judge:
   executor:
-    id: ${JUDGE_EXECUTOR_ID:${HOSTNAME:executor}}
+    # must be unique among all executors; without it the host name is used
+    id: ${JUDGE_EXECUTOR_ID:${HOSTNAME:}}
+    # The GPU type of this machine. Submissions are routed by this name, so the executor checks at startup that the
+    # card really is what the profile below describes. For another GPU set all three variables, e.g.
+    # JUDGE_GPU_PROFILE=rtx4090 JUDGE_GPU_ARCH=sm_89 JUDGE_GPU_NAME="NVIDIA GeForce RTX 4090".
     gpu-profile: ${JUDGE_GPU_PROFILE:rtx3060}
+    profile:
+      arch: ${JUDGE_GPU_ARCH:sm_86}
+      # device name as CUDA reports it (the executor logs it at startup); empty = any card of this architecture
+      gpu-name: ${JUDGE_GPU_NAME:NVIDIA GeForce RTX 3060}
+      policy:
+        # Opcodes forbidden on this GPU, e.g. [HMMA, IMMA] to ban tensor cores.
+        forbidden-sass: []
+        extra-allowed-headers: []
+        allow-inline-asm: false
     gpus:
       - index: 0
         # Stable timings: lock graphics clocks (MHz). Needs root, native Linux only. RTX 3060 base clock is 1320.
@@ -30,7 +43,7 @@ judge:
       harness: ${JUDGE_HARNESS_DIR:/opt/judge/harness}
       pytools: ${JUDGE_PYTOOLS_DIR:/opt/judge/pytools}
     toolchain:
-      # Pinned toolchain: the executor refuses to start if these do not match (see judge/toolchain.env).
+      # Pinned toolchain: the executor refuses to start if these do not match (see judge/deploy/executor.Dockerfile).
       expected-cuda-release: ${JUDGE_CUDA_RELEASE:12.8}
       expected-host-compiler-major: ${JUDGE_GCC_MAJOR:13}
       expected-torch-version: ${JUDGE_TORCH_VERSION:2.9.1}
@@ -45,14 +58,6 @@ judge:
       time-limit: 30s
     prepare:
       cache-budget-gb: ${JUDGE_TEST_CACHE_GB:40}
-    profiles:
-      rtx3060:
-        arch: sm_86
-        policy:
-          # Opcodes forbidden on this GPU, e.g. [HMMA, IMMA] to ban tensor cores.
-          forbidden-sass: []
-          extra-allowed-headers: []
-          allow-inline-asm: false
 
 management:
   endpoints:

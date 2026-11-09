@@ -1,5 +1,6 @@
 package dev.gpucodeforces.judge.executor.config
 
+import dev.gpucodeforces.judge.api.Topology
 import org.springframework.boot.context.properties.ConfigurationProperties
 import java.net.InetAddress
 import java.nio.file.Path
@@ -9,8 +10,13 @@ import java.time.Duration
 data class ExecutorProperties(
     /** Unique id of this executor in logs, events and heartbeats. Defaults to the hostname. */
     val id: String = defaultHostname(),
-    /** GPU profile served by this executor; it consumes `judge.jobs.<gpuProfile>`. Must exist in [profiles]. */
+    /**
+     * Name of the GPU type this executor serves, e.g. `rtx3060`: it consumes `judge.jobs.<gpuProfile>` and nothing
+     * else. [profile] says what hardware that name stands for.
+     */
     val gpuProfile: String = "rtx3060",
+    /** The GPU of this machine. Every executor of one [gpuProfile] has to describe it the same way. */
+    val profile: GpuProfileConfig = GpuProfileConfig(arch = "sm_86"),
     /** GPUs of this machine used for judging; one job runs on a GPU at a time. */
     val gpus: List<GpuSlotConfig> = listOf(GpuSlotConfig(0)),
     /** Jobs taken from the queue on top of the GPU count, so compilation overlaps with GPU work. */
@@ -23,14 +29,15 @@ data class ExecutorProperties(
     val compile: CompileConfig = CompileConfig(),
     val prepare: PrepareConfig = PrepareConfig(),
     val run: RunConfig = RunConfig(),
-    val profiles: Map<String, GpuProfileConfig> = mapOf("rtx3060" to GpuProfileConfig(arch = "sm_86")),
-    val heartbeatInterval: Duration = Duration.ofSeconds(5),
     /** How often an idle healthy GPU is probed; unhealthy GPUs are re-probed every [unhealthyProbeInterval]. */
     val idleProbeInterval: Duration = Duration.ofMinutes(5),
     val unhealthyProbeInterval: Duration = Duration.ofSeconds(30),
 ) {
-    val profile: GpuProfileConfig
-        get() = profiles[gpuProfile] ?: error("judge.executor.profiles has no entry for gpu-profile '$gpuProfile'")
+    init {
+        // the name becomes a queue name and a routing key shared with the gateway
+        require(Topology.isProfileName(gpuProfile)) { "judge.executor.gpu-profile '$gpuProfile' must match ${Topology.PROFILE_NAME}" }
+        require(id.isNotBlank()) { "judge.executor.id is blank: set JUDGE_EXECUTOR_ID to a name unique among all executors" }
+    }
 
     /** Concurrent consumers = GPUs + prefetch. */
     val capacity: Int get() = gpus.size + prefetchExtra
@@ -116,6 +123,11 @@ data class SandboxConfig(
     val maxOpenFiles: Int = 512,
     /** RLIMIT_STACK; also the default stack size of every thread the sandboxed process starts. */
     val stackLimitMb: Long = 64,
+    /**
+     * RLIMIT_NPROC: processes and threads of the sandbox uid. All sandboxes of an executor share the uid, so this
+     * covers the solution, the compilers and the test generator running at the same time.
+     */
+    val maxProcesses: Int = 2048,
 )
 
 data class CompileConfig(
@@ -154,8 +166,16 @@ data class RunConfig(
 )
 
 data class GpuProfileConfig(
-    /** nvcc architecture, e.g. sm_86. Code is generated for exactly this architecture (no PTX JIT). */
+    /**
+     * Architecture of the GPU, e.g. sm_86: what solutions are compiled for by default (no PTX JIT), and what the
+     * executor's GPU must report or it refuses to start.
+     */
     val arch: String,
+    /**
+     * Exact device name the GPU must report, e.g. "NVIDIA GeForce RTX 3060". The architecture alone does not
+     * identify a card (every RTX 30 is sm_86). Null = any card of [arch], with a warning at startup.
+     */
+    val gpuName: String? = null,
     val policy: ProfilePolicyConfig = ProfilePolicyConfig(),
 )
 

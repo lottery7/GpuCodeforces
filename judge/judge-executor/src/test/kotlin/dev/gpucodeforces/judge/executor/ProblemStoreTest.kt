@@ -65,6 +65,8 @@ class ProblemStoreTest {
             os.makedirs(out + "/inputs/t1")
             os.makedirs(out + "/expected/t1")
             open(out + "/inputs/t1/A.bin", "wb").write(bytes(16))
+            if behaviour == "extra":
+                open(out + "/inputs/t1/answers.bin", "wb").write(bytes(16))
             if behaviour == "symlink":
                 os.symlink(out + "/inputs/t1/A.bin", out + "/expected/t1/C.bin")
             else:
@@ -105,7 +107,14 @@ class ProblemStoreTest {
     fun `symlink in place of generated data is rejected`() {
         val e = assertFailsWith<ProblemPreparationException> { store().acquire(problem("symlink"), {}, { false }) }
         assertTrue(e.problemFault)
-        assertContains(e.message!!, "not a regular file")
+        assertContains(e.message!!, "unexpected expected/t1/C.bin")
+    }
+
+    @Test
+    fun `files the problem does not describe are rejected`() {
+        val e = assertFailsWith<ProblemPreparationException> { store().acquire(problem("extra"), {}, { false }) }
+        assertTrue(e.problemFault)
+        assertContains(e.message!!, "unexpected inputs/t1/answers.bin")
     }
 
     @Test

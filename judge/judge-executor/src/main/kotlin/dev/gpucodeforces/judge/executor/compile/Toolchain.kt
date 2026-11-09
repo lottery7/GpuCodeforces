@@ -2,6 +2,7 @@ package dev.gpucodeforces.judge.executor.compile
 
 import dev.gpucodeforces.judge.executor.config.ExecutorProperties
 import dev.gpucodeforces.judge.executor.util.Proc
+import org.intellij.lang.annotations.Language
 import org.slf4j.LoggerFactory
 import java.nio.file.Path
 import java.time.Duration
@@ -54,10 +55,7 @@ class Toolchain(private val props: ExecutorProperties) {
             }
         }
 
-        val torch = Proc.run(
-            listOf(tc.python, "-c", "import sys, torch; print(torch.__version__); print(torch.cuda.is_available()); print(sys.prefix)"),
-            Duration.ofSeconds(120),
-        )
+        val torch = Proc.run(listOf(tc.python, "-c", TORCH_PROBE), Duration.ofSeconds(120))
         if (torch.ok) {
             val lines = torch.stdout.lines().map { it.trim() }
             torchVersion = lines[0]
@@ -72,5 +70,11 @@ class Toolchain(private val props: ExecutorProperties) {
             check(torchVersion?.startsWith(it) == true) { "torch version mismatch: found $torchVersion, expected $it" }
         }
         log.info("Toolchain verified: {}", description)
+    }
+
+    private companion object {
+        /** Prints the torch version, whether CUDA is usable, and the interpreter's prefix, one per line. */
+        @Language("Python")
+        const val TORCH_PROBE = "import sys, torch; print(torch.__version__); print(torch.cuda.is_available()); print(sys.prefix)"
     }
 }

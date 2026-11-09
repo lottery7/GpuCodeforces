@@ -2,16 +2,21 @@ package dev.gpucodeforces.judge.executor.gpu
 
 import dev.gpucodeforces.judge.api.GpuSlotStatus
 import dev.gpucodeforces.judge.executor.config.GpuSlotConfig
+import dev.gpucodeforces.judge.executor.sandbox.GpuAccess
 import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.LinkedBlockingDeque
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
 
 class GpuSlot(val config: GpuSlotConfig) {
     val index: Int get() = config.index
 
     @Volatile var name: String = "GPU ${config.index}"
+
+    /** Architecture the GPU itself reports (`sm_86`), known after the first successful probe. */
+    @Volatile var arch: String? = null
     @Volatile var healthy: Boolean = false
     @Volatile var busyWith: String? = null
     @Volatile var clocksLocked: Boolean = false
@@ -19,7 +24,12 @@ class GpuSlot(val config: GpuSlotConfig) {
     @Volatile var unhealthyReason: String? = null
     var monitor: GpuMonitor? = null
 
-    fun status() = GpuSlotStatus(index, name, healthy, busyWith != null, busyWith, clocksLocked)
+    /** Serialises health probes of this GPU without making other GPUs wait. */
+    val probeLock = ReentrantLock()
+
+    fun status() = GpuSlotStatus(index, name, healthy = healthy, busy = busyWith != null, submissionId = busyWith, clocksLocked = clocksLocked)
+
+    fun access() = GpuAccess(index, config.deviceNode)
 
     override fun toString() = "gpu$index($name)"
 }
@@ -34,7 +44,7 @@ class GpuPool(val slots: List<GpuSlot>) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val free = LinkedBlockingDeque<GpuSlot>()
 
-    /** Called with the number of healthy GPUs whenever it changes between zero and non-zero. */
+    /** Called with "is any GPU healthy" whenever that changes. */
     @Volatile var onAvailabilityChange: (Boolean) -> Unit = {}
 
     fun healthyCount() = slots.count { it.healthy }
@@ -82,10 +92,7 @@ class GpuPool(val slots: List<GpuSlot>) {
         slot.healthy = false
         slot.unhealthyReason = reason
         free.remove(slot)
-        if (wasAny && healthyCount() == 0) {
-            log.error("No healthy GPUs left on this executor, pausing job consumption")
-            onAvailabilityChange(false)
-        }
+        if (wasAny && healthyCount() == 0) onAvailabilityChange(false)
     }
 
     /** Marks a non-busy slot healthy and makes it available. */

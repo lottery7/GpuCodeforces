@@ -14,6 +14,7 @@ import dev.gpucodeforces.judge.executor.config.ProfilePolicyConfig
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import org.intellij.lang.annotations.Language
 
 class BuildChecksTest {
     private val policy = EffectivePolicy.of(ProfilePolicyConfig(forbiddenSass = listOf("HMMA")), PolicyOverrides(), TimingMode.WALL)
@@ -63,6 +64,42 @@ class BuildChecksTest {
         assertEquals(1, SourceChecks.checkSource(src, policy).size)
         val allowed = EffectivePolicy.of(ProfilePolicyConfig(), PolicyOverrides(allowInlineAsm = true), TimingMode.WALL)
         assertEquals(emptyList(), SourceChecks.checkSource(src, allowed))
+    }
+
+    @Test
+    fun `scan agrees with the compiler about literals, so nothing after them is hidden`() {
+        fun seesTheInclude(@Language("C++") source: String) =
+            assertTrue(SourceChecks.checkSource(source, policy).any { "thrust/sort.h" in it }, source)
+
+        // 1'0 is a number with a digit separator, not the start of a char literal that would end inside '/*'
+        seesTheInclude(
+            """
+            int a = 1'0 + '/*';
+            #include <thrust/sort.h>
+            int b = '*/';
+            """.trimIndent(),
+        )
+        // LR"x(...)x" is a raw string: the quote and the /* inside it open nothing
+        seesTheInclude(
+            """
+            auto s = LR"x(" /*)x";
+            #include <thrust/sort.h>
+            auto t = "*/";
+            """.trimIndent(),
+        )
+    }
+
+    @Test
+    fun `an allowed prefix does not reach other headers through dot-dot`() {
+        val v = SourceChecks.checkSource("#include <cuda/../thrust/sort.h>", policy)
+        assertEquals(listOf("line 1: header <cuda/../thrust/sort.h> is not allowed"), v)
+    }
+
+    @Test
+    fun `headers a problem forbids are caught among the real dependencies too`() {
+        val p = EffectivePolicy.of(ProfilePolicyConfig(), PolicyOverrides(forbidHeaders = listOf("mma.h")), TimingMode.WALL)
+        val v = SourceChecks.checkDependencies("solution.o: solution.cu /usr/local/cuda/include/mma.h /usr/include/c++/13/vector", p)
+        assertEquals(listOf("uses a forbidden library header: mma.h"), v)
     }
 
     @Test

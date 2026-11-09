@@ -1,5 +1,8 @@
 package dev.gpucodeforces.judge.api
 
+import java.math.BigDecimal
+import java.math.BigInteger
+
 /**
  * Structural validation of problem specs and submissions. Used by the gateway (reject early with 400)
  * and again by executors (never trust the queue).
@@ -15,9 +18,18 @@ object SpecValidator {
         val maxMemoryLimitMb: Long = 32 * 1024,
         /** Max total number of inline sample values per test. */
         val maxInlineValues: Int = 100_000,
+        val maxGeneratorBytes: Int = 256 * 1024,
     )
 
+    /** Bounds on free-form fields, so no part of a request can be arbitrarily large. */
+    private const val MAX_NAME_LENGTH = 128
+    private const val MAX_SIZE_EXPRESSION_LENGTH = 256
+    private const val MAX_LIST_ENTRIES = 64
+
     private val ID = Regex("[A-Za-z0-9._-]{1,128}")
+
+    /** Submission and problem ids appear in file names, queue messages and logs. */
+    fun isValidId(id: String): Boolean = ID.matches(id)
     private val IDENT = Regex("[A-Za-z_][A-Za-z0-9_]{0,63}")
     private val RESERVED = setOf(
         "main", "alignas", "alignof", "asm", "auto", "bool", "break", "case", "catch", "char", "class", "const",
@@ -43,13 +55,17 @@ object SpecValidator {
         validateSignature(spec.signature, errors)
         if (errors.isNotEmpty()) return errors // tests can't be checked against a broken signature
 
+        if (spec.version.length > MAX_NAME_LENGTH) errors += "version is longer than $MAX_NAME_LENGTH characters"
         if (spec.generator.source.isBlank()) errors += "generator.source is empty"
+        val generatorBytes = spec.generator.source.toByteArray().size
+        if (generatorBytes > limits.maxGeneratorBytes) errors += "generator.source is $generatorBytes bytes, limit ${limits.maxGeneratorBytes}"
         if (spec.tests.isEmpty()) errors += "at least one test is required"
         if (spec.tests.size > limits.maxTests) errors += "too many tests: ${spec.tests.size} > ${limits.maxTests}"
-        val names = HashSet<String>()
+        val names = mutableSetOf<String>()
         spec.tests.forEachIndexed { i, t ->
-            val where = "tests[$i] '${t.name}'"
+            val where = "tests[$i] '${t.name.take(MAX_NAME_LENGTH)}'"
             if (t.name.isBlank()) errors += "tests[$i]: name is empty"
+            if (t.name.length > MAX_NAME_LENGTH) errors += "tests[$i]: name is longer than $MAX_NAME_LENGTH characters"
             if (!names.add(t.name)) errors += "$where: duplicate test name"
             validateTest(spec.signature, t, where, limits, errors)
         }
@@ -72,12 +88,17 @@ object SpecValidator {
             if (maxRuns !in 1..20) errors += "timing.maxRuns must be in 1..20"
         }
         with(spec.policy) {
-            (allowHeaders + forbidHeaders).filter { !HEADER.matches(it) }.forEach { errors += "policy: invalid header '$it'" }
-            (forbidSass + allowSass).filter { !SASS.matches(it) }.forEach { errors += "policy: invalid SASS opcode '$it'" }
+            if (listOf(allowHeaders, forbidHeaders, forbidSass, allowSass).any { it.size > MAX_LIST_ENTRIES }) {
+                errors += "policy: a list has more than $MAX_LIST_ENTRIES entries"
+            }
+            (allowHeaders + forbidHeaders).filter { !HEADER.matches(it) }.forEach { errors += "policy: invalid header '${it.take(MAX_NAME_LENGTH)}'" }
+            (forbidSass + allowSass).filter { !SASS.matches(it) }.forEach { errors += "policy: invalid SASS opcode '${it.take(MAX_NAME_LENGTH)}'" }
         }
         with(spec.compile) {
-            if (arch != null && !CompileSpec.isArch(arch)) errors += "compile.arch '$arch' is not an architecture like sm_86"
-            flags.orEmpty().filter { flag -> COMPILE_FLAGS.none { it.matches(flag) } }.forEach { errors += "compile: flag '$it' is not allowed" }
+            if (arch != null && !CompileSpec.isArch(arch)) errors += "compile.arch '${arch.take(MAX_NAME_LENGTH)}' is not an architecture like sm_86"
+            if (flags.orEmpty().size > MAX_LIST_ENTRIES) errors += "compile: more than $MAX_LIST_ENTRIES flags"
+            flags.orEmpty().filter { flag -> COMPILE_FLAGS.none { it.matches(flag) } }
+                .forEach { errors += "compile: flag '${it.take(MAX_NAME_LENGTH)}' is not allowed" }
         }
         return errors
     }
@@ -104,7 +125,8 @@ object SpecValidator {
             errors += "signature.function '${sig.function}' is not a valid name"
         }
         if (sig.params.isEmpty()) errors += "signature.params is empty"
-        val seen = HashSet<String>()
+        if (sig.params.size > MAX_LIST_ENTRIES) errors += "signature has more than $MAX_LIST_ENTRIES params"
+        val seen = mutableSetOf<String>()
         for (p in sig.params) {
             val where = "param '${p.name}'"
             if (!IDENT.matches(p.name) || p.name in RESERVED || p.name.startsWith("judge") || p.name.startsWith("__")) {
@@ -118,6 +140,9 @@ object SpecValidator {
                 if (p.memory == null) errors += "$where: memory (DEVICE/HOST) is required for arrays"
                 if (p.size == null) {
                     errors += "$where: size is required for arrays"
+                } else if (p.size.length > MAX_SIZE_EXPRESSION_LENGTH) {
+                    // the parser is recursive: an unbounded expression is an unbounded stack
+                    errors += "$where: size expression is longer than $MAX_SIZE_EXPRESSION_LENGTH characters"
                 } else {
                     try {
                         val expr = SizeExpr.parse(p.size)
@@ -161,6 +186,11 @@ object SpecValidator {
         for (p in sig.arrays) {
             val n = sizes.getValue(p.name)
             if (n < 0) errors += "$where: size of ${p.name} is negative ($n)"
+            // per array, so that a sum which overflows cannot wrap back under the limit
+            if (n > limits.maxTestBytes / p.type.bytes) {
+                errors += "$where: ${p.name} alone exceeds the limit of ${limits.maxTestBytes} bytes"
+                return
+            }
             bytes += n * p.type.bytes
         }
         if (bytes > limits.maxTestBytes) errors += "$where: test data is $bytes bytes, limit ${limits.maxTestBytes}"
@@ -187,8 +217,8 @@ object SpecValidator {
     }
 
     private fun isIntegral(v: Number): Boolean = when (v) {
-        is Int, is Long, is Short, is Byte, is java.math.BigInteger -> true
-        is java.math.BigDecimal -> v.stripTrailingZeros().scale() <= 0
+        is Int, is Long, is Short, is Byte, is BigInteger -> true
+        is BigDecimal -> v.stripTrailingZeros().scale() <= 0
         else -> v.toDouble().let { it.isFinite() && it == Math.rint(it) }
     }
 }

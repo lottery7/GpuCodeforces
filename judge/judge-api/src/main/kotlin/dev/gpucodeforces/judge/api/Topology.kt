@@ -8,6 +8,14 @@ object Topology {
     /** Quorum queue per GPU profile, consumed by executors of that profile (competing consumers). */
     fun jobsQueue(gpuProfile: String) = "judge.jobs.$gpuProfile"
 
+    /**
+     * What a GPU profile name may look like. The gateway and every executor spell the name independently and it
+     * ends up in a queue name, so both validate it against the same rule.
+     */
+    const val PROFILE_NAME = "[a-z0-9_-]+"
+
+    fun isProfileName(name: String): Boolean = Regex(PROFILE_NAME).matches(name)
+
     /** Jobs rejected too many times (poison messages) are dead-lettered here; the gateway reports them as INTERNAL_ERROR. */
     const val JOBS_DLX = "judge.jobs.dlx"
     const val JOBS_DEAD_QUEUE = "judge.jobs.dead"

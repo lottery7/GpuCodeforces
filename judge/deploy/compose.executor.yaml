@@ -1,0 +1,44 @@
+# One more judge executor on another machine, for another GPU type. It needs only the broker of the main
+# deployment (compose.yaml in the repository root); it takes submissions of its own GPU profile and nothing else.
+#
+#   RABBITMQ_HOST=10.0.0.5 RABBITMQ_USER=judge RABBITMQ_PASSWORD=... JUDGE_EXECUTOR_ID=gpu-node-2 \
+#   JUDGE_GPU_PROFILE=rtx4090 JUDGE_GPU_ARCH=sm_89 JUDGE_GPU_NAME="NVIDIA GeForce RTX 4090" \
+#   docker compose -f judge/deploy/compose.executor.yaml up -d --build
+#
+# The profile also has to be listed in JUDGE_GPU_PROFILES of the gateway. JUDGE_GPU_NAME is the device name CUDA
+# reports (`nvidia-smi --query-gpu=name --format=csv`): the executor refuses to start if the card is another one.
+services:
+  judge-executor:
+    build:
+      context: ../..
+      dockerfile: judge/deploy/executor.Dockerfile
+    # nsjail creates namespaces and mounts; clock locking needs root on the GPU
+    privileged: true
+    environment:
+      RABBITMQ_HOST: ${RABBITMQ_HOST:?address of the RabbitMQ of the main deployment}
+      RABBITMQ_USER: ${RABBITMQ_USER:?}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?}
+      JUDGE_GPU_PROFILE: ${JUDGE_GPU_PROFILE:?GPU type of this machine, e.g. rtx4090}
+      JUDGE_GPU_ARCH: ${JUDGE_GPU_ARCH:?architecture of the GPU, e.g. sm_89}
+      JUDGE_GPU_NAME: ${JUDGE_GPU_NAME:?device name of the GPU as CUDA reports it}
+      JUDGE_EXECUTOR_ID: ${JUDGE_EXECUTOR_ID:?unique among all executors, e.g. gpu-node-2}
+      JUDGE_LOCK_CLOCKS: ${JUDGE_LOCK_CLOCKS:-}
+      JUDGE_WORK_DIR: /run/judge/work
+      SPRING_PROFILES_ACTIVE: ${JUDGE_LOG_PROFILE:-default}
+    tmpfs:
+      # run directories (solution binary and outputs); not /dev/shm, which Docker mounts noexec
+      - /run/judge:exec,size=8g
+    volumes:
+      - judge-data:/var/lib/judge # compiled objects and generated tests survive restarts
+    ports:
+      - "127.0.0.1:8081:8081" # actuator: /actuator/health, /actuator/prometheus
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, compute, utility]
+
+volumes:
+  judge-data:

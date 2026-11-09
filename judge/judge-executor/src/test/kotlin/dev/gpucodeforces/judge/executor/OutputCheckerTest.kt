@@ -57,15 +57,25 @@ class OutputCheckerTest {
     }
 
     @Test
-    fun `fp16 conversion covers special values`() {
-        assertEquals(1.0f, OutputChecker.halfToFloat(0x3C00))
-        assertEquals(-2.0f, OutputChecker.halfToFloat(0xC000))
-        assertEquals(65504.0f, OutputChecker.halfToFloat(0x7BFF))
-        assertEquals(5.9604645E-8f, OutputChecker.halfToFloat(0x0001)) // smallest subnormal
-        assertEquals(6.097555E-5f, OutputChecker.halfToFloat(0x03FF)) // largest subnormal
-        assertEquals(-0.0f, OutputChecker.halfToFloat(0x8000))
-        assertEquals(Float.NEGATIVE_INFINITY, OutputChecker.halfToFloat(0xFC00))
-        assertTrue(OutputChecker.halfToFloat(0x7E00).isNaN())
+    fun `a symbolic link to the reference answer is not accepted as the output`() {
+        val exp = floats("e", 1f, 2f)
+        val link = Files.createSymbolicLink(dir.resolve("link"), exp)
+        val r = OutputChecker.check("C", DType.FLOAT32, link, exp, spec)
+        assertFalse(r.ok)
+        assertEquals("C: output was not produced", r.summary)
+    }
+
+    @Test
+    fun `mismatch far from the start of a large array is found and counted`() {
+        val n = 5_000_000 // more than one 16 MB chunk of float32
+        val data = ByteBuffer.allocate(n * 4).order(ByteOrder.LITTLE_ENDIAN)
+        repeat(n) { data.putFloat(it.toFloat()) }
+        val e = Files.write(dir.resolve("big-e"), data.array())
+        assertTrue(OutputChecker.check("C", DType.FLOAT32, e, e, spec).ok)
+        data.putFloat((n - 1) * 4, -1f)
+        val r = OutputChecker.check("C", DType.FLOAT32, Files.write(dir.resolve("big-a"), data.array()), e, spec)
+        assertEquals("C: 1 of $n elements differ", r.summary)
+        assertTrue(r.detail.startsWith("C[${n - 1}]: expected 4999999.0, got -1.0"), r.detail)
     }
 
     @Test

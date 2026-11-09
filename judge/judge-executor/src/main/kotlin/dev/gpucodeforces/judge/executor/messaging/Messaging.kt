@@ -58,38 +58,38 @@ class JobReporter(
     private val source: String,
     private val publisher: EventPublisher,
     private val clock: Clock,
-    private val minProgressInterval: Long = 250,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     private var seq = 0
     private var lastProgressAt = 0L
-    var lastStatus: SubmissionStatus? = null
-        private set
+    private var lastStatus: SubmissionStatus? = null
 
     @Synchronized
-    fun status(status: SubmissionStatus, progress: Progress? = null) {
-        send(status, progress, null)
+    fun status(status: SubmissionStatus) {
+        send(status, progress = null)
     }
 
     /** Test [current] (1-based, 0 = not started) of [total] is running. */
     @Synchronized
     fun progress(current: Int, total: Int) {
         val now = System.currentTimeMillis()
-        if (current != 0 && current != total && lastStatus == SubmissionStatus.TESTING && now - lastProgressAt < minProgressInterval) return
+        if (current != 0 && current != total && lastStatus == SubmissionStatus.TESTING && now - lastProgressAt < MIN_PROGRESS_INTERVAL_MS) return
         lastProgressAt = now
-        send(SubmissionStatus.TESTING, Progress(current, total), null)
+        send(SubmissionStatus.TESTING, Progress(current, total))
     }
 
     /** Must succeed: throws if the broker does not confirm, so the job is redelivered instead of losing the verdict. */
     @Synchronized
     fun finish(result: JudgeResult) {
-        val event = JudgeEvent(submissionId, attempt, ++seq, SubmissionStatus.FINISHED, clock.instant(), source, result = result)
-        publisher.publish(event, confirm = true)
+        publisher.publish(event(SubmissionStatus.FINISHED).copy(result = result), confirm = true)
         lastStatus = SubmissionStatus.FINISHED
     }
 
-    private fun send(status: SubmissionStatus, progress: Progress?, result: JudgeResult?) {
-        val event = JudgeEvent(submissionId, attempt, ++seq, status, clock.instant(), source, progress, result)
+    private fun event(status: SubmissionStatus) =
+        JudgeEvent(submissionId, attempt = attempt, seq = ++seq, status, clock.instant(), source = source)
+
+    private fun send(status: SubmissionStatus, progress: Progress?) {
+        val event = event(status).copy(progress = progress)
         try {
             publisher.publish(event, confirm = false)
             lastStatus = status
@@ -97,6 +97,10 @@ class JobReporter(
             // progress is best effort; the final event is published with confirmation in finish()
             log.warn("Failed to publish {} event (continuing)", status, e)
         }
+    }
+
+    private companion object {
+        const val MIN_PROGRESS_INTERVAL_MS = 250L
     }
 }
 

@@ -1,6 +1,7 @@
 package dev.gpucodeforces.judge.executor.gpu
 
 import dev.gpucodeforces.judge.executor.util.Proc
+import java.io.IOException
 import java.time.Duration
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicReference
@@ -12,12 +13,10 @@ data class GpuSample(
     val temperatureC: Int?,
     /** Thermal/power slowdown reasons active (bitmask from nvidia-smi, idle/app-clock bits ignored). */
     val throttled: Boolean?,
-    val nanoTime: Long,
 )
 
 /** Aggregates samples taken while a solution runs. */
 class GpuStats {
-    @Volatile var maxMemoryMb = 0L
     @Volatile var minSm: Int? = null
     @Volatile var maxSm: Int? = null
     @Volatile var maxTemp: Int? = null
@@ -25,7 +24,6 @@ class GpuStats {
 
     @Synchronized
     fun add(s: GpuSample) {
-        maxMemoryMb = maxOf(maxMemoryMb, s.memoryUsedMb)
         s.smClockMhz?.let { minSm = minOf(minSm ?: it, it); maxSm = maxOf(maxSm ?: it, it) }
         s.temperatureC?.let { maxTemp = maxOf(maxTemp ?: it, it) }
         s.throttled?.let { throttled = (throttled ?: false) || it }
@@ -79,7 +77,8 @@ class GpuMonitor(private val nvidiaSmi: String, private val index: Int, private 
                 process = p
                 p.inputStream.bufferedReader().useLines { lines -> lines.forEach { parse(it)?.let(::publish) } }
                 p.waitFor()
-            } catch (e: Exception) {
+            } catch (e: IOException) {
+                // also how stop() ends the loop: it kills nvidia-smi, which closes the stream being read
                 if (!stopped) log.warn("GPU {}: monitor failed, restarting", index, e)
             }
             if (!stopped) Thread.sleep(1000)
@@ -106,7 +105,7 @@ class GpuMonitor(private val nvidiaSmi: String, private val index: Int, private 
         val throttled = reasonsIdx.takeIf { it >= 0 }?.let { idx ->
             parts[idx].removePrefix("0x").toLongOrNull(16)?.let { it and SLOWDOWN_MASK != 0L }
         }
-        return GpuSample(mem, intAt("clocks.sm"), intAt("temperature.gpu"), throttled, System.nanoTime())
+        return GpuSample(mem, smClockMhz = intAt("clocks.sm"), temperatureC = intAt("temperature.gpu"), throttled)
     }
 
     companion object {

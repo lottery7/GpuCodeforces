@@ -5,10 +5,22 @@ POLICY judge {
   ERRNO(1) {
     ptrace, process_vm_readv, process_vm_writev,
     mount, pivot_root, chroot, unshare, setns,
+    // the newer mount API reaches the same code as mount
+    fsopen, fsconfig, fsmount, fspick, move_mount, open_tree, mount_setattr,
     kexec_load, reboot, swapon, swapoff,
     init_module, finit_module, delete_module,
     bpf, perf_event_open, keyctl, add_key, request_key,
-    acct, quotactl, personality, syslog, open_by_handle_at
+    acct, quotactl, personality, syslog, open_by_handle_at,
+    // large kernel attack surface that neither compilers nor CUDA use
+    io_uring_setup, io_uring_enter, io_uring_register, userfaultfd,
+    // CLONE_NEWNS | NEWCGROUP | NEWUTS | NEWIPC | NEWUSER | NEWPID | NEWNET: a nested user namespace would hand
+    // the solution capabilities over namespaces of its own, the usual first step of a kernel exploit.
+    clone { (clone_flags & 0x7E020000) != 0 }
+  },
+  // clone3 hides its flags behind a pointer, so they cannot be filtered: "not implemented" makes glibc fall back
+  // to clone, which is filtered above.
+  ERRNO(38) {
+    clone3
   }
 }
 USE judge DEFAULT ALLOW

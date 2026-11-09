@@ -29,7 +29,8 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders
 class SubmissionControllerTest {
     private val messaging = mock<JudgeMessaging>()
     private val clock = Clock.fixed(Instant.parse("2026-11-09T12:00:00Z"), ZoneOffset.UTC)
-    private val service = SubmissionService(GatewayProperties(), messaging, SimpleMeterRegistry(), clock)
+    private val properties = GatewayProperties(gpuProfiles = listOf("rtx3060", "rtx4090"))
+    private val service = SubmissionService(properties, messaging, mock<ExecutorRegistry>(), SimpleMeterRegistry(), clock)
     private val mvc: MockMvc = MockMvcBuilders.standaloneSetup(SubmissionController(service))
         .setControllerAdvice(ErrorHandler())
         .build()
@@ -70,9 +71,22 @@ class SubmissionControllerTest {
     }
 
     @Test
+    fun `a job goes to the queue of the requested GPU type only`() {
+        mvc.post("/api/v1/submissions") { contentType = MediaType.APPLICATION_JSON; content = body.replace("\"s-1\"", "\"s-1\", \"gpuProfile\": \"rtx4090\"") }
+            .andExpect { status { isAccepted() }; jsonPath("$.gpuProfile") { value("rtx4090") } }
+        val job = argumentCaptor<JudgeJob>()
+        verify(messaging).publishJob(job.capture(), any())
+        assertEquals("rtx4090", job.firstValue.gpuProfile)
+
+        // the same id for another GPU is not a duplicate of that job, and must not be reported as queued there
+        mvc.post("/api/v1/submissions") { contentType = MediaType.APPLICATION_JSON; content = body }
+            .andExpect { status { isBadRequest() } }
+        verify(messaging).publishJob(any(), any())
+    }
+
+    @Test
     fun `rejects invalid submission with details`() {
         val bad = body.replace("\"FLOAT32\", \"role\": \"OUTPUT\"", "\"FLOAT32\", \"role\": \"INPUT\"")
-            .replace("\"rtx3060\"", "\"x\"")
         mvc.post("/api/v1/submissions") { contentType = MediaType.APPLICATION_JSON; content = bad.replace("\"s-1\"", "\"s-2\", \"gpuProfile\": \"h100\"") }
             .andExpect {
                 status { isBadRequest() }

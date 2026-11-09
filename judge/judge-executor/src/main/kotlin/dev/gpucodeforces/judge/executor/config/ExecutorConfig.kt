@@ -13,6 +13,7 @@ import dev.gpucodeforces.judge.executor.run.HarnessRunner
 import dev.gpucodeforces.judge.executor.sandbox.DirectSandbox
 import dev.gpucodeforces.judge.executor.sandbox.NsjailSandbox
 import dev.gpucodeforces.judge.executor.sandbox.Sandbox
+import dev.gpucodeforces.judge.executor.util.daemonThread
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.amqp.core.AcknowledgeMode
@@ -113,5 +114,21 @@ class ExecutorConfig(private val props: ExecutorProperties) {
             setShutdownTimeout(60_000)
             setMessageListener(listener)
             log.info("Consuming {} with {} consumers ({} GPUs + {} prefetch)", Topology.jobsQueue(props.gpuProfile), props.capacity, props.gpus.size, props.prefetchExtra)
+        }.also { container ->
+            // With no usable GPU a job taken from the queue can only wait and go back, and each round trip counts
+            // towards its delivery limit: left consuming, a broken executor would dead-letter its whole queue.
+            // Not consuming leaves the jobs to other executors of the profile, or waiting until the GPU recovers.
+            gpus.pool.onAvailabilityChange = { available ->
+                // not on the caller's thread: it may be a consumer, and stop() waits for consumers to finish
+                daemonThread("jobs-container-switch") {
+                    if (available) {
+                        log.info("A GPU is healthy again: resuming job consumption")
+                        container.start()
+                    } else {
+                        log.error("No healthy GPU left: job consumption paused until one recovers")
+                        container.stop()
+                    }
+                }
+            }
         }
 }

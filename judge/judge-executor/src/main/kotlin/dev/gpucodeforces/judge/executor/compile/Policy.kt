@@ -27,8 +27,10 @@ data class EffectivePolicy(
     /** Symbols the solution object must not define (harness internals, CUDA runtime entry points). */
     val forbiddenDefinedSymbols: List<Regex>,
 ) {
+    /** `..` would let an allowed prefix reach any header: `<cuda/../thrust/sort.h>`. */
     fun headerAllowed(name: String): Boolean =
-        name !in forbiddenHeaders && (name in allowedHeaders || allowedHeaderPrefixes.any { name.startsWith(it) })
+        name !in forbiddenHeaders && ".." !in name && !name.startsWith("/") &&
+            (name in allowedHeaders || allowedHeaderPrefixes.any { name.startsWith(it) })
 
     companion object {
         fun of(profile: ProfilePolicyConfig, problem: PolicyOverrides, timing: TimingMode): EffectivePolicy {
@@ -101,7 +103,9 @@ data class EffectivePolicy(
             Regex("cupti\\w*"),
             // harness internals
             Regex("__wrap_\\w+"), Regex("__real_\\w+"), Regex("_ZN5judge\\w*"),
-            Regex("fork|vfork|execv\\w*|execl\\w*|execve|system|popen|posix_spawn\\w*"),
+            Regex("fork|vfork|_Fork|clone|daemon|execv\\w*|execl\\w*|execve|fexecve|system|popen|posix_spawn\\w*"),
+            // walking the loaded libraries is the way to dlopen/dlsym without naming them
+            Regex("dl_iterate_phdr"),
         )
 
         private val KERNEL_TIMING_FORBIDDEN_UNDEFINED = listOf(

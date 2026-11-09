@@ -7,31 +7,32 @@ import dev.gpucodeforces.judge.api.ProblemSpec
 import dev.gpucodeforces.judge.api.TestResult
 import dev.gpucodeforces.judge.api.TimingMode
 import dev.gpucodeforces.judge.api.Verdict
-import dev.gpucodeforces.judge.executor.compile.Builder
 import dev.gpucodeforces.judge.executor.config.ExecutorProperties
 import dev.gpucodeforces.judge.executor.gpu.GpuSample
 import dev.gpucodeforces.judge.executor.gpu.GpuSlot
 import dev.gpucodeforces.judge.executor.gpu.GpuStats
 import dev.gpucodeforces.judge.executor.problem.PreparedProblem
 import dev.gpucodeforces.judge.executor.problem.PreparedTest
-import dev.gpucodeforces.judge.executor.sandbox.GpuAccess
 import dev.gpucodeforces.judge.executor.sandbox.Sandbox
 import dev.gpucodeforces.judge.executor.sandbox.SandboxSpec
 import dev.gpucodeforces.judge.executor.util.BoundedBuffer
+import dev.gpucodeforces.judge.executor.util.FileTrees
 import dev.gpucodeforces.judge.executor.util.Proc
+import dev.gpucodeforces.judge.executor.util.daemonThread
+import dev.gpucodeforces.judge.executor.util.readBoundedLines
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.SecureRandom
 import java.time.Duration
-import java.util.concurrent.LinkedBlockingQueue
+import java.util.HexFormat
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.BlockingQueue
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.deleteIfExists
-import kotlin.io.path.exists
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
 import org.slf4j.LoggerFactory
-import org.slf4j.MDC
 
 data class RunOutcome(
     val verdict: Verdict,
@@ -50,6 +51,10 @@ data class RunOutcome(
 /**
  * Runs a linked solution binary in the sandbox on one GPU, following the harness status protocol (see runtime.h),
  * enforcing the watchdog / memory limits and checking outputs as soon as each test finishes.
+ *
+ * The harness shares its process with the solution, so the solution can read the nonce and write status lines of
+ * its own. Whatever it writes, a test only counts once this class has compared that test's output file with the
+ * reference, and tests only count in order: lines that the harness could not have produced end the run.
  */
 class HarnessRunner(private val props: ExecutorProperties, private val sandbox: Sandbox) {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -66,30 +71,32 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
     ): RunOutcome {
         val sig = problem.signature
         val timing = problem.timing.effectiveMode(sig)
-        val tlNs = problem.limits.timeLimitMs * 1_000_000
         val wallNs = problem.limits.effectiveWallTimeLimitMs * 1_000_000
+        // Only the output directory is writable for the solution: the binary and the manifest stay out of its reach.
         val outDir = Files.createDirectories(runDir.resolve("out"))
-        Builder.makeWorldWritable(outDir)
-        val nonce = ByteArray(12).also { random.nextBytes(it) }.joinToString("") { "%02x".format(it) }
+        FileTrees.makeWritableByAll(outDir)
+        val nonce = HexFormat.of().formatHex(ByteArray(12).also { random.nextBytes(it) })
 
-        val hostBytes = prepared.tests.maxOf { t -> bytesOf(sig.arrays.filter { it.memory == MemorySpace.HOST }, t) }
-        val maxDeviceArray = prepared.tests.maxOf { t -> sig.arrays.filter { it.memory == MemorySpace.DEVICE }.maxOfOrNull { t.counts.getValue(it.name) * it.type.bytes } ?: 0 }
-        val deviceBytes = prepared.tests.maxOf { t -> bytesOf(sig.arrays.filter { it.memory == MemorySpace.DEVICE }, t) }
+        val hostArrays = sig.arrays.filter { it.memory == MemorySpace.HOST }
+        val deviceArrays = sig.arrays.filter { it.memory == MemorySpace.DEVICE }
+        val hostBytes = prepared.tests.maxOf { bytesOf(hostArrays, it) }
+        val deviceBytes = prepared.tests.maxOf { bytesOf(deviceArrays, it) }
+        val maxDeviceArray = prepared.tests.maxOf { t -> deviceArrays.maxOfOrNull { t.bytes(it) } ?: 0 }
         val hostLimit = ((problem.limits.memoryLimitMb + props.run.hostOverheadMb) shl 20) + hostBytes + maxDeviceArray
-        val maxOutput = prepared.tests.maxOf { t -> bytesOf(sig.outputs, t) }
+        val maxOutput = prepared.tests.maxOf { bytesOf(sig.outputs, it) }
 
         val spec = SandboxSpec(
             command = emptyList(),
             workDir = runDir,
             readOnly = mapOf(prepared.inputsDir to "/data"),
-            gpu = GpuAccess(slot.index, slot.config.deviceNode),
+            gpu = slot.access(),
             env = mapOf("CUDA_MODULE_LOADING" to "LAZY"),
             wallTimeLimit = totalBudget(problem, prepared, wallNs),
             memoryLimitBytes = hostLimit,
             maxFileBytes = maxOutput + (64L shl 20),
         )
         val manifest = runDir.resolve("manifest.txt")
-        manifest.writeText(buildManifest(problem, prepared, spec, outDir, nonce, timing, tlNs, wallNs))
+        manifest.writeText(buildManifest(problem, prepared, spec, outDir, nonce, timing))
         val command = listOf(sandbox.inside(spec, binary), sandbox.inside(spec, manifest))
 
         val gpuBaselineMb = slot.monitor?.latest()?.memoryUsedMb
@@ -97,10 +104,9 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
             gpuBaselineMb?.let { it + lim + props.run.gpuOverheadMb + (deviceBytes shr 20) }
         }
         val stats = GpuStats()
-        val session = Session(problem, prepared, runDir, outDir, nonce, timing, tlNs, wallNs, stats, onTestStart)
 
         val process = sandbox.start(spec.copy(command = command))
-        session.process = process
+        val session = Session(problem, prepared, process, runDir = runDir, outDir = outDir, onTestStart)
         log.info(
             "Started solution on {} ({} tests, timing={}, TL={}ms, wall={}ms, host limit={}MB, gpu limit={}MB)",
             slot, prepared.tests.size, timing, problem.limits.timeLimitMs, problem.limits.effectiveWallTimeLimitMs,
@@ -108,42 +114,38 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
         )
         val stderr = BoundedBuffer(props.run.maxStderrBytes)
         val stderrThread = stderr.drain(process.errorStream, "solution-stderr")
-        val lines = LinkedBlockingQueue<String>()
-        val mdc = MDC.getCopyOfContextMap()
-        val reader = Thread.ofPlatform().daemon().name("solution-status").start {
-            mdc?.let { MDC.setContextMap(it) }
-            try {
-                process.inputStream.bufferedReader().useLines { seq -> seq.forEach { if (it.length < 8192) lines.put(it) } }
-            } catch (_: IOException) {
-                // stdout is closed when the process is killed; EOF below ends the session either way
-            } finally {
-                lines.put(EOF)
-            }
-        }
+        val lines = ArrayBlockingQueue<String>(STATUS_QUEUE)
+        val reader = startStatusReader(process, "$nonce ", lines, session)
         val gpuListener: (GpuSample) -> Unit = { s ->
             stats.add(s)
             if (gpuLimitMb != null && s.memoryUsedMb > gpuLimitMb && session.verdict == null) {
-                session.fail(Verdict.MEMORY_LIMIT_EXCEEDED, "GPU memory limit exceeded (${s.memoryUsedMb - (gpuBaselineMb ?: 0)} MB used)", kill = true)
+                // a limit exists only when the baseline was sampled
+                session.fail(Verdict.MEMORY_LIMIT_EXCEEDED, "GPU memory limit exceeded (${s.memoryUsedMb - gpuBaselineMb!!} MB used)", kill = true)
             }
         }
         slot.monitor?.addListener(gpuListener)
-        val memWatch = startHostMemoryWatch(process, hostLimit, session)
+        val watch = startResourceWatch(process, hostLimit, outputLimit = 2 * maxOutput + OUTPUT_SLACK, session)
         try {
             session.loop(lines, cancelled)
         } finally {
-            memWatch.interrupt()
+            watch.interrupt()
             slot.monitor?.removeListener(gpuListener)
+            // A harness that reported the end of the run exits by itself within milliseconds. Killing it instead
+            // looks like a crash (exit 137) and costs a GPU health probe before the next submission.
+            if (!session.killedByJudge) process.waitFor(EXIT_GRACE_MS, TimeUnit.MILLISECONDS)
             if (process.isAlive) Proc.killTree(process)
             process.waitFor(10, TimeUnit.SECONDS)
+            session.closed = true
             reader.join(2000)
             stderrThread.join(2000)
         }
         val exit = if (process.isAlive) -1 else process.exitValue()
-        return session.finish(exit, stderr.text())
+        return session.finish(exit, stderr.text(), stats)
     }
 
-    private fun bytesOf(params: List<ParamSpec>, t: PreparedTest) =
-        params.sumOf { t.counts.getValue(it.name) * it.type.bytes }
+    private fun PreparedTest.bytes(p: ParamSpec): Long = counts.getValue(p.name) * p.type.bytes
+
+    private fun bytesOf(params: List<ParamSpec>, t: PreparedTest) = params.sumOf { t.bytes(it) }
 
     private fun ioAllowance(bytes: Long): Duration =
         Duration.ofMillis(2000 + bytes * 1000 / (props.run.ioMbPerSecond shl 20))
@@ -151,25 +153,27 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
     private fun totalBudget(problem: ProblemSpec, prepared: PreparedProblem, wallNs: Long): Duration {
         val sig = problem.signature
         var ms = props.run.startupTimeout.toMillis()
-        val runs = problem.timing.maxRuns
-        prepared.tests.forEachIndexed { i, t ->
+        prepared.tests.forEach { t ->
             val perRun = wallNs / 1_000_000 + ioAllowance(bytesOf(sig.arrays, t)).toMillis()
-            ms += perRun * (runs + if (i == 0) problem.timing.warmupRuns else 0)
+            ms += perRun * allowedRuns(problem, t.index)
         }
         return Duration.ofMillis(ms)
     }
 
+    /** Calls of `solve` the harness makes for a test: warm-ups happen on the first test only. */
+    private fun allowedRuns(problem: ProblemSpec, test: Int): Int =
+        problem.timing.maxRuns + if (test == 1) problem.timing.warmupRuns else 0
+
     private fun buildManifest(
-        problem: ProblemSpec, prepared: PreparedProblem, spec: SandboxSpec, outDir: Path, nonce: String,
-        timing: TimingMode, tlNs: Long, wallNs: Long,
+        problem: ProblemSpec, prepared: PreparedProblem, spec: SandboxSpec, outDir: Path, nonce: String, timing: TimingMode,
     ): String = buildString {
         val sig = problem.signature
         appendLine("nonce $nonce")
         appendLine("timing ${if (timing == TimingMode.GPU_KERNELS) "kernels" else "wall"}")
         appendLine("warmup ${problem.timing.warmupRuns}")
         appendLine("max_runs ${problem.timing.maxRuns}")
-        appendLine("time_limit_ns $tlNs")
-        appendLine("wall_limit_ns $wallNs")
+        appendLine("time_limit_ns ${problem.limits.timeLimitMs * 1_000_000}")
+        appendLine("wall_limit_ns ${problem.limits.effectiveWallTimeLimitMs * 1_000_000}")
         appendLine("grey_factor $GREY_FACTOR")
         appendLine("params ${sig.params.size}")
         for (t in prepared.tests) {
@@ -179,10 +183,9 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
                     val v = t.spec.scalars.getValue(p.name)
                     appendLine("scalar $pi ${if (p.type.floating) v.toDouble().toString() else v.toLong().toString()}")
                 } else {
-                    val bytes = t.counts.getValue(p.name) * p.type.bytes
                     val input = t.inputs[p.name]?.let { sandbox.inside(spec, it) } ?: "-"
                     val output = if (p.role == ParamRole.INPUT) "-" else sandbox.inside(spec, outFile(outDir, t.index, p.name))
-                    appendLine("array $pi $bytes $input $output")
+                    appendLine("array $pi ${t.bytes(p)} $input $output")
                 }
             }
             appendLine("end")
@@ -191,20 +194,44 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
 
     private fun outFile(outDir: Path, test: Int, param: String) = outDir.resolve("t${test}_$param.bin")
 
-    /** Polls the RSS of the sandboxed process tree; kills it on overflow (works without cgroups, also on WSL2). */
-    private fun startHostMemoryWatch(process: Process, limit: Long, session: Session): Thread {
-        val mdc = MDC.getCopyOfContextMap()
-        return Thread.ofPlatform().daemon().name("solution-memwatch").start {
-            mdc?.let { MDC.setContextMap(it) }
-            val pageSize = 4096L
+    /**
+     * Forwards the status lines (those starting with the nonce) to the session. Everything else the solution
+     * prints is dropped here, and a full queue stalls the solution's stdout instead of growing.
+     */
+    private fun startStatusReader(process: Process, prefix: String, lines: BlockingQueue<String>, session: Session): Thread =
+        daemonThread("solution-status") {
+            fun put(line: String) {
+                while (!session.closed && !lines.offer(line, 100, TimeUnit.MILLISECONDS)) {
+                    // the session is busy checking outputs, or gone: keep trying until it says so
+                }
+            }
             try {
-                while (process.isAlive) {
+                readBoundedLines(process.inputStream, MAX_STATUS_LINE) { if (it.startsWith(prefix)) put(it.removePrefix(prefix)) }
+            } catch (_: IOException) {
+                // stdout is closed when the process is killed; EOF below ends the session either way
+            } finally {
+                put(EOF)
+            }
+        }
+
+    /**
+     * Polls what the sandboxed process tree uses and kills it on overflow (works without cgroups, also on WSL2):
+     * RSS against the memory limit, and the output directory, which lives in RAM as well and is the only place
+     * the solution can write to.
+     */
+    private fun startResourceWatch(process: Process, memoryLimit: Long, outputLimit: Long, session: Session): Thread =
+        daemonThread("solution-watch") {
+            try {
+                while (process.isAlive && session.verdict == null) {
                     val pids = listOf(process.pid()) + process.toHandle().descendants().map { it.pid() }.toList()
-                    val rss = pids.sumOf { pid -> rssBytes(pid, pageSize) }
+                    val rss = pids.sumOf { rssBytes(it) }
                     session.peakRss = maxOf(session.peakRss, rss)
-                    if (rss > limit && session.verdict == null) {
-                        session.fail(Verdict.MEMORY_LIMIT_EXCEEDED, "Memory limit exceeded (${rss shr 20} MB RSS)", kill = true)
-                        break
+                    val written = FileTrees.regularBytes(session.outDir, MAX_OUTPUT_ENTRIES)
+                    when {
+                        rss > memoryLimit ->
+                            session.fail(Verdict.MEMORY_LIMIT_EXCEEDED, "Memory limit exceeded (${rss shr 20} MB RSS)", kill = true)
+                        written == null || written > outputLimit ->
+                            session.fail(Verdict.RUNTIME_ERROR, "Runtime error on test ${session.currentTest} (output limit exceeded)", kill = true)
                     }
                     Thread.sleep(props.run.samplingInterval.toMillis())
                 }
@@ -212,11 +239,10 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
                 // interrupted by run() when the solution finished: stop watching
             }
         }
-    }
 
     /** RSS of one process; 0 if it exited between listing the tree and reading /proc (or /proc is absent, e.g. macOS dev). */
-    private fun rssBytes(pid: Long, pageSize: Long): Long = try {
-        Path.of("/proc/$pid/statm").readText().split(' ')[1].toLong() * pageSize
+    private fun rssBytes(pid: Long): Long = try {
+        Path.of("/proc/$pid/statm").readText().split(' ')[1].toLong() * PAGE_SIZE
     } catch (_: IOException) {
         0L
     }
@@ -227,30 +253,33 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
     private inner class Session(
         val problem: ProblemSpec,
         val prepared: PreparedProblem,
+        val process: Process,
         val runDir: Path,
         val outDir: Path,
-        val nonce: String,
-        val timing: TimingMode,
-        val tlNs: Long,
-        val wallNs: Long,
-        val stats: GpuStats,
         val onTestStart: (Int) -> Unit,
     ) {
-        @Volatile var process: Process? = null
         @Volatile var verdict: Verdict? = null
         @Volatile var message: String? = null
         @Volatile var debug: String? = null
         @Volatile var killedByJudge = false
         @Volatile var peakRss = 0L
+        @Volatile var currentTest = 1
+
+        /** Set once nobody reads the status queue any more. */
+        @Volatile var closed = false
         var internalReason: String? = null
         var retryable = false
         var ready = false
         var done = false
-        var currentTest = 1
         var phase = Phase.STARTING
         var deadline = System.nanoTime() + props.run.startupTimeout.toNanos()
+
+        /** `load` and `run` lines seen for [currentTest]. */
+        var stepsOfCurrentTest = 0
         val results = mutableListOf<TestResult>()
         val sig = problem.signature
+        val tlNs = problem.limits.timeLimitMs * 1_000_000
+        val wallNs = problem.limits.effectiveWallTimeLimitMs * 1_000_000
 
         @Synchronized
         fun fail(v: Verdict, msg: String, kill: Boolean, debugInfo: String? = null) {
@@ -260,11 +289,23 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
             debug = debugInfo
             if (kill) {
                 killedByJudge = true
-                process?.let { Proc.killTree(it) }
+                Proc.killTree(process)
             }
         }
 
-        fun loop(lines: LinkedBlockingQueue<String>, cancelled: () -> Boolean) {
+        private fun internalError(reason: String, kill: Boolean) {
+            internalReason = reason
+            retryable = true
+            fail(Verdict.INTERNAL_ERROR, "Judging failed", kill)
+        }
+
+        /** The line carries the nonce but the harness cannot have written it: the solution did. */
+        private fun forged(line: String) {
+            log.info("Solution wrote to the status channel: {}", line.take(200))
+            fail(Verdict.RUNTIME_ERROR, "Runtime error on test $currentTest (the solution interfered with the judge)", kill = true)
+        }
+
+        fun loop(lines: BlockingQueue<String>, cancelled: () -> Boolean) {
             while (true) {
                 if (verdict != null) return
                 if (cancelled()) {
@@ -290,11 +331,10 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
                     "Time limit exceeded on test $currentTest (killed after ${problem.limits.effectiveWallTimeLimitMs} ms)",
                     kill = true,
                 )
-                Phase.STARTING -> {
-                    internalReason = "harness did not become ready within ${props.run.startupTimeout.seconds}s (CUDA context creation stuck?)"
-                    retryable = true
-                    fail(Verdict.INTERNAL_ERROR, "Judging failed", kill = true)
-                }
+                Phase.STARTING -> internalError(
+                    "harness did not become ready within ${props.run.startupTimeout.seconds}s (CUDA context creation stuck?)",
+                    kill = true,
+                )
                 else -> fail(Verdict.TIME_LIMIT_EXCEEDED, "Time limit exceeded on test $currentTest (solution stalled the judge)", kill = true)
             }
             log.info("Watchdog fired in phase {} on test {}", phase, currentTest)
@@ -302,91 +342,92 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
 
         private fun testBytes(index: Int) = prepared.tests.getOrNull(index - 1)?.let { bytesOf(sig.arrays, it) } ?: 0L
 
+        /** Index from a status line, if it names the test the harness has to be working on now. */
+        private fun nextTestIndex(parts: List<String>): Int? =
+            parts.getOrNull(1)?.toIntOrNull()?.takeIf { it == results.size + 1 && it <= prepared.tests.size }
+
         private fun handle(line: String) {
             val parts = line.split(' ')
-            if (parts.size < 2 || parts[0] != nonce) {
-                log.debug("ignoring non-status stdout line from solution")
-                return
-            }
             val now = System.nanoTime()
-            when (parts[1]) {
+            when (parts[0]) {
                 "ready" -> {
+                    if (ready) return forged(line)
                     ready = true
                     phase = Phase.LOADING
                     deadline = now + ioAllowance(testBytes(1)).toNanos()
                 }
-                "load" -> {
-                    currentTest = parts.getOrNull(2)?.toIntOrNull() ?: currentTest
-                    phase = Phase.LOADING
-                    deadline = now + ioAllowance(testBytes(currentTest)).toNanos()
+                "load", "run" -> {
+                    val idx = nextTestIndex(parts) ?: return forged(line)
+                    // every call of solve is announced by one load and one run; more would keep resetting the watchdog
+                    if (!ready || ++stepsOfCurrentTest > 2 * allowedRuns(problem, idx)) return forged(line)
+                    currentTest = idx
+                    if (parts[0] == "load") {
+                        phase = Phase.LOADING
+                        deadline = now + ioAllowance(testBytes(idx)).toNanos()
+                    } else {
+                        if (parts.getOrNull(2) == "0") onTestStart(idx)
+                        phase = Phase.RUNNING
+                        deadline = now + wallNs + GRACE_NS
+                    }
                 }
-                "run" -> {
-                    currentTest = parts.getOrNull(2)?.toIntOrNull() ?: currentTest
-                    if (parts.getOrNull(3) == "0") onTestStart(currentTest)
-                    phase = Phase.RUNNING
-                    deadline = now + wallNs + GRACE_NS
-                }
-                "test" -> onTestLine(parts)
-                "fatal" -> {
-                    val msg = parts.drop(2).joinToString(" ")
-                    internalReason = "harness fatal error: $msg"
-                    retryable = true
-                    fail(Verdict.INTERNAL_ERROR, "Judging failed", kill = false)
-                }
-                "done" -> done = true
+                "test" -> onTestLine(line, parts)
+                "fatal" -> internalError("harness fatal error: ${parts.drop(1).joinToString(" ")}", kill = false)
+                "done" -> if (results.size == prepared.tests.size) done = true else forged(line)
+                else -> forged(line)
             }
         }
 
-        private fun onTestLine(parts: List<String>) {
-            val idx = parts.getOrNull(2)?.toIntOrNull() ?: return
+        private fun PreparedTest.result(verdict: Verdict, message: String? = null, debug: String? = null) =
+            TestResult(index, spec.name, spec.sample, verdict, message = message, debug = debug)
+
+        private fun onTestLine(line: String, parts: List<String>) {
+            val idx = nextTestIndex(parts) ?: return forged(line)
             val test = prepared.tests[idx - 1]
-            val kind = parts.getOrNull(3)
-            val rest = parts.drop(4).joinToString(" ")
-            when (kind) {
+            val rest = parts.drop(3).joinToString(" ")
+            // After each of these lines the harness exits by itself, so the process is not killed.
+            when (parts.getOrNull(2)) {
                 "ok" -> {
-                    val kv = parts.drop(4).chunked(2).filter { it.size == 2 }.associate { it[0] to it[1] }
-                    val t = kv["time_ns"]?.toLongOrNull() ?: 0
-                    val w = kv["wall_ns"]?.toLongOrNull() ?: 0
-                    val runs = kv["runs"]?.toIntOrNull()
+                    val kv = parts.drop(3).chunked(2).filter { it.size == 2 }.associate { it[0] to it[1] }
+                    val t = kv["time_ns"]?.toLongOrNull() ?: return forged(line)
+                    val w = kv["wall_ns"]?.toLongOrNull() ?: return forged(line)
                     phase = Phase.SAVING
                     deadline = System.nanoTime() + ioAllowance(testBytes(idx) + testBytes(idx + 1)).toNanos()
+                    stepsOfCurrentTest = 0
                     val timeMs = t / 1e6
                     val wallMs = w / 1e6
-                    val base = TestResult(idx, test.spec.name, test.spec.sample, Verdict.ACCEPTED, timeMs, wallMs, runs)
-                    when {
-                        t > tlNs || w > wallNs -> {
-                            val what = if (t > tlNs) "%.1f ms".format(timeMs) else "wall %.1f ms".format(wallMs)
-                            results += base.copy(verdict = Verdict.TIME_LIMIT_EXCEEDED, message = "Time limit exceeded ($what)")
-                            fail(Verdict.TIME_LIMIT_EXCEEDED, "Time limit exceeded on test $idx", kill = true)
-                        }
-                        else -> {
-                            val check = checkOutputs(test)
-                            if (check == null) {
-                                results += base
-                            } else {
-                                val msg = if (test.spec.sample) "${check.summary}; ${check.detail}" else check.summary
-                                results += base.copy(verdict = Verdict.WRONG_ANSWER, message = msg, debug = check.detail)
-                                fail(Verdict.WRONG_ANSWER, "Wrong answer on test $idx", kill = true)
-                            }
-                        }
+                    val measured = TestResult(idx, test.spec.name, test.spec.sample, Verdict.ACCEPTED, timeMs = timeMs, wallTimeMs = wallMs, runs = kv["runs"]?.toIntOrNull())
+                    if (t > tlNs || w > wallNs) {
+                        val what = if (t > tlNs) "%.1f ms".format(timeMs) else "wall %.1f ms".format(wallMs)
+                        results += measured.copy(verdict = Verdict.TIME_LIMIT_EXCEEDED, message = "Time limit exceeded ($what)")
+                        fail(Verdict.TIME_LIMIT_EXCEEDED, "Time limit exceeded on test $idx", kill = false)
+                        return
+                    }
+                    val check = checkOutputs(test)
+                    if (check == null) {
+                        results += measured
+                    } else {
+                        val msg = if (test.spec.sample) "${check.summary}; ${check.detail}" else check.summary
+                        results += measured.copy(verdict = Verdict.WRONG_ANSWER, message = msg, debug = check.detail)
+                        // the harness is already loading the next test
+                        fail(Verdict.WRONG_ANSWER, "Wrong answer on test $idx", kill = true)
                     }
                 }
                 "runtime_error" -> {
-                    results += TestResult(idx, test.spec.name, test.spec.sample, Verdict.RUNTIME_ERROR, message = "CUDA error: $rest")
-                    fail(Verdict.RUNTIME_ERROR, "Runtime error on test $idx", kill = true)
+                    results += test.result(Verdict.RUNTIME_ERROR, "CUDA error: $rest")
+                    fail(Verdict.RUNTIME_ERROR, "Runtime error on test $idx", kill = false)
                 }
                 "alloc_failed" -> {
-                    results += TestResult(idx, test.spec.name, test.spec.sample, Verdict.MEMORY_LIMIT_EXCEEDED, message = rest)
-                    fail(Verdict.MEMORY_LIMIT_EXCEEDED, "Memory limit exceeded on test $idx", kill = true)
+                    results += test.result(Verdict.MEMORY_LIMIT_EXCEEDED, rest)
+                    fail(Verdict.MEMORY_LIMIT_EXCEEDED, "Memory limit exceeded on test $idx", kill = false)
                 }
+                else -> forged(line)
             }
         }
 
         private fun checkOutputs(test: PreparedTest): CheckResult? {
             try {
                 for (p in sig.outputs) {
-                    val actual = outFile(outDir, test.index, p.name)
-                    val r = OutputChecker.check(p.name, p.type, actual, test.expected.getValue(p.name), problem.checker)
+                    val r = OutputChecker.check(p.name, p.type, actual = outFile(outDir, test.index, p.name), expected = test.expected.getValue(p.name), problem.checker)
                     if (!r.ok) return r
                 }
                 return null
@@ -395,21 +436,17 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
             }
         }
 
-        fun finish(exitCode: Int, stderr: String): RunOutcome {
+        fun finish(exitCode: Int, stderr: String, stats: GpuStats): RunOutcome {
             if (verdict == null) {
+                val sandboxLog = Sandbox.logTail(runDir)
                 when {
-                    done && results.size == prepared.tests.size -> verdict = Verdict.ACCEPTED
-                    !ready && exitCode == 255 -> {
-                        internalReason = "sandbox failed to start (exit 255): ${nsjailLog()}"
-                        retryable = true
-                        verdict = Verdict.INTERNAL_ERROR
-                        message = "Judging failed"
+                    done -> verdict = Verdict.ACCEPTED
+                    // nsjail reports its own failures in its log, which the solution cannot write to
+                    !ready && exitCode == 255 && sandboxLog != null -> {
+                        internalError("sandbox failed to start (exit 255): $sandboxLog", kill = false)
                     }
                     !ready && exitCode in 119..121 -> {
-                        internalReason = "harness failed before start (exit $exitCode): ${stderr.takeLast(1000)}"
-                        retryable = true
-                        verdict = Verdict.INTERNAL_ERROR
-                        message = "Judging failed"
+                        internalError("harness failed before start (exit $exitCode): ${stderr.takeLast(1000)}", kill = false)
                     }
                     else -> {
                         val how = describeExit(exitCode)
@@ -421,31 +458,27 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
                 }
             }
             val v = verdict!!
+            val failedOnTest = v !in NOT_ABOUT_A_TEST
             // Failures detected outside a test result line (watchdog, memory watch, crash) still get a test entry.
             val t = prepared.tests.getOrNull(currentTest - 1)
-            if (t != null && v != Verdict.ACCEPTED && v != Verdict.INTERNAL_ERROR && v != Verdict.CANCELLED &&
-                results.none { it.verdict != Verdict.ACCEPTED } && results.none { it.index == currentTest }
-            ) {
-                results += TestResult(currentTest, t.spec.name, t.spec.sample, v, message = debug ?: message)
+            if (t != null && failedOnTest && results.none { it.verdict != Verdict.ACCEPTED } && results.none { it.index == currentTest }) {
+                results += t.result(v, debug ?: message)
             }
             val failed = results.lastOrNull()?.takeIf { it.verdict != Verdict.ACCEPTED }?.index
-                ?: if (v != Verdict.ACCEPTED && v != Verdict.INTERNAL_ERROR && v != Verdict.CANCELLED) currentTest else null
-            // stderr may print hidden test data: public only on samples, always in debug
+                ?: if (failedOnTest) currentTest else null
+            // Every test's input is mounted for the whole run, so stderr of a sample test can carry hidden data:
+            // contestants see it only when the problem has nothing to hide. Judges always get it in debug.
             val stderrTail = stderr.trim().takeLast(2000)
+            val stderrIsPublic = prepared.tests.all { it.spec.sample }
             val finalResults = results.map { r ->
                 if (r.verdict == Verdict.ACCEPTED || stderrTail.isEmpty()) r
                 else r.copy(
-                    message = if (r.sample) listOfNotNull(r.message, "stderr:\n$stderrTail").joinToString("\n") else r.message,
+                    message = if (stderrIsPublic) listOfNotNull(r.message, "stderr:\n$stderrTail").joinToString("\n") else r.message,
                     debug = listOfNotNull(r.debug, "stderr:\n$stderrTail").joinToString("\n"),
                 )
             }
             val hardStop = killedByJudge || exitCode > 128 || exitCode < 0 || v == Verdict.RUNTIME_ERROR || v == Verdict.INTERNAL_ERROR
             return RunOutcome(v, finalResults, failed, message, stats, needsHealthCheck = hardStop, internalReason = internalReason, retryable = retryable)
-        }
-
-        private fun nsjailLog(): String {
-            val file = runDir.resolveSibling(runDir.fileName.toString() + ".nsjail.log")
-            return if (file.exists()) file.readText().takeLast(2000) else "no nsjail log (sandbox type ${sandbox.name})"
         }
     }
 
@@ -453,6 +486,16 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
         private const val EOF = "\u0000EOF"
         private const val GREY_FACTOR = 1.25
         private const val GRACE_NS = 1_000_000_000L
+        private const val EXIT_GRACE_MS = 2000L
+        private const val PAGE_SIZE = 4096L
+        private const val MAX_STATUS_LINE = 8192
+        private const val STATUS_QUEUE = 256
+
+        /** Besides the outputs of the test being checked and of the next one. */
+        private const val OUTPUT_SLACK = 64L shl 20
+        private const val MAX_OUTPUT_ENTRIES = 4096
+
+        private val NOT_ABOUT_A_TEST = setOf(Verdict.ACCEPTED, Verdict.INTERNAL_ERROR, Verdict.CANCELLED)
 
         fun describeExit(code: Int): String = when {
             code < 0 -> "killed"

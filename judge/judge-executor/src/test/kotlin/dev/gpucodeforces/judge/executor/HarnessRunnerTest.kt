@@ -21,6 +21,7 @@ import dev.gpucodeforces.judge.executor.problem.PreparedTest
 import dev.gpucodeforces.judge.executor.run.HarnessRunner
 import dev.gpucodeforces.judge.executor.run.RunOutcome
 import dev.gpucodeforces.judge.executor.sandbox.DirectSandbox
+import dev.gpucodeforces.judge.executor.util.readBoundedLines
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.file.Files
@@ -115,14 +116,16 @@ class HarnessRunnerTest {
                 if behaviour == "crash": os.kill(os.getpid(), signal.SIGSEGV)
                 if behaviour == "exit": sys.exit(0)
                 if behaviour == "cuda_error": st("test %d runtime_error cudaErrorIllegalAddress (an illegal memory access was encountered)" % i); sys.exit(0)
+                if behaviour == "replay": st("test 1 ok runs 1 time_ns 1 wall_ns 1"); time.sleep(60)
                 a = b = None
                 for (p, nbytes, inp, out) in tc["arrays"]:
-                    if p == 0: a = struct.unpack("<%df" % (nbytes // 4), open(inp, "rb").read())
+                    if p == 0: a = struct.unpack("<%df" % (nbytes // 4), open(inp, "rb").read()); reference = inp.replace("/inputs/", "/expected/").replace("A.bin", "C.bin")
                     if p == 1: b = struct.unpack("<%df" % (nbytes // 4), open(inp, "rb").read())
                     if p == 2: outp = out
                 c = [x + y for x, y in zip(a, b)]
                 if behaviour == "wrong": c[1] += 1.0
-                open(outp, "wb").write(struct.pack("<%df" % len(c), *c))
+                if behaviour == "link": os.symlink(reference, outp)
+                else: open(outp, "wb").write(struct.pack("<%df" % len(c), *c))
                 t_ns = 300000000 if behaviour == "slow" else 1234567
                 st("test %d ok runs 1 time_ns %d wall_ns %d" % (i, t_ns, t_ns))
             st("done")
@@ -210,5 +213,29 @@ class HarnessRunnerTest {
         val o = run("ok,exit")
         assertEquals(Verdict.RUNTIME_ERROR, o.verdict)
         assertEquals(2, o.failedTest)
+    }
+
+    @Test
+    fun `reporting an earlier test again does not count as passing the next one`() {
+        val o = run("ok,replay")
+        assertEquals(Verdict.RUNTIME_ERROR, o.verdict)
+        assertEquals(2, o.failedTest)
+        assertTrue("interfered with the judge" in o.message!!, o.message)
+        assertEquals(listOf(Verdict.ACCEPTED, Verdict.RUNTIME_ERROR), o.tests.map { it.verdict })
+    }
+
+    @Test
+    fun `output that is a link to the reference answer is a wrong answer`() {
+        val o = run("link")
+        assertEquals(Verdict.WRONG_ANSWER, o.verdict)
+        assertEquals("C: output was not produced; ", o.tests.single().message)
+    }
+
+    @Test
+    fun `status lines are bounded however long the solution makes them`() {
+        val input = ("first\n" + "x".repeat(100_000) + "\nsecond\n" + "y".repeat(50_000)).byteInputStream()
+        val lines = mutableListOf<String>()
+        readBoundedLines(input, 1000) { lines += it }
+        assertEquals(listOf("first", "second"), lines)
     }
 }

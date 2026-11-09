@@ -21,7 +21,9 @@ import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import tools.jackson.core.JacksonException
 
-data class ExecutorView(val alive: Boolean, val lastSeen: Instant, val heartbeat: ExecutorHeartbeat)
+data class ExecutorView(val alive: Boolean, val lastSeen: Instant, val heartbeat: ExecutorHeartbeat) {
+    val healthyGpus: Int get() = heartbeat.gpus.count { it.healthy }
+}
 
 data class QueueView(
     val gpuProfile: String,
@@ -49,10 +51,13 @@ class ExecutorRegistry(
 
     init {
         for (profile in props.gpuProfiles) {
-            Gauge.builder("judge.gateway.healthy_gpus") { all().filter { it.alive && it.heartbeat.gpuProfile == profile }.sumOf { v -> v.heartbeat.gpus.count { g -> g.healthy } } }
-                .tag("gpuProfile", profile).register(meters)
+            Gauge.builder("judge.gateway.healthy_gpus") { alive(profile).sumOf { it.healthyGpus } }.tag("gpuProfile", profile).register(meters)
+            Gauge.builder("judge.gateway.alive_executors") { alive(profile).size }.tag("gpuProfile", profile).register(meters)
         }
     }
+
+    /** Executors of a GPU profile that are sending heartbeats. */
+    fun alive(profile: String): List<ExecutorView> = all().filter { it.alive && it.heartbeat.gpuProfile == profile }
 
     @RabbitListener(
         bindings = [QueueBinding(
@@ -67,12 +72,21 @@ class ExecutorRegistry(
             log.warn("Malformed heartbeat ignored", e)
             return
         }
-        val prev = executors.put(hb.executorId, ExecutorView(true, clock.instant(), hb))
+        val prev = executors.put(hb.executorId, ExecutorView(alive = true, lastSeen = clock.instant(), hb))
         if (prev == null || !prev.alive) {
             log.info("Executor {} ({}) is up: profile={} gpus={}", hb.executorId, hb.hostname, hb.gpuProfile, hb.gpus.map { it.name })
+            if (hb.gpuProfile !in props.gpuProfiles) {
+                log.warn(
+                    "Executor {} serves gpuProfile {}, which this gateway does not accept submissions for ({}): add it to judge.gateway.gpu-profiles or fix the executor",
+                    hb.executorId, hb.gpuProfile, props.gpuProfiles,
+                )
+            }
+        } else if (prev.heartbeat.hostname != hb.hostname) {
+            // Heartbeats of two machines overwrite each other here, and their events cannot be told apart.
+            log.error("Two executors use the id {}: on {} and on {}. Give each its own JUDGE_EXECUTOR_ID", hb.executorId, prev.heartbeat.hostname, hb.hostname)
         }
         val unhealthy = hb.gpus.filter { !it.healthy }.map { it.index }
-        val prevUnhealthy = prev?.heartbeat?.gpus?.filter { !it.healthy }?.map { it.index } ?: emptyList()
+        val prevUnhealthy = prev?.heartbeat?.gpus.orEmpty().filter { !it.healthy }.map { it.index }
         if (unhealthy != prevUnhealthy) {
             if (unhealthy.isEmpty()) log.info("Executor {}: all GPUs healthy again", hb.executorId)
             else log.warn("Executor {}: unhealthy GPUs {}", hb.executorId, unhealthy)
@@ -90,13 +104,14 @@ class ExecutorRegistry(
                 v
             }
         }
-        // forget executors that have been dead for a long time
-        executors.entries.removeIf { !it.value.alive && it.value.lastSeen.isBefore(deadline.minus(props.heartbeatTimeout.multipliedBy(20))) }
+        val longDead = deadline.minus(props.heartbeatTimeout.multipliedBy(20))
+        executors.entries.removeIf { !it.value.alive && it.value.lastSeen.isBefore(longDead) }
     }
 
     fun all(): List<ExecutorView> = executors.values.sortedBy { it.heartbeat.executorId }
 
-    fun queues(): List<QueueView> = props.gpuProfiles.map { profile ->
+    /** Queues of the configured profiles, and of any other profile an executor reports, so a misnamed one shows up. */
+    fun queues(): List<QueueView> = (props.gpuProfiles + all().map { it.heartbeat.gpuProfile }).distinct().map { profile ->
         val name = Topology.jobsQueue(profile)
         val info = try {
             admin.getQueueInfo(name)
@@ -104,14 +119,14 @@ class ExecutorRegistry(
             log.warn("Cannot read queue info for {}", name, e)
             null
         }
-        val alive = all().filter { it.alive && it.heartbeat.gpuProfile == profile }
+        val alive = alive(profile)
         QueueView(
             gpuProfile = profile,
             queue = name,
             waiting = info?.messageCount,
             consumers = info?.consumerCount,
             aliveExecutors = alive.size,
-            healthyGpus = alive.sumOf { v -> v.heartbeat.gpus.count { it.healthy } },
+            healthyGpus = alive.sumOf { it.healthyGpus },
             inFlight = alive.sumOf { it.heartbeat.inFlight },
             capacity = alive.sumOf { it.heartbeat.capacity },
         )

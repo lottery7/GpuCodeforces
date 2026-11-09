@@ -7,9 +7,12 @@ import java.nio.file.Path
 import java.time.Duration
 import kotlin.io.path.exists
 import kotlin.io.path.listDirectoryEntries
-import kotlin.io.path.name
 import kotlin.io.path.writeText
+import org.intellij.lang.annotations.Language
 import org.slf4j.LoggerFactory
+
+/** WSL2 exposes GPUs through the DirectX kernel interface instead of /dev/nvidia*. */
+fun isWsl2(): Boolean = Path.of("/dev/dxg").exists()
 
 /**
  * nsjail-based sandbox:
@@ -17,14 +20,10 @@ import org.slf4j.LoggerFactory
  *  - only system dirs, the run directory and the test inputs are mounted (inputs read-only),
  *  - only the GPU device nodes of the assigned GPU are present in /dev,
  *  - seccomp policy blocks ptrace, mount, bpf, perf_event_open, kernel module/keyring syscalls, etc.,
- *  - rlimits for file size / open files; cgroups v2 memory+pids when enabled.
- * RLIMIT_AS is deliberately unlimited: CUDA reserves huge virtual address ranges.
+ *  - rlimits for file size, open files and the number of processes; cgroups v2 memory+pids when enabled.
+ * RLIMIT_AS is unlimited unless the caller asks for it: CUDA reserves huge virtual address ranges.
  */
-class NsjailSandbox(
-    private val cfg: SandboxConfig,
-    /** WSL2 exposes GPUs through the DirectX kernel interface instead of /dev/nvidia*. */
-    val wsl: Boolean = Path.of("/dev/dxg").exists(),
-) : Sandbox {
+class NsjailSandbox(private val cfg: SandboxConfig, val wsl: Boolean = isWsl2()) : Sandbox {
     private val log = LoggerFactory.getLogger(javaClass)
     override val name = "nsjail"
 
@@ -35,21 +34,23 @@ class NsjailSandbox(
     fun buildCommand(spec: SandboxSpec): List<String> = buildList {
         add(cfg.nsjail)
         addAll(listOf("--mode", "o", "--quiet"))
-        addAll(listOf("--log", spec.workDir.resolveSibling(spec.workDir.name + ".nsjail.log").toString()))
+        addAll(listOf("--log", Sandbox.logFile(spec.workDir).toString()))
         addAll(listOf("--hostname", "judge", "--cwd", Sandbox.WORK))
         addAll(listOf("--user", "${cfg.uid}:${cfg.uid}:1", "--group", "${cfg.gid}:${cfg.gid}:1"))
         addAll(listOf("--time_limit", ((spec.wallTimeLimit.toMillis() + 999) / 1000).toString()))
-        addAll(listOf("--rlimit_as", "inf", "--rlimit_core", "0", "--rlimit_cpu", "inf"))
-        addAll(listOf("--rlimit_fsize", ((spec.maxFileBytes shr 20) + 1).toString()))
+        addAll(listOf("--rlimit_as", spec.addressSpaceBytes?.let { megabytes(it) } ?: "inf", "--rlimit_core", "0", "--rlimit_cpu", "inf"))
+        addAll(listOf("--rlimit_fsize", megabytes(spec.maxFileBytes)))
         // The stack limit must be finite: nsjail turns "inf" into a huge finite value, glibc then uses it as the
         // default thread stack size and every pthread_create fails with EAGAIN.
-        addAll(listOf("--rlimit_nofile", cfg.maxOpenFiles.toString(), "--rlimit_nproc", "inf", "--rlimit_stack", cfg.stackLimitMb.toString()))
+        addAll(listOf("--rlimit_nofile", cfg.maxOpenFiles.toString(), "--rlimit_stack", cfg.stackLimitMb.toString()))
+        // Without cgroups this is the only thing between a fork bomb and the executor's own threads.
+        addAll(listOf("--rlimit_nproc", cfg.maxProcesses.toString()))
         if (cfg.useCgroupsV2) {
             add("--use_cgroupv2")
             spec.memoryLimitBytes?.let { addAll(listOf("--cgroup_mem_max", it.toString())) }
             addAll(listOf("--cgroup_pids_max", cfg.pidsLimit.toString()))
         }
-        cfg.seccompPolicy?.takeIf { it.exists() }?.let { addAll(listOf("--seccomp_policy", it.toString())) }
+        cfg.seccompPolicy?.let { addAll(listOf("--seccomp_policy", it.toString())) }
 
         addAll(systemMountArgs(cfg.readOnlyMounts + cfg.extraReadOnlyMounts))
         addAll(listOf("-R", "/sys", "-R", "/dev/urandom", "-R", "/dev/zero", "-B", "/dev/null"))
@@ -67,6 +68,9 @@ class NsjailSandbox(
         add("--")
         addAll(spec.command)
     }
+
+    /** nsjail takes rlimits in MiB; rounded up so the limit is never below what was asked for. */
+    private fun megabytes(bytes: Long): String = ((bytes shr 20) + 1).toString()
 
     /**
      * Read-only binds of system paths. On merged-/usr distros (Ubuntu 24.04) /bin, /lib, /lib64, /sbin are symlinks:
@@ -88,10 +92,7 @@ class NsjailSandbox(
         put("TMPDIR", "/tmp")
         put("LANG", "C.UTF-8")
         if (wsl) put("LD_LIBRARY_PATH", "/usr/lib/wsl/lib")
-        spec.gpu?.let {
-            put("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
-            put("CUDA_VISIBLE_DEVICES", it.cudaIndex.toString())
-        }
+        spec.gpu?.let { putAll(it.cudaEnv()) }
     }
 
     private fun gpuDevices(gpu: GpuAccess): List<String> {
@@ -113,22 +114,28 @@ class NsjailSandbox(
     }
 
     /**
-     * Fails fast at startup if nsjail is missing, cannot create namespaces on this host, or cannot execute files
-     * from the work directory (solutions are linked there; Docker mounts /dev/shm noexec, for example).
+     * Fails fast at startup if nsjail is missing, cannot create namespaces on this host, cannot execute files
+     * from the work directory (solutions are linked there; Docker mounts /dev/shm noexec, for example), or the
+     * configured seccomp policy is absent (running without the filter must be a decision, not a typo in a path).
      */
     fun selfTest(workDir: Path) {
+        cfg.seccompPolicy?.let { check(it.exists()) { "seccomp policy $it does not exist (judge.executor.sandbox.seccomp-policy)" } }
         Files.createDirectories(workDir)
         val script = workDir.resolve("selftest.sh")
-        script.writeText("#!/bin/sh\nexit 0\n")
+        script.writeText(SELF_TEST_SCRIPT)
         check(script.toFile().setExecutable(true, false)) { "cannot make $script executable" }
         val spec = SandboxSpec(emptyList(), workDir, wallTimeLimit = Duration.ofSeconds(10))
         val res = runToCompletion(spec.copy(command = listOf(inside(spec, script))), Duration.ofSeconds(15), 8192)
         check(res.ok) {
-            val logFile = workDir.resolveSibling(workDir.name + ".nsjail.log")
             "nsjail self-test failed (it runs a script from $workDir, which must not be on a noexec mount): " +
-                "${res.describe()}; log: ${if (logFile.exists()) Files.readString(logFile).takeLast(2000) else "-"}"
+                "${res.describe()}; log: ${Sandbox.logTail(workDir) ?: "-"}"
         }
         log.info("nsjail self-test passed (wsl={}, cgroupsV2={})", wsl, cfg.useCgroupsV2)
+    }
+
+    private companion object {
+        @Language("Shell Script")
+        const val SELF_TEST_SCRIPT = "#!/bin/sh\nexit 0\n"
     }
 }
 
@@ -144,10 +151,7 @@ class DirectSandbox : Sandbox {
             .directory(spec.workDir.toFile())
             .redirectInput(ProcessBuilder.Redirect.from(File("/dev/null")))
         val env = pb.environment()
-        spec.gpu?.let {
-            env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-            env["CUDA_VISIBLE_DEVICES"] = it.cudaIndex.toString()
-        }
+        spec.gpu?.let { env.putAll(it.cudaEnv()) }
         env.putAll(spec.env)
         return pb.start()
     }

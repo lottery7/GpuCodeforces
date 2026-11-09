@@ -7,10 +7,15 @@ import java.io.EOFException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.channels.FileChannel
+import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
-import kotlin.io.path.exists
+import java.nio.file.attribute.BasicFileAttributes
 import kotlin.io.path.fileSize
+import kotlin.math.abs
+import java.lang.Float as JavaFloat
 
 data class CheckResult(
     val ok: Boolean,
@@ -28,9 +33,16 @@ data class CheckResult(
 object OutputChecker {
 
     fun check(name: String, type: DType, actual: Path, expected: Path, spec: CheckerSpec): CheckResult {
-        if (!actual.exists()) return CheckResult(false, "$name: output was not produced")
+        // The solution owns the directory of [actual] and may have left a symbolic link there, e.g. to the
+        // reference answer itself: the output must be a plain file and is never opened through a link.
+        val attrs = try {
+            Files.readAttributes(actual, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+        } catch (_: NoSuchFileException) {
+            return CheckResult(false, "$name: output was not produced")
+        }
+        if (!attrs.isRegularFile) return CheckResult(false, "$name: output was not produced")
         val size = expected.fileSize()
-        if (actual.fileSize() != size) return CheckResult(false, "$name: output has wrong size")
+        if (attrs.size() != size) return CheckResult(false, "$name: output has wrong size")
         val n = size / type.bytes
         if (n == 0L) return CheckResult(true)
 
@@ -41,49 +53,42 @@ object OutputChecker {
         var firstAct = ""
         var maxAbs = 0.0
 
-        val elemsPerChunk = (CHUNK / type.bytes).toInt()
+        val elemsPerChunk = minOf(CHUNK / type.bytes, n).toInt()
         val a = ByteBuffer.allocateDirect(elemsPerChunk * type.bytes).order(ByteOrder.LITTLE_ENDIAN)
         val e = ByteBuffer.allocateDirect(elemsPerChunk * type.bytes).order(ByteOrder.LITTLE_ENDIAN)
-        FileChannel.open(actual, StandardOpenOption.READ).use { ca ->
+        FileChannel.open(actual, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS).use { ca ->
             FileChannel.open(expected, StandardOpenOption.READ).use { ce ->
                 var base = 0L
                 while (base < n) {
                     val count = minOf(elemsPerChunk.toLong(), n - base).toInt()
                     readFully(ca, a, count * type.bytes)
                     readFully(ce, e, count * type.bytes)
-                    if (exact) {
-                        if (a != e) {
-                            for (i in 0 until count) {
-                                if (!sameBits(a, e, i, type)) {
-                                    mismatches++
-                                    if (first < 0) {
-                                        first = base + i
-                                        firstAct = format(a, i, type)
-                                        firstExp = format(e, i, type)
-                                    }
-                                }
-                            }
-                        }
-                    } else {
+                    // Identical bytes pass in every mode (NaN matches NaN, the error is zero), and comparing whole
+                    // buffers is vectorised: elements are only decoded in chunks that differ.
+                    if (a != e) {
                         for (i in 0 until count) {
-                            val x = read(a, i, type)
-                            val y = read(e, i, type)
-                            val good = when {
-                                y.isNaN() -> x.isNaN()
-                                y.isInfinite() -> x == y
-                                x.isNaN() || x.isInfinite() -> false
-                                else -> {
-                                    val diff = Math.abs(x - y)
-                                    if (diff > maxAbs) maxAbs = diff
-                                    diff <= spec.atol + spec.rtol * Math.abs(y)
+                            val good = if (exact) {
+                                sameBits(a, e, i, type)
+                            } else {
+                                val x = read(a, i, type)
+                                val y = read(e, i, type)
+                                when {
+                                    y.isNaN() -> x.isNaN()
+                                    y.isInfinite() -> x == y
+                                    x.isNaN() || x.isInfinite() -> false
+                                    else -> {
+                                        val diff = abs(x - y)
+                                        if (diff > maxAbs) maxAbs = diff
+                                        diff <= spec.atol + spec.rtol * abs(y)
+                                    }
                                 }
                             }
                             if (!good) {
                                 mismatches++
                                 if (first < 0) {
                                     first = base + i
-                                    firstAct = x.toString()
-                                    firstExp = y.toString()
+                                    firstAct = format(a, i, type)
+                                    firstExp = format(e, i, type)
                                 }
                             }
                         }
@@ -106,33 +111,9 @@ object OutputChecker {
     private fun read(b: ByteBuffer, i: Int, t: DType): Double = when (t) {
         DType.FLOAT32 -> b.getFloat(i * 4).toDouble()
         DType.FLOAT64 -> b.getDouble(i * 8)
-        DType.FLOAT16 -> halfToFloat(b.getShort(i * 2).toInt()).toDouble()
+        DType.FLOAT16 -> JavaFloat.float16ToFloat(b.getShort(i * 2)).toDouble()
         DType.BFLOAT16 -> Float.fromBits((b.getShort(i * 2).toInt() and 0xFFFF) shl 16).toDouble()
         else -> error("not a float type: $t")
-    }
-
-    /** IEEE 754 binary16 -> binary32 (exact; handles subnormals, infinities and NaN payloads). */
-    internal fun halfToFloat(half: Int): Float {
-        val h = half and 0xFFFF
-        val sign = (h ushr 15) shl 31
-        val exp = (h ushr 10) and 0x1F
-        val mant = h and 0x3FF
-        val bits = when {
-            exp == 0 && mant == 0 -> sign
-            exp == 0 -> {
-                // subnormal: normalise the mantissa, each shift lowers the exponent by one
-                var e = -14
-                var m = mant
-                while (m and 0x400 == 0) {
-                    m = m shl 1
-                    e--
-                }
-                sign or ((e + 127) shl 23) or ((m and 0x3FF) shl 13)
-            }
-            exp == 31 -> sign or 0x7F800000 or (mant shl 13)
-            else -> sign or ((exp - 15 + 127) shl 23) or (mant shl 13)
-        }
-        return Float.fromBits(bits)
     }
 
     private fun sameBits(a: ByteBuffer, e: ByteBuffer, i: Int, t: DType): Boolean = when (t.bytes) {

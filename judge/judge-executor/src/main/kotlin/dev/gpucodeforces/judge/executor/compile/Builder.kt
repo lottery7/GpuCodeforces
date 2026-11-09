@@ -5,13 +5,13 @@ import dev.gpucodeforces.judge.api.Signature
 import dev.gpucodeforces.judge.executor.config.ExecutorProperties
 import dev.gpucodeforces.judge.executor.sandbox.Sandbox
 import dev.gpucodeforces.judge.executor.sandbox.SandboxSpec
+import dev.gpucodeforces.judge.executor.util.FileTrees
 import dev.gpucodeforces.judge.executor.util.Hashing
 import dev.gpucodeforces.judge.executor.util.Proc
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.FileTime
-import java.nio.file.attribute.PosixFilePermissions
 import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Semaphore
@@ -20,6 +20,7 @@ import kotlin.concurrent.withLock
 import kotlin.io.path.exists
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
+import org.intellij.lang.annotations.Language
 import org.slf4j.LoggerFactory
 
 sealed interface BuildOutcome {
@@ -55,7 +56,8 @@ class Builder(
     private val runtimeHeader = props.paths.harness.resolve("include/judge/runtime.h")
 
     fun build(source: String, signature: Signature, compile: CompileSpec, policy: EffectivePolicy, runDir: Path): BuildOutcome {
-        SourceChecks.checkSource(source, policy).takeIf { it.isNotEmpty() }?.let { return BuildOutcome.Violation(it, "") }
+        val sourceViolations = SourceChecks.checkSource(source, policy)
+        if (sourceViolations.isNotEmpty()) return BuildOutcome.Violation(sourceViolations, compileLog = "")
 
         val harness = harnessObject(signature)
         val obj = solutionObject(source, compile.arch ?: props.profile.arch, compile.flags ?: props.compile.flags)
@@ -90,10 +92,7 @@ class Builder(
         return BuildOutcome.Ok(binary, obj.log, obj.cached)
     }
 
-    // ---------------------------------------------------------------------------------------------------------
-    // Contestant object (sandboxed nvcc, cached)
-    // ---------------------------------------------------------------------------------------------------------
-
+    /** The contestant's object file with what the checks need, as cached on disk. */
     private class CompiledObject(
         val dir: Path, val ok: Boolean, val log: String, val deps: String,
         val sassOpcodes: Set<String>, val nm: String, val cached: Boolean,
@@ -113,25 +112,29 @@ class Builder(
         val ok = status.readText().trim() == "ok"
         Files.setLastModifiedTime(status, FileTime.fromMillis(System.currentTimeMillis()))
         return CompiledObject(
-            dir, ok, dir.resolve("compile.log").readText(),
-            if (ok) dir.resolve("solution.d").readText() else "",
-            if (ok) dir.resolve("sass.txt").readText().lines().filter { it.isNotBlank() }.toSet() else emptySet(),
-            if (ok) dir.resolve("nm.txt").readText() else "",
-            cached,
+            dir, ok,
+            log = dir.resolve("compile.log").readText(),
+            deps = if (ok) dir.resolve("solution.d").readText() else "",
+            sassOpcodes = if (ok) dir.resolve("sass.txt").readText().lines().filter { it.isNotBlank() }.toSet() else emptySet(),
+            nm = if (ok) dir.resolve("nm.txt").readText() else "",
+            cached = cached,
         )
     }
 
     private fun compileFresh(source: String, arch: String, flags: List<String>, dir: Path): CompiledObject {
         val tmp = Files.createDirectories(objectsDir.resolve("tmp")).let { Files.createTempDirectory(it, "c-") }
         try {
-            makeWorldWritable(tmp)
+            FileTrees.makeWritableByAll(tmp)
             tmp.resolve("solution.cu").writeText(source)
+            val memoryLimit = props.compile.memoryLimitMb shl 20
             val spec = SandboxSpec(
                 command = emptyList(),
                 workDir = tmp,
                 wallTimeLimit = props.compile.timeLimit.plusSeconds(5),
-                memoryLimitBytes = props.compile.memoryLimitMb shl 20,
-                maxFileBytes = 512L shl 20,
+                memoryLimitBytes = memoryLimit,
+                // a template or constexpr bomb must not take the machine's memory when cgroups are off
+                addressSpaceBytes = memoryLimit,
+                maxFileBytes = MAX_OBJECT_BYTES,
                 tmpBytes = 1L shl 30,
             )
             val inside = { name: String -> sandbox.inside(spec, tmp.resolve(name)) }
@@ -153,7 +156,12 @@ class Builder(
                 // a real compile error always has diagnostics; silence means nvcc/nsjail did not run properly
                 throw BuildInfrastructureException("compiler failed without output: ${res.describe()}")
             }
-            log.info("nvcc {} {} finished in {}ms: {}", arch, flags, ms, if (ok) "ok" else if (res.timedOut) "timeout" else "compile error")
+            val how = when {
+                ok -> "ok"
+                res.timedOut -> "timeout"
+                else -> "compile error"
+            }
+            log.info("nvcc {} {} finished in {}ms: {}", arch, flags, ms, how)
             tmp.resolve("compile.log").writeText(logText)
             if (ok) {
                 val obj = tmp.resolve("solution.o").toString()
@@ -163,7 +171,7 @@ class Builder(
                 val nm = Proc.run(listOf(tc.nm, obj), Duration.ofSeconds(30), maxOutputBytes = 16 shl 20)
                 if (!nm.ok) throw BuildInfrastructureException("nm failed: ${nm.describe()}")
                 tmp.resolve("nm.txt").writeText(nm.stdout)
-                if (!tmp.resolve("solution.d").exists()) tmp.resolve("solution.d").writeText("solution.o: solution.cu\n")
+                if (!tmp.resolve("solution.d").exists()) tmp.resolve("solution.d").writeText(NO_DEPENDENCIES)
             }
             // Timeouts are not cached: they may be caused by machine load.
             if (!res.timedOut) {
@@ -172,17 +180,14 @@ class Builder(
                 if (!dir.exists()) Files.move(tmp, dir, StandardCopyOption.ATOMIC_MOVE)
                 return load(dir, cached = false)!!
             }
-            return CompiledObject(tmp, false, logText, "", emptySet(), "", false)
+            return CompiledObject(tmp, ok = false, log = logText, deps = "", sassOpcodes = emptySet(), nm = "", cached = false)
         } finally {
-            if (tmp.exists()) tmp.toFile().deleteRecursively()
-            Files.deleteIfExists(tmp.resolveSibling(tmp.fileName.toString() + ".nsjail.log"))
+            FileTrees.delete(tmp)
+            Sandbox.deleteLog(tmp)
         }
     }
 
-    // ---------------------------------------------------------------------------------------------------------
-    // Harness object per signature (trusted, cached)
-    // ---------------------------------------------------------------------------------------------------------
-
+    /** The harness object for a signature: trusted code, compiled outside the sandbox and cached. */
     private fun harnessObject(sig: Signature): Path {
         val source = HarnessGenerator.generate(sig)
         val key = Hashing.sha256(source, Files.readString(runtimeHeader), toolchain.fingerprint, OBJECT_FORMAT)
@@ -204,7 +209,7 @@ class Builder(
                 Files.move(tmp, dir, StandardCopyOption.ATOMIC_MOVE)
                 log.info("Built harness {} for {}", key.take(12), sig.function)
             } finally {
-                if (tmp.exists()) tmp.toFile().deleteRecursively()
+                FileTrees.delete(tmp)
             }
             obj
         }
@@ -219,16 +224,15 @@ class Builder(
         /** Code for exactly this architecture: no PTX is embedded, so nothing is JIT-compiled at run time. */
         private fun gencode(arch: String) = listOf("-gencode", "arch=${arch.replace("sm_", "compute_")},code=$arch")
 
-        fun makeWorldWritable(dir: Path) {
-            // the sandboxed process runs as a different uid and writes outputs here
-            Files.setPosixFilePermissions(dir, PosixFilePermissions.fromString("rwxrwxrwx"))
-        }
+        /** Far above any real object file; bounds what one submission can add to the object cache. */
+        private const val MAX_OBJECT_BYTES = 64L shl 20
+
+        /** Stands in for the dependency file when the compiler wrote none. */
+        @Language("Makefile")
+        private const val NO_DEPENDENCIES = "solution.o: solution.cu\n"
 
         /** Removes host paths from compiler messages: `/work/solution.cu(3): error` -> `solution.cu(3): error`. */
-        fun sanitize(text: String, dirs: List<Path>): String {
-            var t = text
-            for (d in dirs) t = t.replace(d.toAbsolutePath().toString() + "/", "")
-            return t.replace("${Sandbox.WORK}/", "").trim()
-        }
+        fun sanitize(text: String, dirs: List<Path>): String =
+            dirs.fold(text) { t, d -> t.replace(d.toAbsolutePath().toString() + "/", "") }.replace("${Sandbox.WORK}/", "").trim()
     }
 }

@@ -4,13 +4,12 @@ import dev.gpucodeforces.judge.api.ParamRole
 import dev.gpucodeforces.judge.api.ProblemSpec
 import dev.gpucodeforces.judge.api.SpecValidator
 import dev.gpucodeforces.judge.api.TestSpec
-import dev.gpucodeforces.judge.executor.compile.Builder
 import dev.gpucodeforces.judge.executor.compile.Toolchain
 import dev.gpucodeforces.judge.executor.config.ExecutorProperties
 import dev.gpucodeforces.judge.executor.gpu.GpuManager
-import dev.gpucodeforces.judge.executor.sandbox.GpuAccess
 import dev.gpucodeforces.judge.executor.sandbox.Sandbox
 import dev.gpucodeforces.judge.executor.sandbox.SandboxSpec
+import dev.gpucodeforces.judge.executor.util.FileTrees
 import dev.gpucodeforces.judge.executor.util.Hashing
 import org.slf4j.LoggerFactory
 import tools.jackson.databind.MapperFeature
@@ -21,6 +20,7 @@ import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.attribute.FileTime
 import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
@@ -29,7 +29,6 @@ import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 import kotlin.io.path.exists
 import kotlin.io.path.fileSize
-import kotlin.io.path.name
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
 
@@ -107,7 +106,7 @@ class ProblemStore(
     }
 
     fun release(hash: String) {
-        inUse[hash]?.decrementAndGet()
+        inUse.getValue(hash).decrementAndGet()
     }
 
     private fun layout(spec: ProblemSpec, hash: String, dir: Path): PreparedProblem {
@@ -124,17 +123,15 @@ class ProblemStore(
                 expected = sig.outputs.associate { it.name to dir.resolve("expected/t$idx/${it.name}.bin") },
             )
         }
-        return PreparedProblem(hash, dir, dir.resolve("inputs"), tests)
+        return PreparedProblem(hash, dir = dir, inputsDir = dir.resolve("inputs"), tests)
     }
 
     private fun prepare(spec: ProblemSpec, hash: String, dir: Path, cancelled: () -> Boolean) {
         val started = System.nanoTime()
         Files.createDirectories(root)
         val tmp = Files.createTempDirectory(root, ".tmp-${hash.take(12)}-")
-        val sandboxLog = tmp.resolveSibling(tmp.name + ".nsjail.log")
         try {
-            // the sandboxed generator runs as a different uid and writes its output here
-            Builder.makeWorldWritable(tmp)
+            FileTrees.makeWritableByAll(tmp)
             val specFile = tmp.resolve("spec.json")
             specFile.writeText(canonical.writeValueAsString(mapOf("signature" to spec.signature, "tests" to spec.tests)))
             val source = tmp.resolve("problem.py")
@@ -152,7 +149,7 @@ class ProblemStore(
                         put(pytools, "/pytools")
                         pythonMount()?.let { put(it, it.toString()) }
                     },
-                    gpu = GpuAccess(slot.index, slot.config.deviceNode),
+                    gpu = slot.access(),
                     wallTimeLimit = props.prepare.timeLimit.plusSeconds(5),
                     maxFileBytes = largestArrayBytes(spec),
                     tmpBytes = 1L shl 30,
@@ -168,29 +165,25 @@ class ProblemStore(
             }
             if (!res.ok) {
                 val problemFault = res.exitCode == 2 && !res.timedOut
-                log.error(
-                    "Problem {} preparation failed: {}; sandbox log: {}",
-                    spec.id, res.describe(), if (sandboxLog.exists()) sandboxLog.readText().takeLast(2000) else "-",
-                )
+                log.error("Problem {} preparation failed: {}; sandbox log: {}", spec.id, res.describe(), Sandbox.logTail(tmp) ?: "-")
                 throw ProblemPreparationException(
                     if (res.timedOut) "test generation exceeded ${props.prepare.timeLimit.toMinutes()} min"
                     else "test generation failed: ${res.stderr.trim().takeLast(4000)}",
                     problemFault,
                 )
             }
-            verifySizes(spec, out)
-            val bytes = Files.walk(out).use { s -> s.filter { Files.isRegularFile(it) }.mapToLong { it.fileSize() }.sum() }
+            val bytes = verifyOutput(spec, out)
             out.resolve("size").writeText(bytes.toString())
             out.resolve(READY).writeText(hash)
-            if (dir.exists()) dir.toFile().deleteRecursively()
+            FileTrees.delete(dir)
             Files.move(out, dir, StandardCopyOption.ATOMIC_MOVE)
             log.info(
                 "Prepared problem {} in {}ms: {} MB of test data, generator log: {}",
                 spec.id, (System.nanoTime() - started) / 1_000_000, bytes shr 20, res.stderr.lines().takeLast(3).joinToString(" | "),
             )
         } finally {
-            tmp.toFile().deleteRecursively()
-            Files.deleteIfExists(sandboxLog)
+            FileTrees.delete(tmp)
+            Sandbox.deleteLog(tmp)
         }
     }
 
@@ -206,27 +199,43 @@ class ProblemStore(
         spec.signature.arrays.maxOfOrNull { counts.getValue(it.name) * it.type.bytes } ?: 0
     }
 
-    private fun verifySizes(spec: ProblemSpec, out: Path) {
-        val sig = spec.signature
-        spec.tests.forEachIndexed { i, t ->
-            val counts = SpecValidator.elementCounts(sig, t)
-            for (p in sig.arrays) {
-                val files = buildList {
-                    if (p.role == ParamRole.INPUT || p.role == ParamRole.INOUT) add(out.resolve("inputs/t${i + 1}/${p.name}.bin"))
-                    if (p.role == ParamRole.OUTPUT || p.role == ParamRole.INOUT) add(out.resolve("expected/t${i + 1}/${p.name}.bin"))
-                }
-                for (f in files) {
-                    val want = counts.getValue(p.name) * p.type.bytes
-                    // the generator is untrusted: a symlink here would make the judge read a file of its choosing
-                    if (!Files.isRegularFile(f, LinkOption.NOFOLLOW_LINKS)) {
-                        throw ProblemPreparationException("prepared file ${out.relativize(f)} is missing or not a regular file", true)
-                    }
-                    if (f.fileSize() != want) {
-                        throw ProblemPreparationException("prepared file ${out.relativize(f)} has ${f.fileSize()} bytes, expected $want", true)
-                    }
+    /**
+     * The generator is untrusted and [out] is entirely its work. Only the expected directories and regular files
+     * of the expected sizes (and its `meta.json`) are accepted: the judge reads these files as root, writes its
+     * markers next to them and mounts `inputs` into every solution's sandbox, so a symbolic link or a stray copy
+     * of the answers must not survive. Returns the size of the test data.
+     */
+    private fun verifyOutput(spec: ProblemSpec, out: Path): Long {
+        fun broken(what: String): Nothing = throw ProblemPreparationException(what, problemFault = true)
+
+        val wanted = buildMap {
+            for (t in layout(spec, "", out).tests) {
+                for (p in spec.signature.arrays) {
+                    val bytes = t.counts.getValue(p.name) * p.type.bytes
+                    t.inputs[p.name]?.let { put(it, bytes) }
+                    t.expected[p.name]?.let { put(it, bytes) }
                 }
             }
         }
+        // setOf: a Path is itself an Iterable of its name elements, so `+ out` would add those instead
+        val directories = wanted.keys.flatMap { listOf(it.parent, it.parent.parent) }.toSet() + setOf(out)
+        val meta = out.resolve("meta.json")
+        if (!Files.isDirectory(out, LinkOption.NOFOLLOW_LINKS)) broken("the generator produced no output directory")
+        val found = Files.walk(out).use { entries -> entries.limit(wanted.size + directories.size + 2L).toList() }
+        for (p in found) {
+            val attrs = Files.readAttributes(p, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+            val expected = when {
+                attrs.isDirectory -> p in directories
+                attrs.isRegularFile -> p == meta || p in wanted
+                else -> false
+            }
+            if (!expected) broken("the generator left unexpected ${out.relativize(p)} in its output")
+        }
+        for ((file, bytes) in wanted) {
+            if (file !in found) broken("prepared file ${out.relativize(file)} is missing")
+            if (file.fileSize() != bytes) broken("prepared file ${out.relativize(file)} has ${file.fileSize()} bytes, expected $bytes")
+        }
+        return wanted.values.sum()
     }
 
     private fun evictIfNeeded() {
@@ -243,7 +252,7 @@ class ProblemStore(
             if ((inUse[hash]?.get() ?: 0) > 0) continue
             log.info("Evicting cached problem data {} ({} MB)", hash.take(12), size shr 20)
             Files.deleteIfExists(dir.resolve(READY))
-            dir.toFile().deleteRecursively()
+            FileTrees.delete(dir)
             total -= size
         }
     }

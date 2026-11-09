@@ -18,13 +18,19 @@ services:
   # Testing system (judge/README.md). Behind profiles so `docker compose up -d --wait` still starts only PostgreSQL:
   #   docker compose --profile judge up -d --wait   # RabbitMQ + judge gateway
   #   docker compose --profile gpu up -d --wait     # + judge executor (NVIDIA GPU + nvidia-container-toolkit)
+  # Executors on other machines (one per GPU type) use judge/deploy/compose.executor.yaml and connect to this broker:
+  # set RABBITMQ_BIND=0.0.0.0, real RABBITMQ_USER/RABBITMQ_PASSWORD, and list every type in JUDGE_GPU_PROFILES.
   rabbitmq:
     profiles: [judge, gpu]
     image: rabbitmq:4.1.8-management
     hostname: rabbitmq
+    environment:
+      # local development defaults; applied only when the broker's data volume is first created
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
     ports:
-      - "127.0.0.1:5672:5672"
-      - "127.0.0.1:15672:15672" # management UI, guest/guest
+      - "${RABBITMQ_BIND:-127.0.0.1}:5672:5672"
+      - "127.0.0.1:15672:15672" # management UI
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
     healthcheck:
@@ -40,8 +46,11 @@ services:
       dockerfile: judge/deploy/gateway.Dockerfile
     environment:
       RABBITMQ_HOST: rabbitmq
-      JUDGE_GPU_PROFILES: rtx3060
-      JUDGE_DEFAULT_GPU_PROFILE: rtx3060
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      # every GPU type submissions may ask for (comma-separated); each needs an executor with that JUDGE_GPU_PROFILE
+      JUDGE_GPU_PROFILES: ${JUDGE_GPU_PROFILES:-rtx3060}
+      JUDGE_DEFAULT_GPU_PROFILE: ${JUDGE_DEFAULT_GPU_PROFILE:-rtx3060}
       SPRING_PROFILES_ACTIVE: ${JUDGE_LOG_PROFILE:-default}
     ports:
       - "127.0.0.1:8090:8090" # API + /swagger-ui.html
@@ -58,7 +67,12 @@ services:
     privileged: true
     environment:
       RABBITMQ_HOST: rabbitmq
-      JUDGE_GPU_PROFILE: rtx3060
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      # the GPU type of this machine; the executor checks it against the card and takes only its submissions
+      JUDGE_GPU_PROFILE: ${JUDGE_GPU_PROFILE:-rtx3060}
+      JUDGE_GPU_ARCH: ${JUDGE_GPU_ARCH:-sm_86}
+      JUDGE_GPU_NAME: ${JUDGE_GPU_NAME:-NVIDIA GeForce RTX 3060}
       JUDGE_EXECUTOR_ID: ${JUDGE_EXECUTOR_ID:-gpu-node-1}
       JUDGE_LOCK_CLOCKS: ${JUDGE_LOCK_CLOCKS:-}
       JUDGE_WORK_DIR: /run/judge/work
