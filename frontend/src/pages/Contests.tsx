@@ -1,0 +1,70 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link, useLocation, useSearchParams } from 'react-router';
+import { api } from '../api/client';
+import type { Contest, ContestQuery } from '../api/types';
+import { useSession } from '../auth';
+import { Empty, ErrorMessage, LoginRequired, PageHeader, SearchInput, Tabs } from '../ui';
+import { dateTime, phaseOf } from '../utils';
+
+const phases = ['live', 'upcoming', 'finished', 'mine'] as const;
+
+function duration(contest: Contest) {
+  const minutes = Math.round((Date.parse(contest.endAt) - Date.parse(contest.startAt)) / 60000);
+  const hours = Math.floor(minutes / 60);
+  return `${hours ? `${hours} ч` : ''}${hours && minutes % 60 ? ' ' : ''}${minutes % 60 ? `${minutes % 60} мин` : ''}`;
+}
+
+export default function Contests() {
+  const { user, isLoading } = useSession();
+  const [params, setParams] = useSearchParams();
+  const location = useLocation();
+  const queryClient = useQueryClient();
+  const selected = phases.find(phase => phase === params.get('tabs')) ?? 'live';
+  const query = params.get('q') ?? '';
+  const filter: ContestQuery = { q: query || undefined, ...(selected === 'mine' ? { mine: true } : { phase: selected }) };
+  const contests = useQuery({
+    queryKey: ['contests', user?.id, selected, query],
+    queryFn: ({ signal }) => api.listContests(filter, signal),
+    enabled: !isLoading && (selected !== 'mine' || Boolean(user)),
+    refetchInterval: selected === 'live' ? 5000 : false,
+  });
+  const join = useMutation({
+    mutationFn: (id: string) => api.registerForContest(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['contests'] });
+      void queryClient.invalidateQueries({ queryKey: ['contest'] });
+      void queryClient.invalidateQueries({ queryKey: ['profile'] });
+    },
+  });
+  const tabPath = (tab: string) => `/contests?${new URLSearchParams({ tabs: tab, ...(query ? { q: query } : {}) })}`;
+  const returnTo = location.pathname + location.search;
+  const entries = [
+    { id: 'live', label: 'Текущие', to: tabPath('live') },
+    { id: 'upcoming', label: 'Будущие', to: tabPath('upcoming') },
+    { id: 'finished', label: 'Завершенные', to: tabPath('finished') },
+    ...(user || selected === 'mine' ? [{ id: 'mine', label: 'Мои', to: tabPath('mine') }] : []),
+  ];
+
+  return <>
+    <PageHeader title="Соревнования" actions={<Link className="btn primary" to={user ? '/contests/new' : '/login?returnTo=%2Fcontests%2Fnew'}>Создать контест</Link>} />
+    <Tabs items={entries} selected={selected} />
+    {selected === 'mine' && !user && !isLoading ? <LoginRequired returnTo={returnTo}>Здесь будут контесты, в которых вы указаны автором.</LoginRequired> : <>
+      <div className="toolbar">
+        <div className="search"><SearchInput label="Найти соревнование" placeholder="Название контеста" value={query} onChange={value => setParams({ tabs: selected, ...(value ? { q: value } : {}) }, { replace: true })} /></div>
+        {query && <Link className="filter-reset" to={`/contests?tabs=${selected}`}>Сбросить</Link>}
+      </div>
+      {join.error && <ErrorMessage error={join.error} />}
+      {contests.isPending && <p className="loading" role="status">Загрузка соревнований...</p>}
+      {contests.error && <div><ErrorMessage error={contests.error} /><button className="text-link" onClick={() => void contests.refetch()}>Повторить</button></div>}
+      {contests.data && (contests.data.length ? <div className="table-wrap"><table className="data-table contest-list" aria-label="Список соревнований">
+        <thead><tr><th>Название</th><th>Начало, МСК</th><th>Длительность</th><th>Задачи</th>{selected === 'mine' ? <th>Статус</th> : selected !== 'finished' && <th>Участие</th>}</tr></thead>
+        <tbody>{contests.data.map(contest => <tr key={contest.id}>
+          <td><Link to={`/contest/${encodeURIComponent(contest.id)}`}>{contest.title}</Link></td>
+          <td><time dateTime={contest.startAt}>{dateTime(contest.startAt)}</time></td>
+          <td>{duration(contest)}</td><td>{contest.problemCount}</td>
+          {selected === 'mine' ? <td>{({ upcoming: 'До начала', live: 'Идет', finished: 'Завершен' })[phaseOf(contest)]}</td> : selected !== 'finished' && <td>{contest.registered ? <span className="success">{selected === 'upcoming' ? 'Вы зарегистрированы' : 'Вы участвуете'}</span> : user ? <button className="btn secondary" disabled={join.isPending} onClick={() => join.mutate(contest.id)}>{join.isPending && join.variables === contest.id ? 'Регистрация...' : 'Зарегистрироваться'}</button> : <Link className="btn secondary" to={`/login?returnTo=${encodeURIComponent(returnTo)}`}>Зарегистрироваться</Link>}</td>}
+        </tr>)}</tbody>
+      </table></div> : <Empty>{query.trim() ? 'Соревнования не найдены. Измените запрос или выберите другую вкладку.' : selected === 'mine' ? 'У вас пока нет контестов.' : selected === 'live' ? 'Сейчас нет активных соревнований.' : selected === 'upcoming' ? 'Новые соревнования еще не объявлены.' : 'Завершенных соревнований пока нет.'}</Empty>)}
+    </>}
+  </>;
+}

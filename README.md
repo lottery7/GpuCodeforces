@@ -39,6 +39,8 @@ skip when it is unavailable. The executable jar is under `backend/build/libs/`.
 
 ## Frontend API
 
+The React application is in [frontend](frontend/README.md).
+
 The contract is [docs/frontend/openapi.yaml](docs/frontend/openapi.yaml).
 It covers the MVP screens and actions, including example checks and retrying failed
 checks. Password recovery, private problems and GPU selection remain outside the MVP.

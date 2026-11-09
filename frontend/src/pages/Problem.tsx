@@ -1,0 +1,171 @@
+import { useEffect, useRef, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
+import { api, ApiError } from '../api/client';
+import type { Contest, ProblemDetail } from '../api/types';
+import { useSession } from '../auth';
+import CodeEditor from '../components/CodeEditor';
+import { readDraft, rememberEditorLogin, writeDraft } from '../drafts';
+import { Empty, ErrorMessage, Markdown, PageHeader, QueryState, Tabs, TimeValue, UserLink } from '../ui';
+import { contextFromSearch, difficultyLabels, problemPath } from '../utils';
+import { SubmissionList } from './Submissions';
+
+function phaseOf(contest: Contest | undefined, now: number) {
+  if (!contest) return null;
+  return now < Date.parse(contest.startAt) ? 'upcoming' : now >= Date.parse(contest.endAt) ? 'finished' : 'live';
+}
+
+function EditorPane({ problem, context, contest, contestLoading, phase }: { problem: ProblemDetail; context: string; contest?: Contest; contestLoading: boolean; phase: ReturnType<typeof phaseOf> }) {
+  const { user } = useSession();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const queryClient = useQueryClient();
+  const [code, setCode] = useState(() => readDraft(user?.id || null, problem.id, context, problem.starterCode));
+  const [saved, setSaved] = useState(true);
+  const [undo, setUndo] = useState<{ code: string; message: string } | null>(null);
+  const [localError, setLocalError] = useState<Error | null>(null);
+  const [example, setExample] = useState<{ code: string; passed: boolean; diagnostic: string } | null>(null);
+  function changeCode(value: string) {
+    setCode(value);
+    setSaved(writeDraft(user?.id || null, problem.id, context, value));
+    setLocalError(null);
+    setUndo(null);
+  }
+  function requestLogin() {
+    rememberEditorLogin(problem.id, context, code, location.pathname + location.search);
+    navigate(`/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`);
+  }
+  const check = useMutation({
+    mutationFn: (snapshot: string) => api.checkExample(problem.id, context, snapshot),
+    onSuccess: (result, snapshot) => setExample({ code: snapshot, ...result }),
+    onError: error => { if (error instanceof ApiError && error.status === 401) requestLogin(); },
+  });
+  const submit = useMutation({
+    mutationFn: () => api.submitSolution({ problemId: problem.id, ...(context !== 'practice' ? { contestId: context } : {}), code }),
+    onSuccess: item => {
+      void queryClient.invalidateQueries();
+      navigate(`/submission/${encodeURIComponent(item.id)}`);
+    },
+    onError: error => { if (error instanceof ApiError && error.status === 401) requestLogin(); },
+  });
+  const join = useMutation({
+    mutationFn: () => api.registerForContest(context),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['contest', context] }),
+    onError: error => { if (error instanceof ApiError && error.status === 401) requestLogin(); },
+  });
+  const busy = check.isPending || submit.isPending || join.isPending;
+  const error = localError || submit.error || join.error || check.error;
+  function reset() {
+    changeCode(problem.starterCode);
+    setUndo({ code, message: 'Шаблон восстановлен.' });
+    setExample(null);
+    check.reset();
+  }
+  function practice() {
+    setSaved(writeDraft(user?.id || null, problem.id, 'practice', code));
+    navigate(problemPath(problem.id));
+  }
+  function download() {
+    const url = URL.createObjectURL(new Blob([code], { type: 'text/plain;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'solution.cu';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  return <section className="editor-section" id="editor" aria-label="Редактор решения">
+    <div className="panel editor-panel">
+      <div className="editor-title"><span className="editor-file-tab active"><span className="file-tab-mark" aria-hidden="true">CU</span>solution.cu</span>
+        <div className="inline"><button type="button" className="text-link" onClick={download}>Скачать код</button><label className="text-link file-button">Выбрать файл<input type="file" accept=".cu,.cpp,.cuh,.h,.txt" aria-label="Загрузить код из файла" onChange={async event => {
+          const file = event.target.files?.[0];
+          event.target.value = '';
+          if (!file) return;
+          try { changeCode(await file.text()); setUndo({ code, message: 'Файл загружен.' }); } catch { setLocalError(new Error('Не удалось прочитать файл.')); }
+        }} /></label></div>
+      </div>
+      <CodeEditor value={code} onChange={changeCode} status={saved ? 'Черновик сохранен' : 'Хранилище недоступно. Скачайте код.'} />
+      <div className="editor-actions">
+        <button type="button" className="text-link" onClick={reset} disabled={busy}>Восстановить шаблон</button>
+        <button type="button" className="btn secondary run-btn" onClick={() => { setExample(null); check.mutate(code); }} disabled={busy || !code.trim()}>{check.isPending ? 'Проверяем пример...' : 'Проверить пример'}</button>
+        {phase === 'finished' ? <button type="button" className="btn primary" onClick={practice}>Продолжить в практике</button>
+          : phase === 'upcoming' ? <button type="button" className="btn primary" disabled>Отправка после начала</button>
+          : !user ? <button type="button" className="btn primary" onClick={requestLogin}>Войти и отправить</button>
+          : context !== 'practice' && !contest?.registered ? <button type="button" className="btn primary" disabled={busy || contestLoading} onClick={() => join.mutate()}>{join.isPending ? 'Регистрируем...' : 'Участвовать'}</button>
+          : <button type="button" className="btn primary" disabled={busy || !code.trim() || contestLoading} onClick={() => submit.mutate()}>{submit.isPending ? 'Отправляем...' : 'Отправить'}</button>}
+      </div>
+    </div>
+    {undo !== null && <div className="notice">{undo.message} <button type="button" className="text-link" onClick={() => changeCode(undo.code)}>Отменить</button></div>}
+    <ErrorMessage error={error} />
+    {(check.isPending || example) && <section className="run-console" aria-label="Вывод проверки"><div className="tool-window-head">Вывод</div><div className="tool-window-body" role="status">
+      {check.isPending ? 'Проверяем пример...' : example && (example.code !== code ? <p className="muted">Код изменен. Проверьте пример снова.</p> : <><p className={example.passed ? 'success' : 'error'}>{example.passed ? 'Пример пройден.' : 'Пример не пройден.'}</p>{example.diagnostic && <pre className="diagnostic">{example.diagnostic}</pre>}</>)}
+    </div></section>}
+    <a href="#statement" className="back-to-statement">К условию</a>
+  </section>;
+}
+
+function Leaders({ problemId, context, finished }: { problemId: string; context: string; finished: boolean }) {
+  const { user } = useSession();
+  const leaders = useQuery({
+    queryKey: ['problem-leaders', problemId, context, user?.id],
+    queryFn: ({ signal }) => api.problemLeaders(problemId, context, signal),
+    refetchInterval: finished ? false : 5000,
+  });
+  return <QueryState query={leaders}>{leaders.data && (leaders.data.length ? <div className="panel table-wrap"><table className="data-table" aria-label="Лидеры задачи">
+    <thead><tr><th>Место</th><th>Участник</th><th>Лучшее время, мс</th><th>Посылка</th></tr></thead>
+    <tbody>{leaders.data.map(item => <tr key={item.user.id} className={item.user.id === user?.id ? 'own-row' : undefined}><td>{item.rank}</td><td><UserLink user={item.user} /></td><td className="mono"><TimeValue value={item.timeMs} /></td><td><Link to={`/submission/${encodeURIComponent(item.submissionId)}`}>#{item.submissionId}</Link></td></tr>)}</tbody>
+  </table></div> : <Empty>Принятых решений в этой конфигурации пока нет.</Empty>)}</QueryState>;
+}
+
+export default function Problem() {
+  const { id = '' } = useParams();
+  const [params] = useSearchParams();
+  const { user, isLoading } = useSession();
+  const queryClient = useQueryClient();
+  const [now, setNow] = useState(Date.now);
+  const previousPhase = useRef<{ context: string; phase: ReturnType<typeof phaseOf> } | null>(null);
+  const context = contextFromSearch(params);
+  useEffect(() => {
+    if (context === 'practice') return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [context]);
+  const tab = ['submissions', 'leaders'].includes(params.get('tab') || '') ? params.get('tab')! : 'statement';
+  const problem = useQuery({
+    queryKey: ['problem', id, context, user?.id],
+    queryFn: ({ signal }) => api.getProblem(id, context, signal),
+    enabled: Boolean(id) && !isLoading,
+  });
+  const contest = useQuery({
+    queryKey: ['contest', context, user?.id],
+    queryFn: ({ signal }) => api.getContest(context, signal),
+    enabled: context !== 'practice' && !isLoading,
+    refetchInterval: q => q.state.data && Date.now() >= Date.parse(q.state.data.endAt) ? false : 5000,
+  });
+  const phase = phaseOf(contest.data, now);
+  useEffect(() => {
+    const previous = previousPhase.current;
+    if (phase && previous?.context === context && previous.phase && previous.phase !== phase) {
+      void queryClient.invalidateQueries({ queryKey: ['contest', context] });
+      void queryClient.invalidateQueries({ queryKey: ['problem', id, context] });
+      void queryClient.invalidateQueries({ queryKey: ['problem-leaders', id, context] });
+    }
+    previousPhase.current = { context, phase };
+  }, [phase, context, id, queryClient]);
+  return <QueryState query={problem}>{problem.data && <>
+    <div className="breadcrumbs"><Link to={context === 'practice' ? '/problems' : `/contest/${encodeURIComponent(context)}`}>{context === 'practice' ? 'Практика' : contest.data?.title || 'Контест'}</Link></div>
+    <PageHeader title={`${problem.data.code}. ${problem.data.title}`} actions={tab === 'statement' ? <a className="text-link editor-anchor" href="#editor">К редактору</a> : undefined} />
+    <div className="problem-meta"><span>{difficultyLabels[problem.data.difficulty]}</span><span>Время: {problem.data.timeLimitSeconds} с</span><span>Память GPU: {problem.data.memoryLimitMb} MB</span></div>
+    <Tabs selected={tab} items={[
+      { id: 'statement', label: 'Условие и решение', to: problemPath(id, context) },
+      { id: 'submissions', label: context === 'practice' ? 'Мои посылки' : 'Мои посылки в контесте', to: problemPath(id, context, 'submissions') },
+      { id: 'leaders', label: 'Лидеры', to: problemPath(id, context, 'leaders') },
+    ]} />
+    {context !== 'practice' && contest.error && <ErrorMessage error={contest.error} />}
+    {phase === 'finished' && <p className="notice">Соревнование завершено. Новые решения в практике не изменят его результаты.</p>}
+    {tab === 'statement' ? <div className="problem-workspace">
+      <section className="statement statement-pane" id="statement" aria-label="Условие задачи"><div className="tool-window-head">Условие</div><div className="statement-body"><Markdown>{problem.data.statementMarkdown}</Markdown><details className="methodology"><summary>Среда и замер</summary><Markdown>{problem.data.environmentMarkdown}</Markdown></details></div></section>
+      <EditorPane key={`${user?.id || 'guest'}:${id}:${context}`} problem={problem.data} context={context} contest={contest.data} phase={phase} contestLoading={context !== 'practice' && (contest.isPending || Boolean(contest.error))} />
+    </div> : tab === 'submissions' ? <SubmissionList key={`${id}:${context}:${user?.id || 'guest'}`} problemId={id} context={context} /> : <Leaders problemId={id} context={context} finished={phase === 'finished'} />}
+  </>}</QueryState>;
+}
