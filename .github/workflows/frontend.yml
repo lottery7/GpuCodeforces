@@ -1,0 +1,33 @@
+name: Frontend
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm build
+      - run: docker build -f frontend/Dockerfile -t gpu-forces-frontend:test .
+        working-directory: .
+      - run: >-
+          docker run --rm -i --add-host backend:127.0.0.1
+          gpu-forces-frontend:test sh -s < tests/container-smoke.sh
