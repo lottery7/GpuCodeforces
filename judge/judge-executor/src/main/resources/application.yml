@@ -62,7 +62,7 @@ management:
 
 logging:
   level:
-    gpucodeforces.judge: INFO
+    dev.gpucodeforces.judge: INFO
   pattern:
     correlation: "[sub=%X{submissionId:-} a=%X{attempt:-} gpu=%X{gpu:-}] "
 ---

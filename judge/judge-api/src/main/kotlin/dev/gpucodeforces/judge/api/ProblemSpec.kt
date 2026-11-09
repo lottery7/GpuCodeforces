@@ -1,0 +1,168 @@
+package dev.gpucodeforces.judge.api
+
+/**
+ * Everything the judge needs to know about a problem. Sent inline with every submission
+ * (a few KB), cached by executors by [ProblemSpec.dataHash] so tests are generated once.
+ */
+data class ProblemSpec(
+    /** Stable problem identifier from the backend (used in logs and cache paths). */
+    val id: String,
+    /** Backend-side version label. Informational; caching is keyed by content hash. */
+    val version: String = "1",
+    /** Signature of the function the contestant implements. */
+    val signature: Signature,
+    /** Ordered list of tests. Judging stops at the first failed test. */
+    val tests: List<TestSpec>,
+    /** Python + PyTorch module with `generate(...)` and `reference(...)`. */
+    val generator: GeneratorSpec,
+    val checker: CheckerSpec = CheckerSpec(),
+    val limits: LimitsSpec = LimitsSpec(),
+    val timing: TimingSpec = TimingSpec(),
+    val policy: PolicyOverrides = PolicyOverrides(),
+)
+
+data class Signature(
+    val function: String = "solve",
+    val params: List<ParamSpec>,
+) {
+    val arrays: List<ParamSpec> get() = params.filter { it.role != ParamRole.SCALAR }
+    val scalars: List<ParamSpec> get() = params.filter { it.role == ParamRole.SCALAR }
+    val outputs: List<ParamSpec> get() = params.filter { it.role == ParamRole.OUTPUT || it.role == ParamRole.INOUT }
+
+    /** True if every array lives in GPU memory, i.e. the problem is "GPU only". */
+    val deviceOnly: Boolean get() = arrays.all { it.memory == MemorySpace.DEVICE }
+}
+
+data class ParamSpec(
+    /** C identifier used in the generated signature and as a key in generator/reference dicts. */
+    val name: String,
+    val type: DType,
+    val role: ParamRole,
+    /** Where the harness places the array before calling `solve`. Required for arrays. */
+    val memory: MemorySpace? = null,
+    /** Element count of an array as an integer expression over scalar params, e.g. `"M*K"`. */
+    val size: String? = null,
+)
+
+enum class ParamRole {
+    /** `const T*` — read-only array. */
+    INPUT,
+
+    /** `T*` — array the solution must fill; compared against the reference. */
+    OUTPUT,
+
+    /** `T*` — initialised with generated data, modified in place, compared against the reference. */
+    INOUT,
+
+    /** Passed by value (`int N`, `float alpha`). Values come from [TestSpec.scalars]. */
+    SCALAR,
+}
+
+enum class MemorySpace { DEVICE, HOST }
+
+enum class DType(val bytes: Int, val cppType: String, val floating: Boolean, val scalarAllowed: Boolean) {
+    FLOAT16(2, "__half", true, false),
+    BFLOAT16(2, "__nv_bfloat16", true, false),
+    FLOAT32(4, "float", true, true),
+    FLOAT64(8, "double", true, true),
+    INT8(1, "int8_t", false, false),
+    UINT8(1, "uint8_t", false, false),
+    INT16(2, "int16_t", false, false),
+    INT32(4, "int", false, true),
+    UINT32(4, "unsigned int", false, true),
+    INT64(8, "int64_t", false, true),
+    UINT64(8, "uint64_t", false, true),
+}
+
+data class TestSpec(
+    val name: String,
+    /** Values of all SCALAR params. Integers for integer types, decimals for float types. */
+    val scalars: Map<String, Number> = emptyMap(),
+    /** Seed passed to the generator. */
+    val seed: Long = 0,
+    /** Sample tests are visible to contestants: details of failures may be shown to them. */
+    val sample: Boolean = false,
+    /**
+     * Explicit input arrays (INPUT/INOUT params) for hand-written tests, usually samples.
+     * When present the generator is not called for this test; the reference still is.
+     */
+    val data: Map<String, List<Number>>? = null,
+)
+
+enum class GeneratorLanguage { PYTHON }
+
+data class GeneratorSpec(
+    val language: GeneratorLanguage = GeneratorLanguage.PYTHON,
+    /** Source of the Python module. See docs/problem-format.md for the contract. */
+    val source: String,
+)
+
+enum class CheckerMode {
+    /** Floats: `|out - exp| <= atol + rtol * |exp|`, NaN only matches NaN, Inf must match exactly. Integers: exact. */
+    TOLERANCE,
+
+    /** Bitwise equality for every element. */
+    EXACT,
+}
+
+data class CheckerSpec(
+    val mode: CheckerMode = CheckerMode.TOLERANCE,
+    val rtol: Double = 1e-5,
+    val atol: Double = 1e-6,
+)
+
+data class LimitsSpec(
+    /** Limit on the measured time of one `solve` call (see [TimingSpec.mode]). */
+    val timeLimitMs: Long = 1000,
+    /**
+     * Safety limit on the wall time of one `solve` call, applied in every timing mode.
+     * Defaults to `max(3 * timeLimitMs, timeLimitMs + 2000)`.
+     */
+    val wallTimeLimitMs: Long? = null,
+    /** Host RAM available to the solution on top of the memory holding test data. */
+    val memoryLimitMb: Long = 1024,
+    /** GPU memory available to the solution on top of device buffers allocated by the harness. Null = whole GPU. */
+    val gpuMemoryLimitMb: Long? = null,
+) {
+    val effectiveWallTimeLimitMs: Long get() = wallTimeLimitMs ?: maxOf(3 * timeLimitMs, timeLimitMs + 2000)
+}
+
+enum class TimingMode {
+    /** Wall clock from entering `solve` until all GPU work it started has finished. */
+    WALL,
+
+    /** Total GPU time of kernels launched by `solve` (union of their execution intervals). */
+    GPU_KERNELS,
+}
+
+data class TimingSpec(
+    /**
+     * Null = automatic: [TimingMode.WALL] if every array is in device memory,
+     * [TimingMode.GPU_KERNELS] if the input data starts on the host.
+     */
+    val mode: TimingMode? = null,
+    /** Untimed calls on the first test before measuring (CUDA lazy module loading, caches, clocks). */
+    val warmupRuns: Int = 1,
+    /**
+     * Max timed calls per test. The first call decides unless it lands in the grey zone
+     * `(TL, 1.25 * TL]`; then up to [maxRuns] calls are made and the median is compared to TL.
+     */
+    val maxRuns: Int = 3,
+) {
+    fun effectiveMode(signature: Signature): TimingMode =
+        mode ?: if (signature.deviceOnly) TimingMode.WALL else TimingMode.GPU_KERNELS
+}
+
+/** Per-problem adjustments of the GPU profile's default policy. */
+data class PolicyOverrides(
+    /** Extra allowed headers (exact names, or prefixes ending with `/`). */
+    val allowHeaders: List<String> = emptyList(),
+    /** Headers forbidden on top of the profile policy. */
+    val forbidHeaders: List<String> = emptyList(),
+    /** Extra SASS opcodes to forbid, e.g. `HMMA` to ban tensor cores. */
+    val forbidSass: List<String> = emptyList(),
+    /** SASS opcodes the profile forbids but this problem allows. */
+    val allowSass: List<String> = emptyList(),
+    /** Null = profile default (forbidden unless the profile allows it). */
+    val allowInlineAsm: Boolean? = null,
+)

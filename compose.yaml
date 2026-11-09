@@ -15,5 +15,70 @@ services:
       timeout: 5s
       retries: 10
 
+  # Testing system (judge/README.md). Behind profiles so `docker compose up -d --wait` still starts only PostgreSQL:
+  #   docker compose --profile judge up -d --wait   # RabbitMQ + judge gateway
+  #   docker compose --profile gpu up -d --wait     # + judge executor (NVIDIA GPU + nvidia-container-toolkit)
+  rabbitmq:
+    profiles: [judge, gpu]
+    image: rabbitmq:4.1.8-management
+    hostname: rabbitmq
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672" # management UI, guest/guest
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+
+  judge-gateway:
+    profiles: [judge, gpu]
+    build:
+      context: .
+      dockerfile: judge/deploy/gateway.Dockerfile
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      JUDGE_GPU_PROFILES: rtx3060
+      JUDGE_DEFAULT_GPU_PROFILE: rtx3060
+      SPRING_PROFILES_ACTIVE: ${JUDGE_LOG_PROFILE:-default}
+    ports:
+      - "127.0.0.1:8090:8090" # API + /swagger-ui.html
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  judge-executor:
+    profiles: [gpu]
+    build:
+      context: .
+      dockerfile: judge/deploy/executor.Dockerfile
+    # nsjail creates namespaces and mounts; clock locking needs root on the GPU
+    privileged: true
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      JUDGE_GPU_PROFILE: rtx3060
+      JUDGE_EXECUTOR_ID: ${JUDGE_EXECUTOR_ID:-gpu-node-1}
+      JUDGE_LOCK_CLOCKS: ${JUDGE_LOCK_CLOCKS:-}
+      SPRING_PROFILES_ACTIVE: ${JUDGE_LOG_PROFILE:-default}
+    shm_size: 8gb # run directories (solution outputs) live in /dev/shm
+    volumes:
+      - judge-data:/var/lib/judge # compiled objects and generated tests survive restarts
+    ports:
+      - "127.0.0.1:8081:8081" # actuator: /actuator/health, /actuator/prometheus
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, compute, utility]
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
 volumes:
   postgres-data:
+  rabbitmq-data:
+  judge-data:

@@ -120,7 +120,7 @@ def cmd_validate(args) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--gateway", default="http://localhost:8080")
+    ap.add_argument("--gateway", default="http://localhost:8090")
     ap.add_argument("--rabbit", default="localhost")
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("submit")

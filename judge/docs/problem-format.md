@@ -1,6 +1,6 @@
 # Формат задачи
 
-Задача — это JSON `ProblemSpec` (см. `judge-api/.../ProblemSpec.kt`), который бэкенд передаёт в каждой посылке, плюс исходник генератора на Python. Пример: `problems/examples/vector_add/` (`problem.json` + `problem.py`; `tools/judge_cli.py` склеивает их в один `ProblemSpec`).
+Задача — это JSON `ProblemSpec` (см. `judge-api/.../ProblemSpec.kt`), который бэкенд передаёт в каждой посылке, плюс исходник генератора на Python. Пример: `judge/problems/examples/vector_add/` (`problem.json` + `problem.py`; `judge/tools/judge_cli.py` склеивает их в один `ProblemSpec`).
 
 ## ProblemSpec
 
@@ -87,7 +87,7 @@ def reference(test, inputs):
 - Локальная проверка генератора (нужен torch):
 
 ```bash
-PYTHONPATH=pytools python3 -m judge_problem.prepare --spec spec.json --source problem.py --out /tmp/out
+PYTHONPATH=judge/pytools python3 -m judge_problem.prepare --spec spec.json --source problem.py --out /tmp/out
 ```
 
   Здесь `spec.json` — это `{"signature": ..., "tests": ...}`.

@@ -20,7 +20,7 @@ Backend ◀── RabbitMQ: judge.events (QUEUED → COMPILING → PREPARING →
 | `harness/` | C++/CUDA-обвязка, которая линкуется с решением: загрузка данных, вызов `solve`, замер времени, статус-протокол. |
 | `pytools/` | `judge_problem.prepare`: генерация тестов и эталонных ответов (Python + PyTorch). |
 | `sandbox/` | seccomp-политика для nsjail. |
-| `deploy/` | Dockerfile gateway и executor. Общий `docker-compose.yml` лежит в корне репозитория. |
+| `deploy/` | Dockerfile gateway и executor (контекст сборки — корень репозитория). Сервисы описаны в корневом `compose.yaml` под профилями `judge` и `gpu`. |
 | `problems/examples/` | Примеры задач (`vector_add`: данные на GPU, `matmul_host`: данные на CPU) и решения на все вердикты. |
 | `tools/judge_cli.py` | Отправить посылку и смотреть события из консоли. |
 
@@ -111,6 +111,7 @@ Thrust, CUB, cuBLAS, cuDNN, CUTLASS, cuRAND, driver API (`cuda.h`) и inline PTX
 | Python / PyTorch / NumPy | 3.12 / 2.9.1+cu128 / 2.2.6 |
 | nsjail | 3.6 |
 | RabbitMQ | 4.1.8 |
+| JVM сервисов | JDK 26 (Temurin), как у всего проекта |
 
 Executor при старте сверяет версии CUDA, g++ и torch (`judge.executor.toolchain.expected-*`). При расхождении он не запустится. Строка с версиями пишется в каждый `JudgeResult.toolchain`, хэш тулчейна входит в ключ кэша компиляции.
 
@@ -142,20 +143,42 @@ INFO [sub=s-42 a=1 gpu=]  JudgePipeline : Verdict ACCEPTED in 2410ms (max time 1
   - `FINISHED` — терминальное событие. Возможны дубликаты при сбоях, поэтому обработку нужно делать идемпотентной по `(submissionId, attempt, seq)`.
 - Авторизации между бэкендом и gateway пока нет (обсудим отдельно).
 
-## Запуск
+## Сборка и тесты
 
-Локально без GPU (gateway + RabbitMQ):
+Модули `:judge-api`, `:judge-gateway`, `:judge-executor` входят в общую Gradle-сборку (корневой `settings.gradle.kts`), JDK 26:
 
 ```bash
-docker compose up -d rabbitmq judge-gateway
-python3 tools/judge_cli.py validate judge/problems/examples/vector_add
+./gradlew :judge-api:test :judge-gateway:test :judge-executor:test
+```
+
+Тестам executor нужен `python3`: поддельное решение в `HarnessRunnerTest` написано на Python. GPU и Docker тестам не нужны.
+
+## Запуск
+
+Сервисы judge описаны в корневом `compose.yaml` под профилями. Обычный `docker compose up -d --wait` по-прежнему поднимает только PostgreSQL.
+
+Локально без GPU (RabbitMQ + gateway на <http://localhost:8090>, Swagger: `/swagger-ui.html`):
+
+```bash
+docker compose --profile judge up -d --wait
+python3 judge/tools/judge_cli.py validate judge/problems/examples/vector_add
 ```
 
 GPU-машина, нативный Linux:
 1. Драйвер NVIDIA ≥ 570 (нужен для CUDA 12.8), Docker и `nvidia-container-toolkit`.
-2. Из корня репозитория: `docker compose --profile gpu up -d --build`.
-3. Фиксация частот (опционально, нужен root на хосте): `JUDGE_LOCK_CLOCKS=1320,1320 docker compose --profile gpu up -d`. Для RTX 3060 базовая частота 1320 МГц.
-4. Проверка:
+2. Из корня репозитория:
+
+```bash
+docker compose --profile gpu up -d --wait --build
+```
+
+3. Фиксация частот (опционально, нужен root на хосте), для RTX 3060 базовая частота 1320 МГц:
+
+```bash
+JUDGE_LOCK_CLOCKS=1320,1320 docker compose --profile gpu up -d --wait
+```
+
+4. Проверка (для `--watch` нужен `pip install pika`):
 
 ```bash
 python3 judge/tools/judge_cli.py submit judge/problems/examples/vector_add judge/problems/examples/vector_add/solutions/accepted.cu --watch
@@ -166,7 +189,7 @@ GPU-машина, Windows + WSL2:
 - **Частоты** из WSL2 не фиксируются: при необходимости `nvidia-smi.exe -lgc 1320,1320` в PowerShell от администратора.
 - **TDR Windows** убивает ядра дольше ~2 с на GPU с дисплеем. Для длинных TL нужно увеличить `TdrDelay` в реестре.
 
-Без Docker (systemd на хосте) — те же переменные, что в `docker-compose.yml`, плюс `JUDGE_HARNESS_DIR`, `JUDGE_PYTOOLS_DIR`, `JUDGE_SECCOMP_POLICY`. nsjail требует root (для user namespace с другим uid).
+Без Docker (systemd на хосте) — те же переменные, что в `compose.yaml`, плюс `JUDGE_HARNESS_DIR`, `JUDGE_PYTOOLS_DIR`, `JUDGE_SECCOMP_POLICY`. nsjail требует root (для user namespace с другим uid).
 
 ## Известные ограничения и что обсудить
 

@@ -2,6 +2,8 @@
 
 Multi-module Kotlin/Gradle project. `backend` is a Spring Boot application;
 add future modules with `include(":module-name")` in `settings.gradle.kts`.
+`judge-api`, `judge-gateway` and `judge-executor` (in `judge/`) are the testing system,
+see [judge/README.md](judge/README.md); its services are behind the `judge` and `gpu` Compose profiles.
 
 ## Requirements
 
