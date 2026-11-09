@@ -1,0 +1,23 @@
+{
+  "id": "vector-add",
+  "version": "1",
+  "signature": {
+    "function": "solve",
+    "params": [
+      {"name": "A", "type": "FLOAT32", "role": "INPUT", "memory": "DEVICE", "size": "N"},
+      {"name": "B", "type": "FLOAT32", "role": "INPUT", "memory": "DEVICE", "size": "N"},
+      {"name": "C", "type": "FLOAT32", "role": "OUTPUT", "memory": "DEVICE", "size": "N"},
+      {"name": "N", "type": "INT32", "role": "SCALAR"}
+    ]
+  },
+  "tests": [
+    {"name": "sample", "sample": true, "scalars": {"N": 4}, "data": {"A": [1.0, 2.0, 3.0, 4.0], "B": [5.0, 6.0, 7.0, 8.0]}},
+    {"name": "one", "scalars": {"N": 1}, "seed": 1},
+    {"name": "odd", "scalars": {"N": 1000003}, "seed": 2},
+    {"name": "large", "scalars": {"N": 25000000}, "seed": 3},
+    {"name": "max", "scalars": {"N": 100000000}, "seed": 4}
+  ],
+  "checker": {"mode": "TOLERANCE", "rtol": 1e-6, "atol": 1e-6},
+  "limits": {"timeLimitMs": 20, "memoryLimitMb": 256, "gpuMemoryLimitMb": 256},
+  "timing": {"warmupRuns": 1, "maxRuns": 3}
+}

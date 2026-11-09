@@ -1,0 +1,93 @@
+server:
+  port: ${PORT:8081}
+
+spring:
+  application:
+    name: judge-executor
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+    publisher-confirm-type: simple
+  jackson:
+    default-property-inclusion: non_null
+
+judge:
+  executor:
+    id: ${JUDGE_EXECUTOR_ID:${HOSTNAME:executor}}
+    gpu-profile: ${JUDGE_GPU_PROFILE:rtx3060}
+    gpus:
+      - index: 0
+        # Stable timings: lock graphics clocks (MHz). Needs root, native Linux only. RTX 3060 base clock is 1320.
+        lock-graphics-clocks-mhz: ${JUDGE_LOCK_CLOCKS:}
+    prefetch-extra: 2
+    compile-workers: ${JUDGE_COMPILE_WORKERS:4}
+    paths:
+      work: ${JUDGE_WORK_DIR:/dev/shm/judge/work}
+      cache: ${JUDGE_CACHE_DIR:/var/lib/judge/cache}
+      failed: ${JUDGE_FAILED_DIR:/var/lib/judge/failed}
+      harness: ${JUDGE_HARNESS_DIR:/opt/judge/harness}
+      pytools: ${JUDGE_PYTOOLS_DIR:/opt/judge/pytools}
+    toolchain:
+      # Pinned toolchain: the executor refuses to start if these do not match (see judge/toolchain.env).
+      expected-cuda-release: ${JUDGE_CUDA_RELEASE:12.8}
+      expected-host-compiler-major: ${JUDGE_GCC_MAJOR:13}
+      expected-torch-version: ${JUDGE_TORCH_VERSION:2.9.1}
+      host-compiler: ${JUDGE_HOST_CXX:g++-13}
+      python: ${JUDGE_PYTHON:python3}
+    sandbox:
+      type: ${JUDGE_SANDBOX:NSJAIL}
+      seccomp-policy: ${JUDGE_SECCOMP_POLICY:/opt/judge/sandbox/seccomp.kafel}
+      use-cgroups-v2: ${JUDGE_CGROUPS_V2:false}
+    compile:
+      flags: ["-std=c++17", "-O3", "--expt-relaxed-constexpr"]
+      time-limit: 30s
+    prepare:
+      cache-budget-gb: ${JUDGE_TEST_CACHE_GB:40}
+    profiles:
+      rtx3060:
+        arch: sm_86
+        policy:
+          # Opcodes forbidden on this GPU, e.g. [HMMA, IMMA] to ban tensor cores.
+          forbidden-sass: []
+          extra-allowed-headers: []
+          allow-inline-asm: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+
+logging:
+  level:
+    gpucodeforces.judge: INFO
+  pattern:
+    correlation: "[sub=%X{submissionId:-} a=%X{attempt:-} gpu=%X{gpu:-}] "
+---
+# JSON logs for log collectors: SPRING_PROFILES_ACTIVE=json (MDC: submissionId, attempt, problem, executor, gpu)
+spring:
+  config:
+    activate:
+      on-profile: json
+logging:
+  structured:
+    format:
+      console: logstash
+---
+# Local development without a GPU sandbox (macOS/dev boxes): SPRING_PROFILES_ACTIVE=dev
+spring:
+  config:
+    activate:
+      on-profile: dev
+judge:
+  executor:
+    sandbox:
+      type: NONE
+    paths:
+      work: ./build/judge/work
+      cache: ./build/judge/cache
+      failed: ./build/judge/failed
+      harness: ../harness
+      pytools: ../pytools

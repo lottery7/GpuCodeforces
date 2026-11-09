@@ -1,0 +1,14 @@
+// Seccomp policy for sandboxed solutions and compilers (kafel syntax, passed to nsjail --seccomp_policy).
+// Deny-list on top of namespaces: everything that could escape or inspect the sandbox or the kernel.
+// CUDA needs ioctl/mmap/threads, so a strict allow-list is impractical.
+POLICY judge {
+  ERRNO(1) {
+    ptrace, process_vm_readv, process_vm_writev,
+    mount, pivot_root, chroot, unshare, setns,
+    kexec_load, reboot, swapon, swapoff,
+    init_module, finit_module, delete_module,
+    bpf, perf_event_open, keyctl, add_key, request_key,
+    acct, quotactl, personality, syslog, open_by_handle_at
+  }
+}
+USE judge DEFAULT ALLOW
