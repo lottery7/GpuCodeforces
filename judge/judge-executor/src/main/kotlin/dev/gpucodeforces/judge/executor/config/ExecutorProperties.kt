@@ -56,7 +56,10 @@ data class GpuSlotConfig(
 )
 
 data class PathsConfig(
-    /** Per-run scratch directories. Prefer tmpfs (e.g. /dev/shm/judge) - outputs are written here. */
+    /**
+     * Per-run scratch directories. Prefer tmpfs (e.g. /dev/shm/judge) - outputs are written here. The solution
+     * binary is linked and executed here too, so the mount must allow exec (Docker's /dev/shm does not).
+     */
     val work: Path = Path.of("/var/lib/judge/work"),
     /** Compiled objects, harnesses and generated tests. */
     val cache: Path = Path.of("/var/lib/judge/cache"),
@@ -111,6 +114,8 @@ data class SandboxConfig(
     val useCgroupsV2: Boolean = false,
     val pidsLimit: Int = 256,
     val maxOpenFiles: Int = 512,
+    /** RLIMIT_STACK; also the default stack size of every thread the sandboxed process starts. */
+    val stackLimitMb: Long = 64,
 )
 
 data class CompileConfig(

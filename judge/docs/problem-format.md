@@ -24,9 +24,12 @@
   "checker": {"mode": "TOLERANCE", "rtol": 1e-5, "atol": 1e-6},
   "limits": {"timeLimitMs": 20, "wallTimeLimitMs": null, "memoryLimitMb": 256, "gpuMemoryLimitMb": 256},
   "timing": {"mode": null, "warmupRuns": 1, "maxRuns": 3},
+  "compile": {"arch": "sm_86", "flags": ["-std=c++17", "-O3", "--expt-relaxed-constexpr"]},
   "policy": {"allowHeaders": [], "forbidHeaders": [], "forbidSass": [], "allowSass": [], "allowInlineAsm": null}
 }
 ```
+
+Видеокарта, на которой судится посылка, задаётся рядом с задачей, в `SubmissionRequest.gpuProfile` (например, `rtx3060`): она выбирается на контест, а не на задачу.
 
 ### Параметры
 
@@ -61,9 +64,16 @@
 - `warmupRuns` — прогревы на первом тесте.
 - `maxRuns` — максимум прогонов в серой зоне около TL.
 
+### Компиляция и ограничения
+
+- `compile.arch` — архитектура, под которую генерируется код решения (`sm_86`; без PTX и JIT). `null` — архитектура видеокарты профиля. Видеокарта должна уметь исполнять этот код: то же семейство и та же или более ранняя ревизия (`sm_80` на `sm_86` — да; `sm_75` и `sm_89` — нет). Иначе посылка получает `INTERNAL_ERROR` с пояснением.
+- `compile.flags` — флаги nvcc для решения, заменяют флаги executor по умолчанию (`null` — оставить их). Разрешены только: `-O0`…`-O3`, `-std=c++11|14|17|20`, `-DИМЯ[=значение]`, `--use_fast_math`, `--fmad=true|false`, `--expt-relaxed-constexpr`, `--expt-extended-lambda`. Любой другой флаг — ошибка валидации (400).
+- `policy.forbidSass` / `policy.allowSass` — запрещённые инструкции (опкоды SASS, например `HMMA` для тензорных ядер) поверх политики профиля.
+- `policy.allowHeaders` / `policy.forbidHeaders`, `policy.allowInlineAsm` — заголовки и inline asm.
+
 ## Генератор (problem.py)
 
-Выполняется один раз на версию задачи на GPU-машине (Python 3.12, PyTorch 2.9.1). Это доверенный код автора задачи.
+Выполняется один раз на версию задачи на GPU-машине (Python 3.12, PyTorch 2.9.1). Задачи приходят через PR в общий репозиторий, поэтому генератор запускается в той же песочнице, что и решения: сети нет, писать можно только в свою рабочую папку и `/tmp`.
 
 ```python
 import torch

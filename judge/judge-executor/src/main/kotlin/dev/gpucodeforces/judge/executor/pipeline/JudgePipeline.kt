@@ -1,5 +1,6 @@
 package dev.gpucodeforces.judge.executor.pipeline
 
+import dev.gpucodeforces.judge.api.CompileSpec
 import dev.gpucodeforces.judge.api.GpuInfo
 import dev.gpucodeforces.judge.api.JudgeJob
 import dev.gpucodeforces.judge.api.JudgeResult
@@ -76,6 +77,15 @@ class JudgePipeline(
                 log.error("Invalid job rejected: profile={} errors={}", job.gpuProfile, errors)
                 return finish(reporter, started, JudgeResult(Verdict.INTERNAL_ERROR, message = "Invalid judge job"))
             }
+            val arch = job.problem.compile.arch
+            if (arch != null && !CompileSpec.runsOn(arch, props.profile.arch)) {
+                // a mismatch between the problem and the GPU chosen for the contest: retrying cannot help
+                log.error("Job rejected: problem is compiled for {}, GPU profile {} is {}", arch, props.gpuProfile, props.profile.arch)
+                return finish(
+                    reporter, started,
+                    JudgeResult(Verdict.INTERNAL_ERROR, message = "Problem targets $arch, which GPU profile ${props.gpuProfile} (${props.profile.arch}) cannot run"),
+                )
+            }
 
             // 1. Build
             reporter.status(SubmissionStatus.COMPILING)
@@ -84,7 +94,7 @@ class JudgePipeline(
             Builder.makeWorldWritable(runDir)
             val timingMode = job.problem.timing.effectiveMode(job.problem.signature)
             val policy = EffectivePolicy.of(props.profile.policy, job.problem.policy, timingMode)
-            val build = timed("compile") { builder.build(job.source, job.problem.signature, policy, runDir) }
+            val build = timed("compile") { builder.build(job.source, job.problem.signature, job.problem.compile, policy, runDir) }
             when (build) {
                 is BuildOutcome.CompileError -> {
                     log.info("Compilation error: {}", build.message)
@@ -223,7 +233,9 @@ class JudgePipeline(
                 val target = failed.resolve(runDir.name)
                 if (target.exists()) target.toFile().deleteRecursively()
                 runDir.resolve("out").toFile().deleteRecursively() // outputs can be huge
-                Files.move(runDir, target)
+                // not Files.move: work is usually tmpfs and failed is a disk, and a directory cannot be moved across file stores
+                runDir.toFile().copyRecursively(target.toFile())
+                runDir.toFile().deleteRecursively()
                 runDir.resolveSibling(runDir.name + ".nsjail.log").takeIf { it.exists() }?.let { Files.move(it, failed.resolve(it.name)) }
                 log.warn("Run directory kept for investigation: {}", target)
                 pruneFailed(failed)

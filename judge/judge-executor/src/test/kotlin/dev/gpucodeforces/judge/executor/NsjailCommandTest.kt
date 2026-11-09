@@ -33,6 +33,7 @@ class NsjailCommandTest {
         assertTrue("-B /dev/shm/judge/work/s-1-a1:/work" in joined, joined)
         assertTrue("--env CUDA_VISIBLE_DEVICES=0" in joined, joined)
         assertTrue("--rlimit_as inf" in joined, joined)
+        assertTrue("--rlimit_stack 64" in joined, joined)
         assertTrue("--seccomp_policy" in joined, joined)
         assertEquals(listOf("--", "/work/solution.bin", "/work/manifest.txt"), cmd.takeLast(3))
         assertEquals("/data/t3/A.bin", sandbox.inside(spec, Path.of("/var/lib/judge/cache/problems/abc/inputs/t3/A.bin")))
@@ -41,6 +42,19 @@ class NsjailCommandTest {
         // Exported for a manual check with a real nsjail binary.
         Files.createDirectories(Path.of("build"))
         Path.of("build/nsjail-cmd.txt").writeText(cmd.joinToString("\n"))
+    }
+
+    @Test
+    fun `wsl gpu device is bound read-only`() {
+        val spec = SandboxSpec(
+            command = listOf("/work/solution.bin"),
+            workDir = Path.of("/dev/shm/judge/work/s-1-a1"),
+            gpu = GpuAccess(0, null),
+            wallTimeLimit = Duration.ofSeconds(1),
+        )
+        val joined = NsjailSandbox(SandboxConfig(), wsl = true).buildCommand(spec).joinToString(" ")
+        assertTrue("-R /dev/dxg" in joined, joined)
+        assertTrue("-B /dev/dxg" !in joined, joined)
     }
 
     @Test

@@ -60,6 +60,35 @@ class SpecValidatorTest {
     }
 
     @Test
+    fun `compile settings accept optimisation, standard, defines and math flags`() {
+        val spec = Fixtures.vectorAdd().copy(
+            compile = CompileSpec("sm_86", listOf("-O2", "-std=c++20", "-DNDEBUG", "-DBLOCK=256", "--use_fast_math", "--fmad=false")),
+        )
+        assertEquals(emptyList(), SpecValidator.validateProblem(spec))
+    }
+
+    @Test
+    fun `compile flags that touch files, the host toolchain or the architecture are rejected`() {
+        val forbidden = listOf(
+            "-include/etc/passwd", "-I/etc", "-o/tmp/x", "-Xcompiler", "-Xlinker", "-arch=sm_90", "-gencode",
+            "-DX=\$(id)", "-O2 -I/etc", "--ptx",
+        )
+        val errors = SpecValidator.validateProblem(Fixtures.vectorAdd().copy(compile = CompileSpec("rtx3060", forbidden)))
+        assertTrue(errors.any { "compile.arch 'rtx3060'" in it }, errors.toString())
+        for (flag in forbidden) assertTrue(errors.any { "flag '$flag' is not allowed" in it }, "$flag: $errors")
+    }
+
+    @Test
+    fun `device code runs only on the same or a later revision of its architecture family`() {
+        assertTrue(CompileSpec.runsOn("sm_86", "sm_86"))
+        assertTrue(CompileSpec.runsOn("sm_80", "sm_86"))
+        assertTrue(!CompileSpec.runsOn("sm_89", "sm_86"), "later revision than the GPU")
+        assertTrue(!CompileSpec.runsOn("sm_75", "sm_86"), "another family")
+        assertTrue(!CompileSpec.runsOn("sm_100", "sm_120"), "another family")
+        assertTrue(!CompileSpec.runsOn("ampere", "sm_86"))
+    }
+
+    @Test
     fun `auto timing mode depends on memory space`() {
         val dev = Fixtures.vectorAdd()
         assertEquals(TimingMode.WALL, dev.timing.effectiveMode(dev.signature))

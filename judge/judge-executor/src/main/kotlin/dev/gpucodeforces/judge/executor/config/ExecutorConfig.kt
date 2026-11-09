@@ -60,7 +60,7 @@ class ExecutorConfig(private val props: ExecutorProperties) {
     fun builder(toolchain: Toolchain, sandbox: Sandbox) = Builder(props, toolchain, sandbox)
 
     @Bean
-    fun problemStore(gpus: GpuManager) = ProblemStore(props, gpus)
+    fun problemStore(gpus: GpuManager, toolchain: Toolchain, sandbox: Sandbox) = ProblemStore(props, gpus, toolchain, sandbox)
 
     @Bean
     fun harnessRunner(sandbox: Sandbox) = HarnessRunner(props, sandbox)

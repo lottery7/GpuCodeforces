@@ -18,8 +18,36 @@ data class ProblemSpec(
     val checker: CheckerSpec = CheckerSpec(),
     val limits: LimitsSpec = LimitsSpec(),
     val timing: TimingSpec = TimingSpec(),
+    val compile: CompileSpec = CompileSpec(),
     val policy: PolicyOverrides = PolicyOverrides(),
 )
+
+/** How the solution is compiled. Null fields fall back to the executor's defaults for its GPU profile. */
+data class CompileSpec(
+    /**
+     * Architecture the solution's device code is generated for, e.g. `sm_86` (no PTX, no JIT). The GPU of the
+     * profile the submission is judged on must be able to run it, see [runsOn].
+     */
+    val arch: String? = null,
+    /** nvcc flags for the solution, replacing the executor's defaults. Only flags [SpecValidator] allows. */
+    val flags: List<String>? = null,
+) {
+    companion object {
+        private val ARCH = Regex("sm_(\\d{2,3})")
+
+        fun isArch(arch: String): Boolean = ARCH.matches(arch)
+
+        /**
+         * CUDA device code runs on GPUs of the same major architecture with the same or a later minor revision:
+         * `sm_80` code runs on an `sm_86` GPU, `sm_75` or `sm_89` code does not.
+         */
+        fun runsOn(codeArch: String, gpuArch: String): Boolean {
+            val code = ARCH.matchEntire(codeArch)?.groupValues?.get(1)?.toInt() ?: return false
+            val gpu = ARCH.matchEntire(gpuArch)?.groupValues?.get(1)?.toInt() ?: return false
+            return code / 10 == gpu / 10 && code <= gpu
+        }
+    }
+}
 
 data class Signature(
     val function: String = "solve",

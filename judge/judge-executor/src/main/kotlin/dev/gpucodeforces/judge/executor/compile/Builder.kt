@@ -1,5 +1,6 @@
 package dev.gpucodeforces.judge.executor.compile
 
+import dev.gpucodeforces.judge.api.CompileSpec
 import dev.gpucodeforces.judge.api.Signature
 import dev.gpucodeforces.judge.executor.config.ExecutorProperties
 import dev.gpucodeforces.judge.executor.sandbox.Sandbox
@@ -47,17 +48,17 @@ class Builder(
     private val compileSlots = Semaphore(props.compileWorkers)
     private val locks = ConcurrentHashMap<String, ReentrantLock>()
     private val tc = props.toolchain
-    private val arch = props.profile.arch
-    private val gencode = listOf("-gencode", "arch=${arch.replace("sm_", "compute_")},code=$arch")
+    /** The harness and the link step always target the GPU itself; only the solution follows the problem's arch. */
+    private val gpuGencode = gencode(props.profile.arch)
     private val objectsDir = props.paths.cache.resolve("objects")
     private val harnessDir = props.paths.cache.resolve("harness")
     private val runtimeHeader = props.paths.harness.resolve("include/judge/runtime.h")
 
-    fun build(source: String, signature: Signature, policy: EffectivePolicy, runDir: Path): BuildOutcome {
+    fun build(source: String, signature: Signature, compile: CompileSpec, policy: EffectivePolicy, runDir: Path): BuildOutcome {
         SourceChecks.checkSource(source, policy).takeIf { it.isNotEmpty() }?.let { return BuildOutcome.Violation(it, "") }
 
         val harness = harnessObject(signature)
-        val obj = solutionObject(source)
+        val obj = solutionObject(source, compile.arch ?: props.profile.arch, compile.flags ?: props.compile.flags)
         if (!obj.ok) return BuildOutcome.CompileError(obj.log, "Compilation failed")
 
         val violations = buildList {
@@ -70,7 +71,7 @@ class Builder(
 
         val binary = runDir.resolve("solution.bin")
         val link = Proc.run(
-            listOf(tc.nvcc, "-ccbin", tc.hostCompiler) + gencode +
+            listOf(tc.nvcc, "-ccbin", tc.hostCompiler) + gpuGencode +
                 listOf("-o", binary.toString(), obj.dir.resolve("solution.o").toString(), harness.toString(), "-cudart", "static") +
                 HarnessGenerator.WRAPPED_SYMBOLS.flatMap { listOf("-Xlinker", "--wrap=$it") },
             props.compile.timeLimit,
@@ -98,11 +99,11 @@ class Builder(
         val sassOpcodes: Set<String>, val nm: String, val cached: Boolean,
     )
 
-    private fun solutionObject(source: String): CompiledObject {
-        val key = Hashing.sha256(source, toolchain.fingerprint, props.compile.flags.joinToString(" "), OBJECT_FORMAT)
+    private fun solutionObject(source: String, arch: String, flags: List<String>): CompiledObject {
+        val key = Hashing.sha256(source, toolchain.fingerprint, arch, flags.joinToString(" "), OBJECT_FORMAT)
         val dir = objectsDir.resolve(key.take(2)).resolve(key)
         return lockFor(key).withLock {
-            load(dir, cached = true) ?: compileFresh(source, dir)
+            load(dir, cached = true) ?: compileFresh(source, arch, flags, dir)
         }
     }
 
@@ -120,7 +121,7 @@ class Builder(
         )
     }
 
-    private fun compileFresh(source: String, dir: Path): CompiledObject {
+    private fun compileFresh(source: String, arch: String, flags: List<String>, dir: Path): CompiledObject {
         val tmp = Files.createDirectories(objectsDir.resolve("tmp")).let { Files.createTempDirectory(it, "c-") }
         try {
             makeWorldWritable(tmp)
@@ -134,7 +135,7 @@ class Builder(
                 tmpBytes = 1L shl 30,
             )
             val inside = { name: String -> sandbox.inside(spec, tmp.resolve(name)) }
-            val cmd = listOf(tc.nvcc, "-ccbin", tc.hostCompiler) + props.compile.flags + gencode +
+            val cmd = listOf(tc.nvcc, "-ccbin", tc.hostCompiler) + flags + gencode(arch) +
                 listOf("-MD", "-MF", inside("solution.d"), "-c", inside("solution.cu"), "-o", inside("solution.o"))
             val started = System.nanoTime()
             compileSlots.acquire()
@@ -152,7 +153,7 @@ class Builder(
                 // a real compile error always has diagnostics; silence means nvcc/nsjail did not run properly
                 throw BuildInfrastructureException("compiler failed without output: ${res.describe()}")
             }
-            log.info("nvcc finished in {}ms: {}", ms, if (ok) "ok" else if (res.timedOut) "timeout" else "compile error")
+            log.info("nvcc {} {} finished in {}ms: {}", arch, flags, ms, if (ok) "ok" else if (res.timedOut) "timeout" else "compile error")
             tmp.resolve("compile.log").writeText(logText)
             if (ok) {
                 val obj = tmp.resolve("solution.o").toString()
@@ -193,7 +194,7 @@ class Builder(
             try {
                 tmp.resolve("harness_main.cu").writeText(source)
                 val res = Proc.run(
-                    listOf(tc.nvcc, "-ccbin", tc.hostCompiler, "-std=c++17", "-O2") + gencode +
+                    listOf(tc.nvcc, "-ccbin", tc.hostCompiler, "-std=c++17", "-O2") + gpuGencode +
                         listOf("-I", props.paths.harness.resolve("include").toString(), "-c", "harness_main.cu", "-o", "harness.o"),
                     Duration.ofMinutes(2),
                     cwd = tmp,
@@ -214,6 +215,9 @@ class Builder(
     companion object {
         /** Bump when the cached artifact layout or checks change. */
         private const val OBJECT_FORMAT = "v1"
+
+        /** Code for exactly this architecture: no PTX is embedded, so nothing is JIT-compiled at run time. */
+        private fun gencode(arch: String) = listOf("-gencode", "arch=${arch.replace("sm_", "compute_")},code=$arch")
 
         fun makeWorldWritable(dir: Path) {
             // the sandboxed process runs as a different uid and writes outputs here

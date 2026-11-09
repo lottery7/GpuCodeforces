@@ -75,11 +75,29 @@ object SpecValidator {
             (allowHeaders + forbidHeaders).filter { !HEADER.matches(it) }.forEach { errors += "policy: invalid header '$it'" }
             (forbidSass + allowSass).filter { !SASS.matches(it) }.forEach { errors += "policy: invalid SASS opcode '$it'" }
         }
+        with(spec.compile) {
+            if (arch != null && !CompileSpec.isArch(arch)) errors += "compile.arch '$arch' is not an architecture like sm_86"
+            flags.orEmpty().filter { flag -> COMPILE_FLAGS.none { it.matches(flag) } }.forEach { errors += "compile: flag '$it' is not allowed" }
+        }
         return errors
     }
 
     private val HEADER = Regex("[A-Za-z0-9_./+-]{1,128}")
     private val SASS = Regex("[A-Z0-9_]{1,32}")
+
+    /**
+     * nvcc flags a problem may set. An allow-list: flags reach the compiler command line, and options that read
+     * or write files, pass options through to the host compiler or linker, or pick the architecture must not.
+     */
+    private val COMPILE_FLAGS = listOf(
+        Regex("-O[0-3]"),
+        Regex("-std=c\\+\\+(11|14|17|20)"),
+        Regex("-D[A-Za-z_][A-Za-z0-9_]{0,63}(=[A-Za-z0-9_.+-]{0,64})?"),
+        Regex("--use_fast_math"),
+        Regex("--fmad=(true|false)"),
+        Regex("--expt-relaxed-constexpr"),
+        Regex("--expt-extended-lambda"),
+    )
 
     private fun validateSignature(sig: Signature, errors: MutableList<String>) {
         if (!IDENT.matches(sig.function) || sig.function in RESERVED || sig.function.startsWith("judge")) {

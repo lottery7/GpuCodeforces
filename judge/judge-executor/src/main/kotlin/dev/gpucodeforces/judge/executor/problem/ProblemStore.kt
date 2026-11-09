@@ -4,16 +4,21 @@ import dev.gpucodeforces.judge.api.ParamRole
 import dev.gpucodeforces.judge.api.ProblemSpec
 import dev.gpucodeforces.judge.api.SpecValidator
 import dev.gpucodeforces.judge.api.TestSpec
+import dev.gpucodeforces.judge.executor.compile.Builder
+import dev.gpucodeforces.judge.executor.compile.Toolchain
 import dev.gpucodeforces.judge.executor.config.ExecutorProperties
 import dev.gpucodeforces.judge.executor.gpu.GpuManager
+import dev.gpucodeforces.judge.executor.sandbox.GpuAccess
+import dev.gpucodeforces.judge.executor.sandbox.Sandbox
+import dev.gpucodeforces.judge.executor.sandbox.SandboxSpec
 import dev.gpucodeforces.judge.executor.util.Hashing
-import dev.gpucodeforces.judge.executor.util.Proc
 import org.slf4j.LoggerFactory
 import tools.jackson.databind.MapperFeature
 import tools.jackson.databind.SerializationFeature
 import tools.jackson.databind.json.JsonMapper
 import tools.jackson.module.kotlin.KotlinModule
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.FileTime
@@ -24,6 +29,7 @@ import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 import kotlin.io.path.exists
 import kotlin.io.path.fileSize
+import kotlin.io.path.name
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
 
@@ -50,8 +56,16 @@ class ProblemPreparationException(msg: String, val problemFault: Boolean) : Runt
 /**
  * Generates test inputs and reference answers once per problem version (Python + PyTorch, on a GPU slot) and
  * caches them on disk keyed by a content hash of signature + tests + generator source.
+ *
+ * The generator comes from a problem repository that accepts pull requests, so it runs in the same sandbox as
+ * solutions: no network, and only its own scratch directory is writable.
  */
-class ProblemStore(private val props: ExecutorProperties, private val gpus: GpuManager) {
+class ProblemStore(
+    private val props: ExecutorProperties,
+    private val gpus: GpuManager,
+    private val toolchain: Toolchain,
+    private val sandbox: Sandbox,
+) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val root = props.paths.cache.resolve("problems")
     private val locks = ConcurrentHashMap<String, ReentrantLock>()
@@ -117,35 +131,47 @@ class ProblemStore(private val props: ExecutorProperties, private val gpus: GpuM
         val started = System.nanoTime()
         Files.createDirectories(root)
         val tmp = Files.createTempDirectory(root, ".tmp-${hash.take(12)}-")
+        val sandboxLog = tmp.resolveSibling(tmp.name + ".nsjail.log")
         try {
+            // the sandboxed generator runs as a different uid and writes its output here
+            Builder.makeWorldWritable(tmp)
             val specFile = tmp.resolve("spec.json")
             specFile.writeText(canonical.writeValueAsString(mapOf("signature" to spec.signature, "tests" to spec.tests)))
             val source = tmp.resolve("problem.py")
             source.writeText(spec.generator.source)
             val out = tmp.resolve("data")
+            val pytools = props.paths.pytools.toAbsolutePath().normalize()
 
             val slot = gpus.pool.acquire("prepare:${spec.id}", Duration.ofMinutes(2), cancelled)
             val res = try {
                 log.info("Preparing problem {} v{} ({} tests) on {}", spec.id, spec.version, spec.tests.size, slot)
-                Proc.run(
-                    listOf(props.toolchain.python, "-m", "judge_problem.prepare", "--spec", specFile.toString(),
-                        "--source", source.toString(), "--out", out.toString(), "--device", props.prepare.device),
-                    props.prepare.timeLimit,
-                    env = mapOf(
-                        "PYTHONPATH" to props.paths.pytools.toString(),
-                        "PYTHONDONTWRITEBYTECODE" to "1",
-                        "CUDA_DEVICE_ORDER" to "PCI_BUS_ID",
-                        "CUDA_VISIBLE_DEVICES" to slot.index.toString(),
-                    ),
-                    cwd = tmp,
-                    maxOutputBytes = 64 * 1024,
+                val box = SandboxSpec(
+                    command = emptyList(),
+                    workDir = tmp,
+                    readOnly = buildMap {
+                        put(pytools, "/pytools")
+                        pythonMount()?.let { put(it, it.toString()) }
+                    },
+                    gpu = GpuAccess(slot.index, slot.config.deviceNode),
+                    wallTimeLimit = props.prepare.timeLimit.plusSeconds(5),
+                    maxFileBytes = largestArrayBytes(spec),
+                    tmpBytes = 1L shl 30,
                 )
+                val command = listOf(
+                    props.toolchain.python, "-m", "judge_problem.prepare", "--spec", sandbox.inside(box, specFile),
+                    "--source", sandbox.inside(box, source), "--out", sandbox.inside(box, out), "--device", props.prepare.device,
+                )
+                val env = mapOf("PYTHONPATH" to sandbox.inside(box, pytools), "PYTHONDONTWRITEBYTECODE" to "1")
+                sandbox.runToCompletion(box.copy(command = command, env = env), props.prepare.timeLimit, 64 * 1024)
             } finally {
                 gpus.pool.release(slot)
             }
             if (!res.ok) {
                 val problemFault = res.exitCode == 2 && !res.timedOut
-                log.error("Problem {} preparation failed: {}", spec.id, res.describe())
+                log.error(
+                    "Problem {} preparation failed: {}; sandbox log: {}",
+                    spec.id, res.describe(), if (sandboxLog.exists()) sandboxLog.readText().takeLast(2000) else "-",
+                )
                 throw ProblemPreparationException(
                     if (res.timedOut) "test generation exceeded ${props.prepare.timeLimit.toMinutes()} min"
                     else "test generation failed: ${res.stderr.trim().takeLast(4000)}",
@@ -164,7 +190,20 @@ class ProblemStore(private val props: ExecutorProperties, private val gpus: GpuM
             )
         } finally {
             tmp.toFile().deleteRecursively()
+            Files.deleteIfExists(sandboxLog)
         }
+    }
+
+    /** A Python with torch installed outside the system directories (a venv) has to be mounted explicitly. */
+    private fun pythonMount(): Path? {
+        val system = (props.sandbox.readOnlyMounts + props.sandbox.extraReadOnlyMounts).map { Path.of(it) }
+        return toolchain.pythonPrefix?.takeUnless { prefix -> system.any { prefix.startsWith(it) } }
+    }
+
+    /** RLIMIT_FSIZE of the generator: it writes one file per array. */
+    private fun largestArrayBytes(spec: ProblemSpec): Long = spec.tests.maxOf { t ->
+        val counts = SpecValidator.elementCounts(spec.signature, t)
+        spec.signature.arrays.maxOfOrNull { counts.getValue(it.name) * it.type.bytes } ?: 0
     }
 
     private fun verifySizes(spec: ProblemSpec, out: Path) {
@@ -178,8 +217,12 @@ class ProblemStore(private val props: ExecutorProperties, private val gpus: GpuM
                 }
                 for (f in files) {
                     val want = counts.getValue(p.name) * p.type.bytes
-                    if (!f.exists() || f.fileSize() != want) {
-                        throw ProblemPreparationException("prepared file ${out.relativize(f)} has ${if (f.exists()) f.fileSize() else -1} bytes, expected $want", true)
+                    // the generator is untrusted: a symlink here would make the judge read a file of its choosing
+                    if (!Files.isRegularFile(f, LinkOption.NOFOLLOW_LINKS)) {
+                        throw ProblemPreparationException("prepared file ${out.relativize(f)} is missing or not a regular file", true)
+                    }
+                    if (f.fileSize() != want) {
+                        throw ProblemPreparationException("prepared file ${out.relativize(f)} has ${f.fileSize()} bytes, expected $want", true)
                     }
                 }
             }

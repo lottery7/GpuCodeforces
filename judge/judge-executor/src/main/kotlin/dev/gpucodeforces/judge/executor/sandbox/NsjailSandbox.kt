@@ -8,6 +8,7 @@ import java.time.Duration
 import kotlin.io.path.exists
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.name
+import kotlin.io.path.writeText
 import org.slf4j.LoggerFactory
 
 /**
@@ -19,12 +20,13 @@ import org.slf4j.LoggerFactory
  *  - rlimits for file size / open files; cgroups v2 memory+pids when enabled.
  * RLIMIT_AS is deliberately unlimited: CUDA reserves huge virtual address ranges.
  */
-class NsjailSandbox(private val cfg: SandboxConfig) : Sandbox {
+class NsjailSandbox(
+    private val cfg: SandboxConfig,
+    /** WSL2 exposes GPUs through the DirectX kernel interface instead of /dev/nvidia*. */
+    val wsl: Boolean = Path.of("/dev/dxg").exists(),
+) : Sandbox {
     private val log = LoggerFactory.getLogger(javaClass)
     override val name = "nsjail"
-
-    /** WSL2 exposes GPUs through the DirectX kernel interface instead of /dev/nvidia*. */
-    val wsl: Boolean = Path.of("/dev/dxg").exists()
 
     private fun mounts(spec: SandboxSpec): Map<Path, String> = spec.readOnly + (spec.workDir to Sandbox.WORK)
 
@@ -39,7 +41,9 @@ class NsjailSandbox(private val cfg: SandboxConfig) : Sandbox {
         addAll(listOf("--time_limit", ((spec.wallTimeLimit.toMillis() + 999) / 1000).toString()))
         addAll(listOf("--rlimit_as", "inf", "--rlimit_core", "0", "--rlimit_cpu", "inf"))
         addAll(listOf("--rlimit_fsize", ((spec.maxFileBytes shr 20) + 1).toString()))
-        addAll(listOf("--rlimit_nofile", cfg.maxOpenFiles.toString(), "--rlimit_nproc", "inf", "--rlimit_stack", "inf"))
+        // The stack limit must be finite: nsjail turns "inf" into a huge finite value, glibc then uses it as the
+        // default thread stack size and every pthread_create fails with EAGAIN.
+        addAll(listOf("--rlimit_nofile", cfg.maxOpenFiles.toString(), "--rlimit_nproc", "inf", "--rlimit_stack", cfg.stackLimitMb.toString()))
         if (cfg.useCgroupsV2) {
             add("--use_cgroupv2")
             spec.memoryLimitBytes?.let { addAll(listOf("--cgroup_mem_max", it.toString())) }
@@ -52,7 +56,10 @@ class NsjailSandbox(private val cfg: SandboxConfig) : Sandbox {
         addAll(listOf("-m", "none:/tmp:tmpfs:size=${spec.tmpBytes}", "-m", "none:/dev/shm:tmpfs:size=${spec.tmpBytes}"))
         for ((host, inside) in spec.readOnly) addAll(listOf("-R", "$host:$inside"))
         addAll(listOf("-B", "${spec.workDir}:${Sandbox.WORK}"))
-        spec.gpu?.let { gpu -> gpuDevices(gpu).forEach { addAll(listOf("-B", it)) } }
+        // Docker Desktop mounts /dev/dxg read-only, and a user namespace cannot remount it read-write (EPERM).
+        // A read-only mount does not restrict ioctls on the device node, so the GPU works either way.
+        val deviceBind = if (wsl) "-R" else "-B"
+        spec.gpu?.let { gpu -> gpuDevices(gpu).forEach { addAll(listOf(deviceBind, it)) } }
         if (spec.gpu != null && wsl && Path.of("/usr/lib/wsl").exists()) addAll(listOf("-R", "/usr/lib/wsl"))
 
         val env = baseEnv(spec) + spec.env
@@ -105,14 +112,21 @@ class NsjailSandbox(private val cfg: SandboxConfig) : Sandbox {
             .start()
     }
 
-    /** Fails fast at startup if nsjail is missing or cannot create namespaces on this host. */
+    /**
+     * Fails fast at startup if nsjail is missing, cannot create namespaces on this host, or cannot execute files
+     * from the work directory (solutions are linked there; Docker mounts /dev/shm noexec, for example).
+     */
     fun selfTest(workDir: Path) {
         Files.createDirectories(workDir)
-        val spec = SandboxSpec(listOf("/bin/true"), workDir, wallTimeLimit = Duration.ofSeconds(10))
-        val res = runToCompletion(spec, Duration.ofSeconds(15), 8192)
+        val script = workDir.resolve("selftest.sh")
+        script.writeText("#!/bin/sh\nexit 0\n")
+        check(script.toFile().setExecutable(true, false)) { "cannot make $script executable" }
+        val spec = SandboxSpec(emptyList(), workDir, wallTimeLimit = Duration.ofSeconds(10))
+        val res = runToCompletion(spec.copy(command = listOf(inside(spec, script))), Duration.ofSeconds(15), 8192)
         check(res.ok) {
             val logFile = workDir.resolveSibling(workDir.name + ".nsjail.log")
-            "nsjail self-test failed: ${res.describe()}; log: ${if (logFile.exists()) Files.readString(logFile).takeLast(2000) else "-"}"
+            "nsjail self-test failed (it runs a script from $workDir, which must not be on a noexec mount): " +
+                "${res.describe()}; log: ${if (logFile.exists()) Files.readString(logFile).takeLast(2000) else "-"}"
         }
         log.info("nsjail self-test passed (wsl={}, cgroupsV2={})", wsl, cfg.useCgroupsV2)
     }

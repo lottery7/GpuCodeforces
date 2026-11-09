@@ -61,8 +61,11 @@ services:
       JUDGE_GPU_PROFILE: rtx3060
       JUDGE_EXECUTOR_ID: ${JUDGE_EXECUTOR_ID:-gpu-node-1}
       JUDGE_LOCK_CLOCKS: ${JUDGE_LOCK_CLOCKS:-}
+      JUDGE_WORK_DIR: /run/judge/work
       SPRING_PROFILES_ACTIVE: ${JUDGE_LOG_PROFILE:-default}
-    shm_size: 8gb # run directories (solution outputs) live in /dev/shm
+    tmpfs:
+      # run directories (solution binary and outputs); not /dev/shm, which Docker mounts noexec
+      - /run/judge:exec,size=8g
     volumes:
       - judge-data:/var/lib/judge # compiled objects and generated tests survive restarts
     ports:
