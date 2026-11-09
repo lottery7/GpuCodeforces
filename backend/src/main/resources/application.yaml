@@ -1,0 +1,19 @@
+spring:
+  application:
+    name: gpucodeforces-backend
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/gpucodeforces}
+    username: ${DATABASE_USER:gpucodeforces}
+    password: ${DATABASE_PASSWORD:gpucodeforces}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
