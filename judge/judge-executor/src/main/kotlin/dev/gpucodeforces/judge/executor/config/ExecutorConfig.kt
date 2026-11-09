@@ -7,6 +7,7 @@ import dev.gpucodeforces.judge.executor.gpu.GpuManager
 import dev.gpucodeforces.judge.executor.messaging.CancelRegistry
 import dev.gpucodeforces.judge.executor.messaging.EventPublisher
 import dev.gpucodeforces.judge.executor.messaging.JobListener
+import dev.gpucodeforces.judge.executor.pipeline.JobProcessor
 import dev.gpucodeforces.judge.executor.pipeline.JudgePipeline
 import dev.gpucodeforces.judge.executor.problem.ProblemStore
 import dev.gpucodeforces.judge.executor.run.HarnessRunner
@@ -28,6 +29,7 @@ import org.springframework.amqp.rabbit.core.RabbitTemplate
 import org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.context.annotation.Profile
 import tools.jackson.databind.json.JsonMapper
 import java.nio.file.Files
 import java.time.Clock
@@ -40,9 +42,11 @@ class ExecutorConfig(private val props: ExecutorProperties) {
     fun clock(): Clock = Clock.systemUTC()
 
     /** Fails startup unless the pinned toolchain is present. */
+    @Profile(REAL)
     @Bean
     fun toolchain(): Toolchain = Toolchain(props).also { it.verify() }
 
+    @Profile(REAL)
     @Bean
     fun sandbox(): Sandbox {
         Files.createDirectories(props.paths.work)
@@ -54,15 +58,19 @@ class ExecutorConfig(private val props: ExecutorProperties) {
         }
     }
 
+    @Profile(REAL)
     @Bean(destroyMethod = "stop")
     fun gpuManager(toolchain: Toolchain): GpuManager = GpuManager(props).also { it.start() }
 
+    @Profile(REAL)
     @Bean
     fun builder(toolchain: Toolchain, sandbox: Sandbox) = Builder(props, toolchain, sandbox)
 
+    @Profile(REAL)
     @Bean
     fun problemStore(gpus: GpuManager, toolchain: Toolchain, sandbox: Sandbox) = ProblemStore(props, gpus, toolchain, sandbox)
 
+    @Profile(REAL)
     @Bean
     fun harnessRunner(sandbox: Sandbox) = HarnessRunner(props, sandbox)
 
@@ -72,11 +80,12 @@ class ExecutorConfig(private val props: ExecutorProperties) {
     @Bean
     fun cancelRegistry(clock: Clock) = CancelRegistry(clock)
 
+    @Profile(REAL)
     @Bean
     fun judgePipeline(
         toolchain: Toolchain, builder: Builder, problems: ProblemStore, runner: HarnessRunner, gpus: GpuManager,
         publisher: EventPublisher, cancels: CancelRegistry, meters: MeterRegistry, clock: Clock,
-    ) = JudgePipeline(props, toolchain, builder, problems, runner, gpus, publisher, cancels, meters, clock)
+    ): JobProcessor = JudgePipeline(props, toolchain, builder, problems, runner, gpus, publisher, cancels, meters, clock)
 
     /** Same declarations as the gateway (idempotent), so an executor can start first. */
     @Bean

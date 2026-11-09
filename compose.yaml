@@ -18,10 +18,11 @@ services:
   # Testing system (judge/README.md). Behind profiles so `docker compose up -d --wait` still starts only PostgreSQL:
   #   docker compose --profile judge up -d --wait   # RabbitMQ + judge gateway
   #   docker compose --profile gpu up -d --wait     # + judge executor (NVIDIA GPU + nvidia-container-toolkit)
+  #   docker compose --profile mock up -d --wait    # + mock executor: no GPU, verdicts from `judge-mock` comments
   # Executors on other machines (one per GPU type) use judge/deploy/compose.executor.yaml and connect to this broker:
   # set RABBITMQ_BIND=0.0.0.0, real RABBITMQ_USER/RABBITMQ_PASSWORD, and list every type in JUDGE_GPU_PROFILES.
   rabbitmq:
-    profiles: [judge, gpu]
+    profiles: [judge, gpu, mock]
     image: rabbitmq:4.1.8-management
     hostname: rabbitmq
     environment:
@@ -40,7 +41,7 @@ services:
       retries: 20
 
   judge-gateway:
-    profiles: [judge, gpu]
+    profiles: [judge, gpu, mock]
     build:
       context: .
       dockerfile: judge/deploy/gateway.Dockerfile
@@ -91,6 +92,25 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu, compute, utility]
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  # Integration tests without a GPU: takes the submissions of its GPU profile like a real executor and answers with
+  # the verdict asked for in the source (`// judge-mock: verdict=WRONG_ANSWER test=2`), ACCEPTED by default.
+  # Do not run it next to a real executor of the same profile: the two would share the queue.
+  judge-executor-mock:
+    profiles: [mock]
+    build:
+      context: .
+      dockerfile: judge/deploy/mock-executor.Dockerfile
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      JUDGE_GPU_PROFILE: ${JUDGE_GPU_PROFILE:-rtx3060}
+      JUDGE_EXECUTOR_ID: ${JUDGE_MOCK_EXECUTOR_ID:-mock-executor-1}
+      SPRING_PROFILES_ACTIVE: mock
     depends_on:
       rabbitmq:
         condition: service_healthy

@@ -29,6 +29,7 @@ data class ExecutorProperties(
     val compile: CompileConfig = CompileConfig(),
     val prepare: PrepareConfig = PrepareConfig(),
     val run: RunConfig = RunConfig(),
+    val mock: MockConfig = MockConfig(),
     /** How often an idle healthy GPU is probed; unhealthy GPUs are re-probed every [unhealthyProbeInterval]. */
     val idleProbeInterval: Duration = Duration.ofMinutes(5),
     val unhealthyProbeInterval: Duration = Duration.ofSeconds(30),
@@ -163,6 +164,12 @@ data class RunConfig(
     val maxStderrBytes: Int = 16 * 1024,
     /** Run directories of INTERNAL_ERROR runs kept in paths.failed. */
     val keepFailedRuns: Int = 50,
+)
+
+/** Settings of the `mock` Spring profile (an executor that judges nothing, for integration tests without a GPU). */
+data class MockConfig(
+    /** Pause after each test's progress event, so a client can observe TESTING before FINISHED. */
+    val testDelay: Duration = Duration.ofMillis(20),
 )
 
 data class GpuProfileConfig(

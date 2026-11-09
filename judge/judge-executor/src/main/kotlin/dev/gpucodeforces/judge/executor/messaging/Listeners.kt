@@ -7,9 +7,10 @@ import dev.gpucodeforces.judge.api.ExecutorHeartbeat
 import dev.gpucodeforces.judge.api.JudgeJob
 import dev.gpucodeforces.judge.api.Topology
 import dev.gpucodeforces.judge.executor.config.ExecutorProperties
+import dev.gpucodeforces.judge.executor.config.REAL
 import dev.gpucodeforces.judge.executor.gpu.GpuManager
 import dev.gpucodeforces.judge.executor.pipeline.Disposition
-import dev.gpucodeforces.judge.executor.pipeline.JudgePipeline
+import dev.gpucodeforces.judge.executor.pipeline.JobProcessor
 import java.net.InetAddress
 import java.time.Clock
 import org.slf4j.LoggerFactory
@@ -21,13 +22,14 @@ import org.springframework.amqp.rabbit.annotation.Queue
 import org.springframework.amqp.rabbit.annotation.QueueBinding
 import org.springframework.amqp.rabbit.annotation.RabbitListener
 import org.springframework.amqp.rabbit.listener.api.ChannelAwareMessageListener
+import org.springframework.context.annotation.Profile
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import tools.jackson.core.JacksonException
 
 @Component
 class JobListener(
-    private val pipeline: JudgePipeline,
+    private val pipeline: JobProcessor,
     private val publisher: EventPublisher,
     private val props: ExecutorProperties,
 ) : ChannelAwareMessageListener {
@@ -92,7 +94,7 @@ class ControlListener(private val cancels: CancelRegistry, private val publisher
 class HeartbeatPublisher(
     private val props: ExecutorProperties,
     private val gpus: GpuManager,
-    private val pipeline: JudgePipeline,
+    private val pipeline: JobProcessor,
     private val publisher: EventPublisher,
     private val clock: Clock,
 ) {
@@ -125,7 +127,12 @@ class HeartbeatPublisher(
             failing = true
         }
     }
+}
 
+/** Probes the GPUs between jobs. Absent in the mock profile, where there is nothing to probe. */
+@Component
+@Profile(REAL)
+class GpuHealthChecker(private val gpus: GpuManager) {
     @Scheduled(fixedDelayString = "\${judge.executor.health-check-interval:10s}")
     fun healthCheck() {
         gpus.periodicCheck()

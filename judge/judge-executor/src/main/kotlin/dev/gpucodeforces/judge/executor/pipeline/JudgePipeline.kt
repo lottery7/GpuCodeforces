@@ -40,8 +40,6 @@ import kotlin.io.path.name
 import org.slf4j.LoggerFactory
 import org.slf4j.MDC
 
-enum class Disposition { ACK, REQUEUE }
-
 /** Judges one delivery of a job: compile -> prepare tests -> run on a GPU -> report. */
 class JudgePipeline(
     private val props: ExecutorProperties,
@@ -54,11 +52,11 @@ class JudgePipeline(
     private val cancels: CancelRegistry,
     private val meters: MeterRegistry,
     private val clock: Clock,
-) {
+) : JobProcessor {
     private val log = LoggerFactory.getLogger(javaClass)
-    val inFlight = AtomicInteger()
+    override val inFlight = AtomicInteger()
 
-    fun process(job: JudgeJob, attempt: Int): Disposition {
+    override fun process(job: JudgeJob, attempt: Int): Disposition {
         inFlight.incrementAndGet()
         val started = System.nanoTime()
         val reporter = JobReporter(job.submissionId, attempt, source = props.id, publisher, clock)
