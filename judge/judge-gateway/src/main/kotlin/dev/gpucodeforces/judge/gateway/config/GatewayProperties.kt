@@ -25,19 +25,18 @@ data class GatewayProperties(
      * executors validate every job against the contract's own limits and reject what exceeds them.
      */
     val maxSourceBytes: Int = CONTRACT_LIMITS.maxSourceBytes,
-    val maxTests: Int = CONTRACT_LIMITS.maxTests,
     val maxTimeLimitMs: Long = CONTRACT_LIMITS.maxTimeLimitMs,
 ) {
     init {
         require(defaultGpuProfile in gpuProfiles) { "judge.gateway.default-gpu-profile must be one of gpu-profiles" }
         require(gpuProfiles.all(Topology::isProfileName)) { "gpu profile names must match ${Topology.PROFILE_NAME}" }
-        require(maxSourceBytes <= CONTRACT_LIMITS.maxSourceBytes && maxTests <= CONTRACT_LIMITS.maxTests && maxTimeLimitMs <= CONTRACT_LIMITS.maxTimeLimitMs) {
+        require(maxSourceBytes <= CONTRACT_LIMITS.maxSourceBytes && maxTimeLimitMs <= CONTRACT_LIMITS.maxTimeLimitMs) {
             "judge.gateway limits cannot exceed $CONTRACT_LIMITS: executors would reject the jobs"
         }
     }
 
     val validatorLimits: SpecValidator.Limits
-        get() = CONTRACT_LIMITS.copy(maxSourceBytes = maxSourceBytes, maxTests = maxTests, maxTimeLimitMs = maxTimeLimitMs)
+        get() = CONTRACT_LIMITS.copy(maxSourceBytes = maxSourceBytes, maxTimeLimitMs = maxTimeLimitMs)
 
     private companion object {
         val CONTRACT_LIMITS = SpecValidator.Limits()

@@ -9,13 +9,13 @@ import dev.gpucodeforces.judge.api.ParamSpec
 import dev.gpucodeforces.judge.api.ProblemSpec
 import dev.gpucodeforces.judge.api.Signature
 import dev.gpucodeforces.judge.api.SpecValidator
-import dev.gpucodeforces.judge.api.TestSpec
 import dev.gpucodeforces.judge.api.TimingSpec
 import dev.gpucodeforces.judge.api.Verdict
 import dev.gpucodeforces.judge.executor.config.ExecutorProperties
 import dev.gpucodeforces.judge.executor.config.GpuSlotConfig
 import dev.gpucodeforces.judge.executor.config.RunConfig
 import dev.gpucodeforces.judge.executor.gpu.GpuSlot
+import dev.gpucodeforces.judge.executor.problem.GeneratedTest
 import dev.gpucodeforces.judge.executor.problem.PreparedProblem
 import dev.gpucodeforces.judge.executor.problem.PreparedTest
 import dev.gpucodeforces.judge.executor.run.HarnessRunner
@@ -53,14 +53,12 @@ class HarnessRunnerTest {
                 ParamSpec("N", DType.INT32, ParamRole.SCALAR),
             ),
         ),
-        tests = listOf(
-            TestSpec("sample", mapOf("N" to 4), sample = true),
-            TestSpec("random", mapOf("N" to 8), seed = 1),
-        ),
         generator = GeneratorSpec(source = "unused"),
         limits = LimitsSpec(timeLimitMs = 200, wallTimeLimitMs = 500),
         timing = TimingSpec(warmupRuns = 0, maxRuns = 1),
     )
+
+    private val declared = listOf(GeneratedTest("sample", sample = true, scalars = mapOf("N" to 4)), GeneratedTest("random", scalars = mapOf("N" to 8)))
 
     private val props = ExecutorProperties(run = RunConfig(startupTimeout = Duration.ofSeconds(10), samplingInterval = Duration.ofMillis(20)))
 
@@ -73,7 +71,7 @@ class HarnessRunnerTest {
 
     private fun prepared(): PreparedProblem {
         val dir = tmp.resolve("problem")
-        val tests = problem.tests.mapIndexed { i, t ->
+        val tests = declared.mapIndexed { i, t ->
             val idx = i + 1
             val n = t.scalars.getValue("N").toInt()
             val a = FloatArray(n) { it.toFloat() + idx }
@@ -82,7 +80,7 @@ class HarnessRunnerTest {
             f32(dir.resolve("inputs/t$idx/B.bin"), b)
             f32(dir.resolve("expected/t$idx/C.bin"), FloatArray(n) { a[it] + b[it] })
             PreparedTest(
-                idx, t, SpecValidator.elementCounts(problem.signature, t),
+                idx, t, SpecValidator.elementCounts(problem.signature, t.scalars),
                 mapOf("A" to dir.resolve("inputs/t$idx/A.bin"), "B" to dir.resolve("inputs/t$idx/B.bin")),
                 mapOf("C" to dir.resolve("expected/t$idx/C.bin")),
             )

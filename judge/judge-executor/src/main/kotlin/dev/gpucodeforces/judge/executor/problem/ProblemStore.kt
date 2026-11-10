@@ -3,7 +3,6 @@ package dev.gpucodeforces.judge.executor.problem
 import dev.gpucodeforces.judge.api.ParamRole
 import dev.gpucodeforces.judge.api.ProblemSpec
 import dev.gpucodeforces.judge.api.SpecValidator
-import dev.gpucodeforces.judge.api.TestSpec
 import dev.gpucodeforces.judge.executor.compile.Toolchain
 import dev.gpucodeforces.judge.executor.config.ExecutorProperties
 import dev.gpucodeforces.judge.executor.gpu.GpuManager
@@ -12,10 +11,12 @@ import dev.gpucodeforces.judge.executor.sandbox.SandboxSpec
 import dev.gpucodeforces.judge.executor.util.FileTrees
 import dev.gpucodeforces.judge.executor.util.Hashing
 import org.slf4j.LoggerFactory
+import tools.jackson.core.JacksonException
 import tools.jackson.databind.MapperFeature
 import tools.jackson.databind.SerializationFeature
 import tools.jackson.databind.json.JsonMapper
 import tools.jackson.module.kotlin.KotlinModule
+import tools.jackson.module.kotlin.readValue
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
@@ -35,7 +36,7 @@ import kotlin.io.path.writeText
 data class PreparedTest(
     /** 1-based. */
     val index: Int,
-    val spec: TestSpec,
+    val spec: GeneratedTest,
     /** Element counts of all arrays. */
     val counts: Map<String, Long>,
     /** INPUT/INOUT arrays (host paths). */
@@ -53,8 +54,8 @@ data class PreparedProblem(val hash: String, val dir: Path, val inputsDir: Path,
 class ProblemPreparationException(msg: String, val problemFault: Boolean) : RuntimeException(msg)
 
 /**
- * Generates test inputs and reference answers once per problem version (Python + PyTorch, on a GPU slot) and
- * caches them on disk keyed by a content hash of signature + tests + generator source.
+ * Generates the tests a problem's generator declares, their inputs and reference answers once per problem version
+ * (Python + PyTorch, on a GPU slot) and caches them on disk keyed by a content hash of signature + generator source.
  *
  * The generator comes from a problem repository that accepts pull requests, so it runs in the same sandbox as
  * solutions: no network, and only its own scratch directory is writable.
@@ -69,6 +70,7 @@ class ProblemStore(
     private val root = props.paths.cache.resolve("problems")
     private val locks = ConcurrentHashMap<String, ReentrantLock>()
     private val inUse = ConcurrentHashMap<String, AtomicInteger>()
+    private val limits = SpecValidator.Limits()
 
     private val canonical: JsonMapper = JsonMapper.builder()
         .addModule(KotlinModule.Builder().build())
@@ -82,7 +84,7 @@ class ProblemStore(
      * reference answers computed by the old one.
      */
     fun hash(spec: ProblemSpec): String = Hashing.sha256(
-        canonical.writeValueAsString(mapOf("signature" to spec.signature, "tests" to spec.tests, "generator" to spec.generator)),
+        canonical.writeValueAsString(mapOf("signature" to spec.signature, "generator" to spec.generator)),
         pytoolsHash, toolchain.torchVersion ?: "", props.prepare.device, PREP_FORMAT,
     )
 
@@ -113,7 +115,7 @@ class ProblemStore(
                 }
             }
             Files.setLastModifiedTime(dir.resolve(READY), FileTime.fromMillis(System.currentTimeMillis()))
-            return layout(spec, hash, dir).also { acquired = true }
+            return layout(spec, hash, dir, readTests(spec, dir)).also { acquired = true }
         } finally {
             if (!acquired) release(hash)
         }
@@ -123,11 +125,11 @@ class ProblemStore(
         inUse.getValue(hash).decrementAndGet()
     }
 
-    private fun layout(spec: ProblemSpec, hash: String, dir: Path): PreparedProblem {
+    private fun layout(spec: ProblemSpec, hash: String, dir: Path, generated: List<GeneratedTest>): PreparedProblem {
         val sig = spec.signature
-        val tests = spec.tests.mapIndexed { i, t ->
+        val tests = generated.mapIndexed { i, t ->
             val idx = i + 1
-            val counts = SpecValidator.elementCounts(sig, t)
+            val counts = SpecValidator.elementCounts(sig, t.scalars)
             PreparedTest(
                 index = idx,
                 spec = t,
@@ -140,6 +142,24 @@ class ProblemStore(
         return PreparedProblem(hash, dir = dir, inputsDir = dir.resolve("inputs"), tests)
     }
 
+    /**
+     * The tests the generator declared, from `tests.json` in [dir]. The file is its output: it is read only if it
+     * is a regular file of a sane size, and every test is checked like the rest of the problem.
+     */
+    private fun readTests(spec: ProblemSpec, dir: Path): List<GeneratedTest> {
+        val file = dir.resolve(TESTS)
+        if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) broken("the generator produced no $TESTS")
+        if (file.fileSize() > MAX_TESTS_FILE_BYTES) broken("$TESTS is larger than $MAX_TESTS_FILE_BYTES bytes")
+        val tests = try {
+            canonical.readValue<List<GeneratedTest>>(file.readText())
+        } catch (e: JacksonException) {
+            broken("$TESTS is not a list of tests: ${e.originalMessage}")
+        }
+        val errors = GeneratedTest.validate(spec.signature, tests, limits)
+        if (errors.isNotEmpty()) broken("invalid tests: ${errors.take(20).joinToString("; ")}")
+        return tests
+    }
+
     private fun prepare(spec: ProblemSpec, hash: String, dir: Path, cancelled: () -> Boolean) {
         val started = System.nanoTime()
         Files.createDirectories(root)
@@ -147,7 +167,8 @@ class ProblemStore(
         try {
             FileTrees.makeWritableByAll(tmp)
             val specFile = tmp.resolve("spec.json")
-            specFile.writeText(canonical.writeValueAsString(mapOf("signature" to spec.signature, "tests" to spec.tests)))
+            val prepareLimits = mapOf("maxTests" to limits.maxTests, "maxTestBytes" to limits.maxTestBytes)
+            specFile.writeText(canonical.writeValueAsString(mapOf("signature" to spec.signature, "limits" to prepareLimits)))
             val source = tmp.resolve("problem.py")
             source.writeText(spec.generator.source)
             val out = tmp.resolve("data")
@@ -155,7 +176,7 @@ class ProblemStore(
 
             val slot = gpus.pool.acquire("prepare:${spec.id}", Duration.ofMinutes(2), cancelled)
             val res = try {
-                log.info("Preparing problem {} v{} ({} tests) on {}", spec.id, spec.version, spec.tests.size, slot)
+                log.info("Preparing problem {} v{} on {}", spec.id, spec.version, slot)
                 val box = SandboxSpec(
                     command = emptyList(),
                     workDir = tmp,
@@ -165,7 +186,8 @@ class ProblemStore(
                     },
                     gpu = slot.access(),
                     wallTimeLimit = props.prepare.timeLimit.plusSeconds(5),
-                    maxFileBytes = largestArrayBytes(spec),
+                    // one file per array, and no array is larger than a whole test may be
+                    maxFileBytes = limits.maxTestBytes,
                     tmpBytes = 1L shl 30,
                 )
                 val command = listOf(
@@ -186,14 +208,14 @@ class ProblemStore(
                     problemFault,
                 )
             }
-            val bytes = verifyOutput(spec, out)
+            val (tests, bytes) = verifyOutput(spec, out)
             out.resolve("size").writeText(bytes.toString())
             out.resolve(READY).writeText(hash)
             FileTrees.delete(dir)
             Files.move(out, dir, StandardCopyOption.ATOMIC_MOVE)
             log.info(
-                "Prepared problem {} in {}ms: {} MB of test data, generator log: {}",
-                spec.id, (System.nanoTime() - started) / 1_000_000, bytes shr 20, res.stderr.lines().takeLast(3).joinToString(" | "),
+                "Prepared problem {} in {}ms: {} tests, {} MB of test data, generator log: {}",
+                spec.id, (System.nanoTime() - started) / 1_000_000, tests, bytes shr 20, res.stderr.lines().takeLast(3).joinToString(" | "),
             )
         } finally {
             FileTrees.delete(tmp)
@@ -207,23 +229,18 @@ class ProblemStore(
         return toolchain.pythonPrefix?.takeUnless { prefix -> system.any { prefix.startsWith(it) } }
     }
 
-    /** RLIMIT_FSIZE of the generator: it writes one file per array. */
-    private fun largestArrayBytes(spec: ProblemSpec): Long = spec.tests.maxOf { t ->
-        val counts = SpecValidator.elementCounts(spec.signature, t)
-        spec.signature.arrays.maxOfOrNull { counts.getValue(it.name) * it.type.bytes } ?: 0
-    }
-
     /**
      * The generator is untrusted and [out] is entirely its work. Only the expected directories and regular files
-     * of the expected sizes (and its `meta.json`) are accepted: the judge reads these files as root, writes its
-     * markers next to them and mounts `inputs` into every solution's sandbox, so a symbolic link or a stray copy
-     * of the answers must not survive. Returns the size of the test data.
+     * of the expected sizes for the tests it declared (and its `meta.json` and `tests.json`) are accepted: the judge
+     * reads these files as root, writes its markers next to them and mounts `inputs` into every solution's sandbox,
+     * so a symbolic link or a stray copy of the answers must not survive. Returns the number of tests and the size
+     * of the test data.
      */
-    private fun verifyOutput(spec: ProblemSpec, out: Path): Long {
-        fun broken(what: String): Nothing = throw ProblemPreparationException(what, problemFault = true)
-
+    private fun verifyOutput(spec: ProblemSpec, out: Path): Pair<Int, Long> {
+        if (!Files.isDirectory(out, LinkOption.NOFOLLOW_LINKS)) broken("the generator produced no output directory")
+        val tests = readTests(spec, out)
         val wanted = buildMap {
-            for (t in layout(spec, "", out).tests) {
+            for (t in layout(spec, "", out, tests).tests) {
                 for (p in spec.signature.arrays) {
                     val bytes = t.counts.getValue(p.name) * p.type.bytes
                     t.inputs[p.name]?.let { put(it, bytes) }
@@ -233,14 +250,13 @@ class ProblemStore(
         }
         // setOf: a Path is itself an Iterable of its name elements, so `+ out` would add those instead
         val directories = wanted.keys.flatMap { listOf(it.parent, it.parent.parent) }.toSet() + setOf(out)
-        val meta = out.resolve("meta.json")
-        if (!Files.isDirectory(out, LinkOption.NOFOLLOW_LINKS)) broken("the generator produced no output directory")
-        val found = Files.walk(out).use { entries -> entries.limit(wanted.size + directories.size + 2L).toList() }
+        val meta = setOf(out.resolve("meta.json"), out.resolve(TESTS))
+        val found = Files.walk(out).use { entries -> entries.limit(wanted.size + directories.size + meta.size + 1L).toList() }
         for (p in found) {
             val attrs = Files.readAttributes(p, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
             val expected = when {
                 attrs.isDirectory -> p in directories
-                attrs.isRegularFile -> p == meta || p in wanted
+                attrs.isRegularFile -> p in meta || p in wanted
                 else -> false
             }
             if (!expected) broken("the generator left unexpected ${out.relativize(p)} in its output")
@@ -257,7 +273,7 @@ class ProblemStore(
                 broken("reference answer ${out.relativize(file)} is all 0xFF bytes, the pattern outputs are pre-filled with: a solution that writes nothing would pass this test")
             }
         }
-        return wanted.values.sum()
+        return tests.size to wanted.values.sum()
     }
 
     private fun bytesAllEqual(file: Path, value: Byte): Boolean = Files.newInputStream(file).buffered().use { input ->
@@ -299,11 +315,15 @@ class ProblemStore(
         }
     }
 
+    private fun broken(what: String): Nothing = throw ProblemPreparationException(what, problemFault = true)
+
     companion object {
         private const val READY = "READY"
+        private const val TESTS = "tests.json"
+        private const val MAX_TESTS_FILE_BYTES = 1L shl 20
         private const val POISON = 0xFF.toByte()
 
         /** Bump when the on-disk format of prepared data changes. */
-        private const val PREP_FORMAT = "v1"
+        private const val PREP_FORMAT = "v2"
     }
 }

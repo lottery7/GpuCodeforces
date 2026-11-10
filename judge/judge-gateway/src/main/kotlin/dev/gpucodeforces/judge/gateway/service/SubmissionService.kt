@@ -78,8 +78,8 @@ class SubmissionService(
             publishQueuedEvent(job)
             meters.counter("judge.gateway.submissions", "result", "accepted", "gpuProfile", profile).increment()
             log.info(
-                "Accepted submission: problem={} version={} profile={} tests={} sourceBytes={}",
-                req.problem.id, req.problem.version, profile, req.problem.tests.size, req.source.length,
+                "Accepted submission: problem={} version={} profile={} sourceBytes={}",
+                req.problem.id, req.problem.version, profile, req.source.length,
             )
             if (executors.alive(profile).isEmpty()) {
                 // The job is durable and will be judged once an executor of this GPU type connects, but nothing

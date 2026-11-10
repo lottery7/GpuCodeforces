@@ -1,6 +1,15 @@
 import unittest
 
-from judge_problem.spec import eval_size, parse_params, parse_tests
+from judge_problem.spec import eval_size, parse_params, parse_test
+
+PARAMS = parse_params({"params": [
+    {"name": "A", "type": "FLOAT32", "role": "INPUT", "memory": "HOST", "size": "M*K"},
+    {"name": "C", "type": "FLOAT32", "role": "OUTPUT", "memory": "HOST", "size": "M"},
+    {"name": "alpha", "type": "FLOAT32", "role": "SCALAR"},
+    {"name": "M", "type": "INT32", "role": "SCALAR"},
+    {"name": "K", "type": "INT32", "role": "SCALAR"},
+]})
+LIMIT = 1 << 30
 
 
 class SpecTest(unittest.TestCase):
@@ -14,18 +23,28 @@ class SpecTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             eval_size("N ** 2", {"N": 3})
 
-    def test_parse_tests_sizes(self):
-        params = parse_params({"params": [
-            {"name": "A", "type": "FLOAT32", "role": "INPUT", "memory": "HOST", "size": "M*K"},
-            {"name": "alpha", "type": "FLOAT32", "role": "SCALAR"},
-            {"name": "M", "type": "INT32", "role": "SCALAR"},
-            {"name": "K", "type": "INT32", "role": "SCALAR"},
-        ]})
-        t = parse_tests([{"name": "t", "scalars": {"M": 2, "K": 3, "alpha": 1}, "seed": 5}], params)[0]
-        self.assertEqual(t.sizes, {"A": 6})
+    def test_declared_test_sizes_and_defaults(self):
+        t = parse_test(3, {"name": "t", "scalars": {"M": 2, "K": 3, "alpha": 1}}, PARAMS, LIMIT)
+        self.assertEqual(t.sizes, {"A": 6, "C": 2})
         self.assertEqual(t["alpha"], 1.0)
         self.assertIsInstance(t["alpha"], float)
-        self.assertEqual((t.index, t.seed), (1, 5))
+        self.assertEqual((t.index, t.seed, t.sample), (3, 3, False))  # the seed defaults to the test's index
+        self.assertEqual(t.describe(), {"name": "t", "sample": False, "scalars": {"M": 2, "K": 3, "alpha": 1.0}})
+
+    def test_declared_test_mistakes_are_reported(self):
+        ok = {"M": 2, "K": 3, "alpha": 1}
+        cases = {
+            "unknown keys": {"name": "t", "scalars": ok, "data": {}},
+            "exactly the keys": {"name": "t", "scalars": {"M": 2}},
+            "must be an integer": {"name": "t", "scalars": {**ok, "M": 2.5}},
+            "name must be": {"name": "", "scalars": ok},
+            "limit": {"name": "t", "scalars": {**ok, "M": 1 << 20, "K": 1 << 20}},
+            "needs hand-written inputs": {"name": "t", "scalars": ok, "expected": {"C": [1, 2]}},
+            "inputs must have exactly": {"name": "t", "scalars": ok, "inputs": {"B": [1]}},
+        }
+        for message, raw in cases.items():
+            with self.subTest(message), self.assertRaisesRegex(ValueError, message):
+                parse_test(1, raw, PARAMS, LIMIT)
 
 
 if __name__ == "__main__":

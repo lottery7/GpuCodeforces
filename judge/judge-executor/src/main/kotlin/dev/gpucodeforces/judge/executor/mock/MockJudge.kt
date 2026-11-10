@@ -22,9 +22,10 @@ import org.slf4j.LoggerFactory
 /**
  * What a mock submission asks for, written in its source as a comment:
  *
- *     // judge-mock: verdict=WRONG_ANSWER test=2 time-ms=3.5
+ *     // judge-mock: verdict=WRONG_ANSWER test=2 time-ms=3.5 tests=5
  *
- * Every key is optional; without the comment the submission is accepted.
+ * Every key is optional; without the comment the submission is accepted. The mock does not run the problem's
+ * generator, so the number of tests comes from the directive too: test 1 is a sample, the rest are hidden.
  */
 data class MockDirective(
     val verdict: Verdict = Verdict.ACCEPTED,
@@ -32,9 +33,12 @@ data class MockDirective(
     val test: Int = 1,
     /** Time reported for every accepted test. */
     val timeMs: Double = 1.0,
+    /** Number of tests the problem is pretended to have. */
+    val tests: Int = 3,
 ) {
     companion object {
         private val LINE = Regex("""judge-mock:(.*)""")
+        private const val MAX_TESTS = 200
 
         /** Throws [IllegalArgumentException] for a directive that cannot be understood, so a typo is not an ACCEPTED. */
         fun parse(source: String): MockDirective {
@@ -43,7 +47,7 @@ data class MockDirective(
                 require('=' in it) { "judge-mock: expected key=value, got '$it'" }
                 it.substringBefore('=') to it.substringAfter('=')
             }
-            val unknown = values.keys - setOf("verdict", "test", "time-ms")
+            val unknown = values.keys - setOf("verdict", "test", "time-ms", "tests")
             require(unknown.isEmpty()) { "judge-mock: unknown keys $unknown" }
             return MockDirective(
                 verdict = values["verdict"]?.let { name ->
@@ -51,6 +55,9 @@ data class MockDirective(
                 } ?: Verdict.ACCEPTED,
                 test = values["test"]?.let { it.toIntOrNull() ?: throw IllegalArgumentException("judge-mock: test must be a number") } ?: 1,
                 timeMs = values["time-ms"]?.let { it.toDoubleOrNull() ?: throw IllegalArgumentException("judge-mock: time-ms must be a number") } ?: 1.0,
+                tests = values["tests"]?.let { v ->
+                    v.toIntOrNull()?.takeIf { it in 1..MAX_TESTS } ?: throw IllegalArgumentException("judge-mock: tests must be in 1..$MAX_TESTS")
+                } ?: 3,
             )
         }
     }
@@ -70,17 +77,18 @@ object MockResults {
         Verdict.INTERNAL_ERROR -> JudgeResult(Verdict.INTERNAL_ERROR, message = "Judging failed")
         Verdict.CANCELLED -> JudgeResult(Verdict.CANCELLED, message = "Cancelled")
         Verdict.ACCEPTED -> tested(problem, directive, failedTest = null)
-        else -> tested(problem, directive, failedTest = directive.test.coerceIn(1, problem.tests.size))
+        else -> tested(problem, directive, failedTest = directive.test.coerceIn(1, directive.tests))
     }
 
     private fun tested(problem: ProblemSpec, directive: MockDirective, failedTest: Int?): JudgeResult {
-        val last = failedTest ?: problem.tests.size
-        val tests = problem.tests.take(last).mapIndexed { i, t ->
-            val index = i + 1
+        val last = failedTest ?: directive.tests
+        val tests = (1..last).map { index ->
+            val name = if (index == 1) "sample" else "test-$index"
+            val sample = index == 1
             if (index == failedTest) {
-                TestResult(index, t.name, t.sample, directive.verdict, message = failureMessage(directive.verdict, index))
+                TestResult(index, name, sample, directive.verdict, message = failureMessage(directive.verdict, index))
             } else {
-                TestResult(index, t.name, t.sample, Verdict.ACCEPTED, timeMs = directive.timeMs, wallTimeMs = directive.timeMs, runs = 1)
+                TestResult(index, name, sample, Verdict.ACCEPTED, timeMs = directive.timeMs, wallTimeMs = directive.timeMs, runs = 1)
             }
         }
         return JudgeResult(
@@ -154,7 +162,7 @@ class MockJudge(
         }
         reporter.status(SubmissionStatus.COMPILING)
         val result = MockResults.of(job.problem, directive)
-        val total = job.problem.tests.size
+        val total = directive.tests
         if (MockResults.concernsATest(directive.verdict)) {
             reporter.progress(0, total)
             for (test in result.tests) {

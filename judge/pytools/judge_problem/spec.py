@@ -45,7 +45,7 @@ class Param:
 
 @dataclass
 class Test:
-    """What generate()/reference() receive as ``test``."""
+    """A test declared by the problem's ``tests()``; what generate()/reference() receive as ``test``."""
 
     index: int  # 1-based
     name: str
@@ -53,12 +53,16 @@ class Test:
     sample: bool
     scalars: Dict[str, Any]
     sizes: Dict[str, int] = field(default_factory=dict)  # element count of every array param
-    data: Optional[Dict[str, List[Any]]] = None
-    expected: Optional[Dict[str, List[Any]]] = None  # hand-written answers of a hand-written test
+    inputs: Optional[Dict[str, Any]] = None  # hand-written inputs: generate() is not called for this test
+    expected: Optional[Dict[str, Any]] = None  # hand-written answers of a test with hand-written inputs
 
     def __getitem__(self, key: str) -> Any:
         """``test["N"]`` is a shortcut for ``test.scalars["N"]``."""
         return self.scalars[key]
+
+    def describe(self) -> Dict[str, Any]:
+        """What the executor learns about the test (``tests.json``)."""
+        return {"name": self.name, "sample": self.sample, "scalars": self.scalars}
 
 
 _ALLOWED_BINOPS = (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod)
@@ -100,13 +104,59 @@ def parse_params(signature: Dict[str, Any]) -> List[Param]:
     return [Param(p["name"], p["type"], p["role"], p.get("memory"), p.get("size")) for p in signature["params"]]
 
 
-def parse_tests(tests: List[Dict[str, Any]], params: List[Param]) -> List[Test]:
-    out = []
-    for i, t in enumerate(tests, start=1):
-        scalars = dict(t.get("scalars") or {})
-        for p in params:
-            if p.role == "SCALAR" and p.name in scalars:
-                scalars[p.name] = float(scalars[p.name]) if p.type.startswith(("FLOAT", "BFLOAT")) else int(scalars[p.name])
-        sizes = {p.name: eval_size(p.size, scalars) for p in params if p.is_array}
-        out.append(Test(i, t["name"], int(t.get("seed", 0)), bool(t.get("sample", False)), scalars, sizes, t.get("data"), t.get("expected")))
-    return out
+TEST_KEYS = {"name", "scalars", "sample", "seed", "inputs", "expected"}
+MAX_NAME_LENGTH = 128
+
+
+def parse_test(index: int, raw: Any, params: List[Param], max_test_bytes: int) -> Test:
+    """Checks one entry of ``tests()`` and computes its array sizes. Raises ValueError with what is wrong."""
+    where = f"test {index}"
+    if not isinstance(raw, dict):
+        raise ValueError(f"{where}: tests() must yield dicts, got {type(raw).__name__}")
+    unknown = set(raw) - TEST_KEYS
+    if unknown:
+        raise ValueError(f"{where}: unknown keys {sorted(unknown)}, allowed {sorted(TEST_KEYS)}")
+    name = raw.get("name")
+    if not isinstance(name, str) or not name.strip() or len(name) > MAX_NAME_LENGTH:
+        raise ValueError(f"{where}: name must be a non-empty string of at most {MAX_NAME_LENGTH} characters")
+    where = f"test {index} '{name}'"
+
+    scalar_params = {p.name: p for p in params if p.role == "SCALAR"}
+    given = raw.get("scalars") or {}
+    if not isinstance(given, dict) or set(given) != set(scalar_params):
+        raise ValueError(f"{where}: scalars must have exactly the keys {sorted(scalar_params)}")
+    scalars: Dict[str, Any] = {}
+    for n, p in scalar_params.items():
+        v = given[n]
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            raise ValueError(f"{where}: scalar {n} must be a number, got {v!r}")
+        if p.type.startswith(("FLOAT", "BFLOAT")):
+            scalars[n] = float(v)
+        elif isinstance(v, int) or float(v).is_integer():
+            scalars[n] = int(v)
+        else:
+            raise ValueError(f"{where}: scalar {n} must be an integer, got {v!r}")
+
+    sizes = {p.name: eval_size(p.size, scalars) for p in params if p.is_array}
+    total = 0
+    for p in params:
+        if p.is_array:
+            if sizes[p.name] < 0:
+                raise ValueError(f"{where}: size of {p.name} is negative ({sizes[p.name]})")
+            total += sizes[p.name] * DTYPES[p.type][1]
+    if total > max_test_bytes:
+        raise ValueError(f"{where}: test data is {total} bytes, limit {max_test_bytes}")
+
+    seed = raw.get("seed", index)
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise ValueError(f"{where}: seed must be an integer")
+    inputs, expected = raw.get("inputs"), raw.get("expected")
+    if expected is not None and inputs is None:
+        raise ValueError(f"{where}: expected needs hand-written inputs")
+    for what, value, wanted in (
+        ("inputs", inputs, {p.name for p in params if p.is_array and p.is_input}),
+        ("expected", expected, {p.name for p in params if p.is_array and p.is_output}),
+    ):
+        if value is not None and (not isinstance(value, dict) or set(value) != wanted):
+            raise ValueError(f"{where}: {what} must have exactly the keys {sorted(wanted)}")
+    return Test(index, name, seed, bool(raw.get("sample", False)), scalars, sizes, inputs, expected)

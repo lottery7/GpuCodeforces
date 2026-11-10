@@ -47,8 +47,7 @@ class SubmissionControllerTest {
               {"name": "C", "type": "FLOAT32", "role": "OUTPUT", "memory": "DEVICE", "size": "N"},
               {"name": "N", "type": "INT32", "role": "SCALAR"}
             ]},
-            "tests": [{"name": "1", "scalars": {"N": 1000}, "seed": 1}],
-            "generator": {"source": "def generate(test, gen, device): ..."}
+            "generator": {"source": "def tests(): ..."}
           }
         }
     """.trimIndent()
@@ -61,7 +60,7 @@ class SubmissionControllerTest {
         val job = argumentCaptor<JudgeJob>()
         verify(messaging).publishJob(job.capture(), any())
         assertEquals("s-1", job.firstValue.submissionId)
-        assertEquals(1000, job.firstValue.problem.tests.single().scalars["N"]!!.toInt())
+        assertEquals("def tests(): ...", job.firstValue.problem.generator.source)
         val event = argumentCaptor<JudgeEvent>()
         verify(messaging).publishEvent(event.capture())
         assertEquals(SubmissionStatus.QUEUED, event.firstValue.status)

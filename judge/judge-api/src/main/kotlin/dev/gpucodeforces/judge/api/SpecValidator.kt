@@ -11,23 +11,17 @@ object SpecValidator {
 
     data class Limits(
         val maxSourceBytes: Int = 128 * 1024,
+        /** Max tests a generator may declare; checked by executors once the generator has run. */
         val maxTests: Int = 200,
         /** Upper bound on bytes of all arrays of a single test. */
         val maxTestBytes: Long = 4L shl 30,
         val maxTimeLimitMs: Long = 30_000,
         val maxMemoryLimitMb: Long = 32 * 1024,
-        /** Max total number of inline sample values per test. */
-        val maxInlineValues: Int = 100_000,
-        /**
-         * Max inline values of all tests together. A request has to fit into one broker message (16 MiB in
-         * RabbitMQ 4) with room to spare, or it could never be published however often it is retried.
-         */
-        val maxTotalInlineValues: Int = 500_000,
         val maxGeneratorBytes: Int = 256 * 1024,
     )
 
     /** Bounds on free-form fields, so no part of a request can be arbitrarily large. */
-    private const val MAX_NAME_LENGTH = 128
+    const val MAX_NAME_LENGTH = 128
     private const val MAX_SIZE_EXPRESSION_LENGTH = 256
     private const val MAX_LIST_ENTRIES = 64
 
@@ -58,26 +52,10 @@ object SpecValidator {
         val errors = mutableListOf<String>()
         if (!ID.matches(spec.id)) errors += "id must match ${ID.pattern}"
         validateSignature(spec.signature, errors)
-        if (errors.isNotEmpty()) return errors // tests can't be checked against a broken signature
-
         if (spec.version.length > MAX_NAME_LENGTH) errors += "version is longer than $MAX_NAME_LENGTH characters"
         if (spec.generator.source.isBlank()) errors += "generator.source is empty"
         val generatorBytes = spec.generator.source.toByteArray().size
         if (generatorBytes > limits.maxGeneratorBytes) errors += "generator.source is $generatorBytes bytes, limit ${limits.maxGeneratorBytes}"
-        if (spec.tests.isEmpty()) errors += "at least one test is required"
-        if (spec.tests.size > limits.maxTests) errors += "too many tests: ${spec.tests.size} > ${limits.maxTests}"
-        val names = mutableSetOf<String>()
-        spec.tests.forEachIndexed { i, t ->
-            val where = "tests[$i] '${t.name.take(MAX_NAME_LENGTH)}'"
-            if (t.name.isBlank()) errors += "tests[$i]: name is empty"
-            if (t.name.length > MAX_NAME_LENGTH) errors += "tests[$i]: name is longer than $MAX_NAME_LENGTH characters"
-            if (!names.add(t.name)) errors += "$where: duplicate test name"
-            validateTest(spec.signature, t, where, limits, errors)
-        }
-        val inlineValues = spec.tests.sumOf { t -> (t.data.orEmpty().values + t.expected.orEmpty().values).sumOf { it.size.toLong() } }
-        if (inlineValues > limits.maxTotalInlineValues) {
-            errors += "tests carry $inlineValues inline values in total, limit ${limits.maxTotalInlineValues}"
-        }
 
         with(spec.checker) {
             if (!(rtol >= 0 && rtol.isFinite())) errors += "checker.rtol must be a finite non-negative number"
@@ -170,71 +148,16 @@ object SpecValidator {
         if (sig.outputs.isEmpty()) errors += "signature must have at least one OUTPUT or INOUT param"
     }
 
-    private fun validateTest(sig: Signature, t: TestSpec, where: String, limits: Limits, errors: MutableList<String>) {
-        val scalarNames = sig.scalars.map { it.name }.toSet()
-        val missing = scalarNames - t.scalars.keys
-        val extra = t.scalars.keys - scalarNames
-        if (missing.isNotEmpty()) errors += "$where: missing scalars $missing"
-        if (extra.isNotEmpty()) errors += "$where: unknown scalars $extra"
-        if (missing.isNotEmpty() || extra.isNotEmpty()) return
-
-        for (p in sig.scalars) {
-            val v = t.scalars.getValue(p.name)
-            if (!p.type.floating && !isIntegral(v)) errors += "$where: scalar ${p.name} must be an integer"
-        }
-        val sizes = try {
-            elementCounts(sig, t)
-        } catch (e: IllegalArgumentException) {
-            errors += "$where: ${e.message}"
-            return
-        } catch (e: ArithmeticException) {
-            errors += "$where: ${e.message}"
-            return
-        }
-        var bytes = 0L
-        for (p in sig.arrays) {
-            val n = sizes.getValue(p.name)
-            if (n < 0) errors += "$where: size of ${p.name} is negative ($n)"
-            // per array, so that a sum which overflows cannot wrap back under the limit
-            if (n > limits.maxTestBytes / p.type.bytes) {
-                errors += "$where: ${p.name} alone exceeds the limit of ${limits.maxTestBytes} bytes"
-                return
-            }
-            bytes += n * p.type.bytes
-        }
-        if (bytes > limits.maxTestBytes) errors += "$where: test data is $bytes bytes, limit ${limits.maxTestBytes}"
-
-        if (t.expected != null && t.data == null) errors += "$where: expected needs hand-written data"
-        val data = t.data ?: return
-        val inputs = sig.arrays.filter { it.role == ParamRole.INPUT || it.role == ParamRole.INOUT }.map { it.name }.toSet()
-        if (data.keys != inputs) errors += "$where: data must contain exactly the input arrays $inputs"
-        var total = 0
-        for ((name, values) in data) {
-            val expected = sizes[name] ?: continue
-            if (values.size.toLong() != expected) errors += "$where: data.$name has ${values.size} values, expected $expected"
-            total += values.size
-        }
-        val expected = t.expected.orEmpty()
-        val outputs = sig.outputs.map { it.name }.toSet()
-        if (t.expected != null && expected.keys != outputs) errors += "$where: expected must contain exactly the output arrays $outputs"
-        for ((name, values) in expected) {
-            val want = sizes[name] ?: continue
-            if (values.size.toLong() != want) errors += "$where: expected.$name has ${values.size} values, expected $want"
-            total += values.size
-        }
-        if (total > limits.maxInlineValues) errors += "$where: too many inline values ($total > ${limits.maxInlineValues})"
-    }
-
-    /** Element count of every array param for the given test. */
-    fun elementCounts(sig: Signature, t: TestSpec): Map<String, Long> {
+    /** Element count of every array param for a test with the given scalar values. */
+    fun elementCounts(sig: Signature, scalars: Map<String, Number>): Map<String, Long> {
         val vars = sig.scalars.filter { !it.type.floating }.associate { p ->
-            val v = t.scalars[p.name] ?: throw IllegalArgumentException("missing scalar ${p.name}")
+            val v = scalars[p.name] ?: throw IllegalArgumentException("missing scalar ${p.name}")
             p.name to v.toLong()
         }
         return sig.arrays.associate { p -> p.name to SizeExpr.parse(p.size!!).eval(vars) }
     }
 
-    private fun isIntegral(v: Number): Boolean = when (v) {
+    fun isIntegral(v: Number): Boolean = when (v) {
         is Int, is Long, is Short, is Byte, is BigInteger -> true
         is BigDecimal -> v.stripTrailingZeros().scale() <= 0
         else -> v.toDouble().let { it.isFinite() && it == Math.rint(it) }

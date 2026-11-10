@@ -12,13 +12,6 @@
       {"name": "K", "type": "INT32", "role": "SCALAR"}
     ]
   },
-  "tests": [
-    {"name": "sample", "sample": true, "scalars": {"M": 2, "N": 2, "K": 3},
-     "data": {"A": [1, 2, 3, 4, 5, 6], "B": [1, 0, 0, 1, 1, 1]}},
-    {"name": "square-small", "scalars": {"M": 64, "N": 64, "K": 64}, "seed": 1},
-    {"name": "rect", "scalars": {"M": 1000, "N": 777, "K": 333}, "seed": 2},
-    {"name": "square-large", "scalars": {"M": 2048, "N": 2048, "K": 2048}, "seed": 3}
-  ],
   "checker": {"mode": "TOLERANCE", "rtol": 1e-3, "atol": 1e-3},
   "limits": {"timeLimitMs": 50, "wallTimeLimitMs": 3000, "memoryLimitMb": 512},
   "timing": {"warmupRuns": 1, "maxRuns": 3},

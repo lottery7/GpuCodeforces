@@ -7,12 +7,12 @@ import dev.gpucodeforces.judge.api.ParamRole
 import dev.gpucodeforces.judge.api.ParamSpec
 import dev.gpucodeforces.judge.api.ProblemSpec
 import dev.gpucodeforces.judge.api.Signature
-import dev.gpucodeforces.judge.api.TestSpec
 import dev.gpucodeforces.judge.executor.compile.Toolchain
 import dev.gpucodeforces.judge.executor.config.ExecutorProperties
 import dev.gpucodeforces.judge.executor.config.PathsConfig
 import dev.gpucodeforces.judge.executor.config.ToolchainConfig
 import dev.gpucodeforces.judge.executor.gpu.GpuManager
+import dev.gpucodeforces.judge.executor.problem.GeneratedTest
 import dev.gpucodeforces.judge.executor.problem.ProblemPreparationException
 import dev.gpucodeforces.judge.executor.problem.ProblemStore
 import dev.gpucodeforces.judge.executor.sandbox.DirectSandbox
@@ -46,7 +46,6 @@ class ProblemStoreTest {
                 ParamSpec("N", DType.INT32, ParamRole.SCALAR),
             ),
         ),
-        tests = listOf(TestSpec("only", mapOf("N" to 4))),
         generator = GeneratorSpec(source = behaviour),
     )
 
@@ -62,6 +61,13 @@ class ProblemStoreTest {
             if behaviour == "broken":
                 sys.stderr.write("problem error: reference must return keys ['C']\n")
                 sys.exit(2)
+            tests = {
+                "bad-tests": '[{"name": "only", "scalars": {"M": 4}}]',
+                "huge-test": '[{"name": "only", "scalars": {"N": 4000000000}}]',
+            }.get(behaviour, '[{"name": "only", "sample": true, "scalars": {"N": 4}}]')
+            os.makedirs(out, exist_ok=True)
+            if behaviour != "no-tests":
+                open(out + "/tests.json", "w").write(tests)
             os.makedirs(out + "/inputs/t1")
             os.makedirs(out + "/expected/t1")
             open(out + "/inputs/t1/A.bin", "wb").write(bytes(16))
@@ -95,6 +101,7 @@ class ProblemStoreTest {
         assertEquals(1, preparations)
         assertEquals(first.dir, second.dir)
         val test = second.tests.single()
+        assertEquals(GeneratedTest("only", sample = true, scalars = mapOf("N" to 4)), test.spec)
         assertEquals(16, test.inputs.getValue("A").fileSize())
         assertEquals(16, test.expected.getValue("C").fileSize())
         assertTrue(test.inputs.getValue("A").startsWith(second.inputsDir))
@@ -115,6 +122,17 @@ class ProblemStoreTest {
         val e = assertFailsWith<ProblemPreparationException> { store().acquire(problem("extra"), {}, { false }) }
         assertTrue(e.problemFault)
         assertContains(e.message!!, "unexpected inputs/t1/answers.bin")
+    }
+
+    @Test
+    fun `tests the generator declares are checked against the signature`() {
+        val missing = assertFailsWith<ProblemPreparationException> { store().acquire(problem("bad-tests"), {}, { false }) }
+        assertTrue(missing.problemFault)
+        assertContains(missing.message!!, "missing scalars [N]")
+        val huge = assertFailsWith<ProblemPreparationException> { store().acquire(problem("huge-test"), {}, { false }) }
+        assertContains(huge.message!!, "out of range of INT32")
+        val none = assertFailsWith<ProblemPreparationException> { store().acquire(problem("no-tests"), {}, { false }) }
+        assertContains(none.message!!, "no tests.json")
     }
 
     @Test

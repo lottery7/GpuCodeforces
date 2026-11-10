@@ -10,7 +10,6 @@ import dev.gpucodeforces.judge.api.ParamSpec
 import dev.gpucodeforces.judge.api.ProblemSpec
 import dev.gpucodeforces.judge.api.Signature
 import dev.gpucodeforces.judge.api.SubmissionStatus
-import dev.gpucodeforces.judge.api.TestSpec
 import dev.gpucodeforces.judge.api.Verdict
 import dev.gpucodeforces.judge.executor.config.ExecutorProperties
 import dev.gpucodeforces.judge.executor.messaging.CancelRegistry
@@ -41,7 +40,6 @@ class MockJudgeTest {
                 ParamSpec("N", DType.INT32, ParamRole.SCALAR),
             ),
         ),
-        tests = listOf("one", "two", "three").map { TestSpec(it, mapOf("N" to 4)) },
         generator = GeneratorSpec(source = "def reference(test, inputs): ..."),
     )
     private val publisher = mock<EventPublisher>()
@@ -67,7 +65,8 @@ class MockJudgeTest {
         assertEquals(3, events.last { it.status == SubmissionStatus.TESTING }.progress!!.currentTest)
         val result = events.last().result!!
         assertEquals(Verdict.ACCEPTED, result.verdict)
-        assertEquals(listOf("one", "two", "three"), result.tests.map { it.name })
+        assertEquals(listOf("sample", "test-2", "test-3"), result.tests.map { it.name })
+        assertEquals(listOf(true, false, false), result.tests.map { it.sample })
         assertEquals((1..events.size).toList(), events.map { it.seq })
         assertEquals("mock-1", result.gpu!!.executorId)
         assertEquals(setOf("job-1"), events.map { it.jobId }.toSet())
@@ -75,7 +74,9 @@ class MockJudgeTest {
 
     @Test
     fun `the directive chooses the verdict, the failing test and the reported time`() {
-        val result = judge("// judge-mock: verdict=WRONG_ANSWER test=2 time-ms=3.5\nvoid solve() {}").last().result!!
+        val events = judge("// judge-mock: verdict=WRONG_ANSWER test=2 time-ms=3.5 tests=5\nvoid solve() {}")
+        assertEquals(5, events.first { it.status == SubmissionStatus.TESTING }.progress!!.totalTests)
+        val result = events.last().result!!
         assertEquals(Verdict.WRONG_ANSWER, result.verdict)
         assertEquals(2, result.failedTest)
         assertEquals(listOf(Verdict.ACCEPTED, Verdict.WRONG_ANSWER), result.tests.map { it.verdict })
@@ -103,6 +104,7 @@ class MockJudgeTest {
     fun `a misspelt directive is an error, not an accepted submission`() {
         assertFailsWith<IllegalArgumentException> { MockDirective.parse("// judge-mock: verdict=WRONG") }
         assertFailsWith<IllegalArgumentException> { MockDirective.parse("// judge-mock: verdit=WRONG_ANSWER") }
+        assertFailsWith<IllegalArgumentException> { MockDirective.parse("// judge-mock: tests=0") }
         assertEquals(Verdict.INTERNAL_ERROR, judge("// judge-mock: verdict=WRONG\nvoid solve() {}").last().result!!.verdict)
     }
 }

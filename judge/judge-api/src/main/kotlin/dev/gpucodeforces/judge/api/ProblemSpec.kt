@@ -1,8 +1,9 @@
 package dev.gpucodeforces.judge.api
 
 /**
- * Everything the judge needs to know about a problem. Sent inline with every submission
- * (a few KB), cached by executors by [ProblemSpec.dataHash] so tests are generated once.
+ * Everything the judge needs to know about a problem. Sent inline with every submission (a few KB). The tests
+ * are not part of it: the generator declares them, and executors generate them once per content hash of the
+ * signature and the generator.
  */
 data class ProblemSpec(
     /** Stable problem identifier from the backend (used in logs and cache paths). */
@@ -11,9 +12,7 @@ data class ProblemSpec(
     val version: String = "1",
     /** Signature of the function the contestant implements. */
     val signature: Signature,
-    /** Ordered list of tests. Judging stops at the first failed test. */
-    val tests: List<TestSpec>,
-    /** Python + PyTorch module with `generate(...)` and `reference(...)`. */
+    /** Python + PyTorch module with `tests()`, `generate(...)` and `reference(...)`, see docs/problem-format.md. */
     val generator: GeneratorSpec,
     val checker: CheckerSpec = CheckerSpec(),
     val limits: LimitsSpec = LimitsSpec(),
@@ -79,7 +78,7 @@ enum class ParamRole {
     /** `T*` — initialised with generated data, modified in place, compared against the reference. */
     INOUT,
 
-    /** Passed by value (`int N`, `float alpha`). Values come from [TestSpec.scalars]. */
+    /** Passed by value (`int N`, `float alpha`). Values come from the `scalars` of each test the generator declares. */
     SCALAR,
 }
 
@@ -98,26 +97,6 @@ enum class DType(val bytes: Int, val cppType: String, val floating: Boolean, val
     INT64(8, "int64_t", false, true),
     UINT64(8, "uint64_t", false, true),
 }
-
-data class TestSpec(
-    val name: String,
-    /** Values of all SCALAR params. Integers for integer types, decimals for float types. */
-    val scalars: Map<String, Number> = emptyMap(),
-    /** Seed passed to the generator. */
-    val seed: Long = 0,
-    /** Sample tests are visible to contestants: details of failures may be shown to them. */
-    val sample: Boolean = false,
-    /**
-     * Explicit input arrays (INPUT/INOUT params) for hand-written tests, usually samples.
-     * When present the generator is not called for this test; the reference still is.
-     */
-    val data: Map<String, List<Number>>? = null,
-    /**
-     * Hand-written answers (OUTPUT/INOUT params) for a test with hand-written [data]: the examples of a problem
-     * statement are checked against what the statement says, not against whatever the reference computes.
-     */
-    val expected: Map<String, List<Number>>? = null,
-)
 
 enum class GeneratorLanguage { PYTHON }
 

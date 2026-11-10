@@ -45,18 +45,8 @@ class SpecValidatorTest {
     }
 
     @Test
-    fun `checks test scalars and inline data`() {
-        val spec = Fixtures.vectorAdd().copy(
-            tests = listOf(
-                TestSpec("a", scalars = mapOf("N" to 2.5)),
-                TestSpec("b", scalars = mapOf("N" to 3), data = mapOf("A" to listOf(1, 2, 3))),
-                TestSpec("c", scalars = mapOf()),
-            ),
-        )
-        val errors = SpecValidator.validateProblem(spec)
-        assertTrue(errors.any { "'a'" in it && "integer" in it }, errors.toString())
-        assertTrue(errors.any { "'b'" in it && "exactly the input arrays" in it }, errors.toString())
-        assertTrue(errors.any { "'c'" in it && "missing scalars" in it }, errors.toString())
+    fun `array sizes follow the size expressions`() {
+        assertEquals(mapOf("A" to 6L, "B" to 6L, "C" to 6L), SpecValidator.elementCounts(Fixtures.vectorAdd().signature, mapOf("N" to 6)))
     }
 
     @Test
@@ -97,30 +87,6 @@ class SpecValidatorTest {
         assertEquals(TimingMode.WALL, host.timing.effectiveMode)
         assertEquals(TimingMode.GPU_KERNELS, TimingSpec(mode = TimingMode.GPU_KERNELS).effectiveMode)
     }
-
-    @Test
-    fun `hand-written answers need hand-written inputs and the right sizes`() {
-        val sample = TestSpec("s", scalars = mapOf("N" to 2), data = mapOf("A" to listOf(1, 2), "B" to listOf(3, 4)), expected = mapOf("C" to listOf(4, 6)))
-        assertEquals(emptyList(), SpecValidator.validateProblem(Fixtures.vectorAdd().copy(tests = listOf(sample))))
-
-        val bad = listOf(
-            sample.copy(name = "short", expected = mapOf("C" to listOf(4))),
-            sample.copy(name = "wrong-array", expected = mapOf("A" to listOf(1, 2))),
-            TestSpec("generated", scalars = mapOf("N" to 2), expected = mapOf("C" to listOf(4, 6))),
-        )
-        val errors = SpecValidator.validateProblem(Fixtures.vectorAdd().copy(tests = bad))
-        assertTrue(errors.any { "'short'" in it && "expected.C has 1 values" in it }, errors.toString())
-        assertTrue(errors.any { "'wrong-array'" in it && "exactly the output arrays" in it }, errors.toString())
-        assertTrue(errors.any { "'generated'" in it && "needs hand-written data" in it }, errors.toString())
-    }
-
-    @Test
-    fun `inline data of all tests together is bounded`() {
-        val values = List(60_000) { 0 }
-        val tests = List(10) { TestSpec("t$it", scalars = mapOf("N" to 60_000), data = mapOf("A" to values, "B" to values)) }
-        val errors = SpecValidator.validateProblem(Fixtures.vectorAdd().copy(tests = tests))
-        assertTrue(errors.any { "1200000 inline values in total" in it }, errors.toString())
-    }
 }
 
 class CudaSignatureTest {
@@ -142,13 +108,9 @@ object Fixtures {
                 ParamSpec("N", DType.INT32, ParamRole.SCALAR),
             ),
         ),
-        tests = listOf(
-            TestSpec("sample", scalars = mapOf("N" to 4), sample = true, data = mapOf("A" to listOf(1, 2, 3, 4), "B" to listOf(1.5, 0, 0, -4))),
-            TestSpec("big", scalars = mapOf("N" to (1 shl 24)), seed = 7),
-        ),
         generator = GeneratorSpec(source = GENERATOR),
     )
 
     @Language("Python")
-    private const val GENERATOR = "def generate(test, gen, device): ...\ndef reference(test, inputs): ..."
+    private const val GENERATOR = "def tests(): ...\ndef generate(test, gen, device): ...\ndef reference(test, inputs): ..."
 }

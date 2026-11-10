@@ -65,8 +65,8 @@ class JudgePipeline(
         var keepRunDir = false
         val cancelled = { cancels.isCancelled(job.submissionId) }
         log.info(
-            "Judging submission: problem={} v{} tests={} attempt={} waited={}ms",
-            job.problem.id, job.problem.version, job.problem.tests.size, attempt,
+            "Judging submission: problem={} v{} attempt={} waited={}ms",
+            job.problem.id, job.problem.version, attempt,
             Duration.between(job.enqueuedAt, clock.instant()).toMillis(),
         )
         try {
