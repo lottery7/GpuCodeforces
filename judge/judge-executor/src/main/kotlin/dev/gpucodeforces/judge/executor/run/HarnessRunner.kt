@@ -46,6 +46,11 @@ data class RunOutcome(
     val internalReason: String? = null,
     /** INTERNAL_ERROR caused by infrastructure that may work on another attempt/GPU. */
     val retryable: Boolean = false,
+    /**
+     * The process died or hung before the harness was ready. The solution's own code already runs then (static
+     * initialisers), so it is the solution's fault unless the GPU turns out to be broken.
+     */
+    val solutionSuspected: Boolean = false,
 )
 
 /**
@@ -55,6 +60,10 @@ data class RunOutcome(
  * The harness shares its process with the solution, so the solution can read the nonce and write status lines of
  * its own. Whatever it writes, a test only counts once this class has compared that test's output file with the
  * reference, and tests only count in order: lines that the harness could not have produced end the run.
+ *
+ * That protects the verdict, not the time: `time_ns` and `wall_ns` come from a status line the solution may have
+ * written itself, and the clock runs inside its process. Reported times are bounded by the watchdog only and must
+ * not be treated as verified, e.g. for a ranking by time.
  */
 class HarnessRunner(private val props: ExecutorProperties, private val sandbox: Sandbox) {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -70,7 +79,7 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
         cancelled: () -> Boolean,
     ): RunOutcome {
         val sig = problem.signature
-        val timing = problem.timing.effectiveMode(sig)
+        val timing = problem.timing.effectiveMode
         val wallNs = problem.limits.effectiveWallTimeLimitMs * 1_000_000
         // Only the output directory is writable for the solution: the binary and the manifest stay out of its reach.
         val outDir = Files.createDirectories(runDir.resolve("out"))
@@ -262,6 +271,9 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
         @Volatile var message: String? = null
         @Volatile var debug: String? = null
         @Volatile var killedByJudge = false
+
+        /** The process was killed in a state that may have left the GPU unusable (hung, out of memory). */
+        @Volatile var gpuSuspect = false
         @Volatile var peakRss = 0L
         @Volatile var currentTest = 1
 
@@ -269,6 +281,7 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
         @Volatile var closed = false
         var internalReason: String? = null
         var retryable = false
+        var solutionSuspected = false
         var ready = false
         var done = false
         var phase = Phase.STARTING
@@ -282,19 +295,20 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
         val wallNs = problem.limits.effectiveWallTimeLimitMs * 1_000_000
 
         @Synchronized
-        fun fail(v: Verdict, msg: String, kill: Boolean, debugInfo: String? = null) {
+        fun fail(v: Verdict, msg: String, kill: Boolean, gpuSuspect: Boolean = kill) {
             if (verdict != null) return
             verdict = v
             message = msg
-            debug = debugInfo
             if (kill) {
                 killedByJudge = true
+                this.gpuSuspect = gpuSuspect
                 Proc.killTree(process)
             }
         }
 
-        private fun internalError(reason: String, kill: Boolean) {
+        private fun internalError(reason: String, kill: Boolean, solutionSuspected: Boolean = false) {
             internalReason = reason
+            this.solutionSuspected = solutionSuspected
             retryable = true
             fail(Verdict.INTERNAL_ERROR, "Judging failed", kill)
         }
@@ -333,7 +347,7 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
                 )
                 Phase.STARTING -> internalError(
                     "harness did not become ready within ${props.run.startupTimeout.seconds}s (CUDA context creation stuck?)",
-                    kill = true,
+                    kill = true, solutionSuspected = true,
                 )
                 else -> fail(Verdict.TIME_LIMIT_EXCEEDED, "Time limit exceeded on test $currentTest (solution stalled the judge)", kill = true)
             }
@@ -371,7 +385,17 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
                     }
                 }
                 "test" -> onTestLine(line, parts)
-                "fatal" -> internalError("harness fatal error: ${parts.drop(1).joinToString(" ")}", kill = false)
+                // Once the harness is running the tests, a "fatal" is the solution's doing (or its forgery): the
+                // judge must not answer it with retries on the GPU.
+                "fatal" -> {
+                    val reason = "harness fatal error: ${parts.drop(1).joinToString(" ")}"
+                    if (ready) {
+                        log.info("{}", reason)
+                        fail(Verdict.RUNTIME_ERROR, "Runtime error on test $currentTest", kill = false)
+                    } else {
+                        internalError(reason, kill = false, solutionSuspected = true)
+                    }
+                }
                 "done" -> if (results.size == prepared.tests.size) done = true else forged(line)
                 else -> forged(line)
             }
@@ -388,6 +412,8 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
             when (parts.getOrNull(2)) {
                 "ok" -> {
                     val kv = parts.drop(3).chunked(2).filter { it.size == 2 }.associate { it[0] to it[1] }
+                    // a result is only reported for a call of solve that was announced, i.e. timed by the watchdog
+                    if (phase != Phase.RUNNING) return forged(line)
                     val t = kv["time_ns"]?.toLongOrNull() ?: return forged(line)
                     val w = kv["wall_ns"]?.toLongOrNull() ?: return forged(line)
                     phase = Phase.SAVING
@@ -406,22 +432,37 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
                     if (check == null) {
                         results += measured
                     } else {
-                        val msg = if (test.spec.sample) "${check.summary}; ${check.detail}" else check.summary
-                        results += measured.copy(verdict = Verdict.WRONG_ANSWER, message = msg, debug = check.detail)
-                        // the harness is already loading the next test
-                        fail(Verdict.WRONG_ANSWER, "Wrong answer on test $idx", kill = true)
+                        val details = "${check.summary}; ${check.detail}"
+                        // On a hidden test even the number of differing elements is an oracle: a solution can
+                        // spoil k elements on purpose and read hidden input back through k, one submission at a time.
+                        results += measured.copy(verdict = Verdict.WRONG_ANSWER, message = publicText(test, details, "Wrong answer"))
+                        // The harness is already loading the next test, so it has to be killed. It had just reported
+                        // normally and SIGKILL lets the driver tear the context down: no reason to suspect the GPU
+                        // and pay for a health probe after the most common verdict.
+                        fail(Verdict.WRONG_ANSWER, "Wrong answer on test $idx", kill = true, gpuSuspect = false)
                     }
                 }
                 "runtime_error" -> {
-                    results += test.result(Verdict.RUNTIME_ERROR, "CUDA error: $rest")
+                    results += test.result(Verdict.RUNTIME_ERROR, publicText(test, "CUDA error: $rest", "CUDA error"))
                     fail(Verdict.RUNTIME_ERROR, "Runtime error on test $idx", kill = false)
                 }
                 "alloc_failed" -> {
-                    results += test.result(Verdict.MEMORY_LIMIT_EXCEEDED, rest)
+                    results += test.result(Verdict.MEMORY_LIMIT_EXCEEDED, publicText(test, rest, "Allocation failed"))
                     fail(Verdict.MEMORY_LIMIT_EXCEEDED, "Memory limit exceeded on test $idx", kill = false)
                 }
                 else -> forged(line)
             }
+        }
+
+        /**
+         * [details] may carry hidden data: reference values, or anything at all, since the solution can write
+         * status lines itself and every test's input is readable to it. On a hidden test the contestant gets the
+         * [fixed] text and the details go to this executor's log only - not even into the event stream.
+         */
+        private fun publicText(test: PreparedTest, details: String, fixed: String): String {
+            if (test.spec.sample) return details
+            log.info("Hidden test {} '{}': {}", test.index, test.spec.name, details.take(4000))
+            return fixed
         }
 
         private fun checkOutputs(test: PreparedTest): CheckResult? {
@@ -446,7 +487,7 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
                         internalError("sandbox failed to start (exit 255): $sandboxLog", kill = false)
                     }
                     !ready && exitCode in 119..121 -> {
-                        internalError("harness failed before start (exit $exitCode): ${stderr.takeLast(1000)}", kill = false)
+                        internalError("harness failed before start (exit $exitCode): ${stderr.takeLast(1000)}", kill = false, solutionSuspected = true)
                     }
                     else -> {
                         val how = describeExit(exitCode)
@@ -466,19 +507,18 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
             }
             val failed = results.lastOrNull()?.takeIf { it.verdict != Verdict.ACCEPTED }?.index
                 ?: if (failedOnTest) currentTest else null
-            // Every test's input is mounted for the whole run, so stderr of a sample test can carry hidden data:
-            // contestants see it only when the problem has nothing to hide. Judges always get it in debug.
+            // Every test's input is mounted for the whole run, so stderr of a sample test can carry hidden data: it
+            // is attached to the results only when the problem has nothing to hide, and logged here otherwise.
             val stderrTail = stderr.trim().takeLast(2000)
             val stderrIsPublic = prepared.tests.all { it.spec.sample }
+            if (!stderrIsPublic && stderrTail.isNotEmpty()) log.info("stderr of the solution:\n{}", stderrTail)
             val finalResults = results.map { r ->
-                if (r.verdict == Verdict.ACCEPTED || stderrTail.isEmpty()) r
-                else r.copy(
-                    message = if (stderrIsPublic) listOfNotNull(r.message, "stderr:\n$stderrTail").joinToString("\n") else r.message,
-                    debug = listOfNotNull(r.debug, "stderr:\n$stderrTail").joinToString("\n"),
-                )
+                if (r.verdict == Verdict.ACCEPTED || stderrTail.isEmpty() || !stderrIsPublic) r
+                else r.copy(debug = "stderr:\n$stderrTail")
             }
-            val hardStop = killedByJudge || exitCode > 128 || exitCode < 0 || v == Verdict.RUNTIME_ERROR || v == Verdict.INTERNAL_ERROR
-            return RunOutcome(v, finalResults, failed, message, stats, needsHealthCheck = hardStop, internalReason = internalReason, retryable = retryable)
+            val crashed = !killedByJudge && (exitCode > 128 || exitCode < 0)
+            val hardStop = gpuSuspect || crashed || v == Verdict.RUNTIME_ERROR || v == Verdict.INTERNAL_ERROR
+            return RunOutcome(v, finalResults, failed, message, stats, needsHealthCheck = hardStop, internalReason = internalReason, retryable = retryable, solutionSuspected = solutionSuspected)
         }
     }
 

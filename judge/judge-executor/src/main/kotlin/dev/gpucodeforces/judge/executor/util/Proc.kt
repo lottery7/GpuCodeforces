@@ -128,6 +128,32 @@ object Proc {
         return result
     }
 
+    /**
+     * Waits for a started [process] whose stdout is too large to keep: every line goes to [onLine] (on another
+     * thread, finished before this returns) and the result has an empty stdout.
+     */
+    fun awaitLines(process: Process, command: List<String>, timeout: Duration, onLine: (String) -> Unit): ProcResult {
+        val started = System.nanoTime()
+        val err = BoundedBuffer(64 * 1024)
+        val errThread = err.drain(process.errorStream, "proc-err")
+        val outThread = daemonThread("proc-lines") {
+            try {
+                process.inputStream.use { readBoundedLines(it, MAX_LINE, onLine) }
+            } catch (_: IOException) {
+                // the stream is closed when the process is killed on timeout; the result reports the timeout
+            }
+        }
+        val finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS)
+        if (!finished) killTree(process)
+        process.waitFor(5, TimeUnit.SECONDS)
+        outThread.join(5000)
+        errThread.join(2000)
+        val ms = (System.nanoTime() - started) / 1_000_000
+        return ProcResult(command, if (finished) process.exitValue() else -9, stdout = "", stderr = err.text(), timedOut = !finished, durationMs = ms)
+    }
+
+    private const val MAX_LINE = 4096
+
     /** Waits for a started [process], capturing bounded stdout/stderr; kills its whole tree on [timeout]. */
     fun await(process: Process, command: List<String>, timeout: Duration, maxOutputBytes: Int): ProcResult {
         val started = System.nanoTime()

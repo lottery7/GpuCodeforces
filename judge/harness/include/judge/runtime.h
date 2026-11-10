@@ -209,6 +209,9 @@ static bool g_tracking = false;
 static std::vector<LaunchRec> g_pool;
 static size_t g_used = 0;
 static cudaEvent_t g_base;
+// Set when a launch could not be timed (no memory for its events, an event call failed). Its time would simply be
+// missing from the sum, i.e. the solution would look faster than it is, so the measurement is reported as failed.
+static bool g_timing_lost = false;
 
 static void ensure_pool(size_t n) {
     while (g_pool.size() < n) {
@@ -222,14 +225,20 @@ static LaunchRec* begin_launch(cudaStream_t stream) {
     std::lock_guard<std::mutex> lock(g_launch_mu);
     if (!g_tracking) return nullptr;
     if (g_used == g_pool.size()) ensure_pool(g_pool.size() * 2 + 64);
-    if (g_used == g_pool.size()) return nullptr;
+    if (g_used == g_pool.size()) {
+        g_timing_lost = true;
+        return nullptr;
+    }
     LaunchRec* r = &g_pool[g_used++];
-    cudaEventRecord(r->start, stream);
+    if (cudaEventRecord(r->start, stream) != cudaSuccess) g_timing_lost = true;
     return r;
 }
 
 static void end_launch(LaunchRec* r, cudaStream_t stream) {
-    if (r) cudaEventRecord(r->stop, stream);
+    if (r && cudaEventRecord(r->stop, stream) != cudaSuccess) {
+        std::lock_guard<std::mutex> lock(g_launch_mu);
+        g_timing_lost = true;
+    }
 }
 
 static long long kernel_union_ns(size_t n) {
@@ -237,8 +246,11 @@ static long long kernel_union_ns(size_t n) {
     iv.reserve(n);
     for (size_t i = 0; i < n; i++) {
         float a = 0, b = 0;
-        if (cudaEventElapsedTime(&a, g_base, g_pool[i].start) != cudaSuccess) continue;
-        if (cudaEventElapsedTime(&b, g_base, g_pool[i].stop) != cudaSuccess) continue;
+        if (cudaEventElapsedTime(&a, g_base, g_pool[i].start) != cudaSuccess ||
+            cudaEventElapsedTime(&b, g_base, g_pool[i].stop) != cudaSuccess) {
+            g_timing_lost = true;
+            continue;
+        }
         if (b > a) iv.emplace_back(a, b);
     }
     std::sort(iv.begin(), iv.end());
@@ -397,6 +409,7 @@ static Measurement measure(bool kernelTiming, InvokeFn invoke, Buffers& b, const
     if (kernelTiming) {
         std::lock_guard<std::mutex> lock(g_launch_mu);
         g_used = 0;
+        g_timing_lost = false;
         cudaEventRecord(g_base, 0);
         cudaEventSynchronize(g_base);
         g_tracking = true;
@@ -415,6 +428,7 @@ static Measurement measure(bool kernelTiming, InvokeFn invoke, Buffers& b, const
     m.error = sync != cudaSuccess ? sync : last;
     m.wallNs = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
     m.metricNs = kernelTiming ? kernel_union_ns(launches) : m.wallNs;
+    if (kernelTiming && g_timing_lost && m.error == cudaSuccess) m.error = cudaErrorUnknown;
     return m;
 }
 

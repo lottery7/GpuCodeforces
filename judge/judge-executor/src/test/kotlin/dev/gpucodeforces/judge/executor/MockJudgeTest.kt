@@ -50,7 +50,7 @@ class MockJudgeTest {
 
     /** Judges [source] and returns the events a backend would receive from the executor. */
     private fun judge(@Language("C++") source: String, gpuProfile: String = "rtx3060"): List<JudgeEvent> {
-        val job = JudgeJob("s-1", problem, source = source, gpuProfile = gpuProfile, enqueuedAt = Instant.now())
+        val job = JudgeJob("s-1", problem, source = source, gpuProfile = gpuProfile, enqueuedAt = Instant.now(), jobId = "job-1")
         assertEquals(Disposition.ACK, judge.process(job, 1))
         val events = argumentCaptor<JudgeEvent>()
         verify(publisher, atLeastOnce()).publish(events.capture(), any())
@@ -70,6 +70,7 @@ class MockJudgeTest {
         assertEquals(listOf("one", "two", "three"), result.tests.map { it.name })
         assertEquals((1..events.size).toList(), events.map { it.seq })
         assertEquals("mock-1", result.gpu!!.executorId)
+        assertEquals(setOf("job-1"), events.map { it.jobId }.toSet())
     }
 
     @Test

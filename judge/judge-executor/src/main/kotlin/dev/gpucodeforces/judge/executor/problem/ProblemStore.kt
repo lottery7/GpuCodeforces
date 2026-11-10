@@ -76,8 +76,22 @@ class ProblemStore(
         .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
         .build()
 
-    fun hash(spec: ProblemSpec): String =
-        Hashing.sha256(canonical.writeValueAsString(mapOf("signature" to spec.signature, "tests" to spec.tests, "generator" to spec.generator)), PREP_FORMAT)
+    /**
+     * Everything the generated data depends on: the problem's own content, and what produces the data from it -
+     * the preparation scripts, the torch build and the device. An upgrade of any of them must not keep serving
+     * reference answers computed by the old one.
+     */
+    fun hash(spec: ProblemSpec): String = Hashing.sha256(
+        canonical.writeValueAsString(mapOf("signature" to spec.signature, "tests" to spec.tests, "generator" to spec.generator)),
+        pytoolsHash, toolchain.torchVersion ?: "", props.prepare.device, PREP_FORMAT,
+    )
+
+    private val pytoolsHash: String by lazy {
+        val dir = props.paths.pytools
+        if (!dir.exists()) return@lazy ""
+        val sources = Files.walk(dir).use { files -> files.filter { it.toString().endsWith(".py") }.sorted().toList() }
+        Hashing.sha256(*sources.flatMap { listOf(dir.relativize(it).toString(), it.readText()) }.toTypedArray())
+    }
 
     fun isReady(spec: ProblemSpec): Boolean = root.resolve(hash(spec)).resolve(READY).exists()
 
@@ -235,7 +249,27 @@ class ProblemStore(
             if (file !in found) broken("prepared file ${out.relativize(file)} is missing")
             if (file.fileSize() != bytes) broken("prepared file ${out.relativize(file)} has ${file.fileSize()} bytes, expected $bytes")
         }
+        // The harness fills outputs with 0xFF bytes before every call (NaN for floats, -1 or the maximum for
+        // integers) so that a solution cannot pass by writing nothing. A reference answer that is exactly that
+        // pattern would defeat it: such a test has to be changed by the problem's author.
+        for (file in wanted.keys.filter { it.startsWith(out.resolve("expected")) }) {
+            if (bytesAllEqual(file, POISON)) {
+                broken("reference answer ${out.relativize(file)} is all 0xFF bytes, the pattern outputs are pre-filled with: a solution that writes nothing would pass this test")
+            }
+        }
         return wanted.values.sum()
+    }
+
+    private fun bytesAllEqual(file: Path, value: Byte): Boolean = Files.newInputStream(file).buffered().use { input ->
+        val chunk = ByteArray(1 shl 16)
+        var any = false
+        while (true) {
+            val n = input.read(chunk)
+            if (n < 0) break
+            for (i in 0 until n) if (chunk[i] != value) return false
+            any = any || n > 0
+        }
+        any
     }
 
     private fun evictIfNeeded() {
@@ -249,16 +283,25 @@ class ProblemStore(
         for ((dir, _, size) in entries) {
             if (total <= budget) break
             val hash = dir.fileName.toString()
-            if ((inUse[hash]?.get() ?: 0) > 0) continue
-            log.info("Evicting cached problem data {} ({} MB)", hash.take(12), size shr 20)
-            Files.deleteIfExists(dir.resolve(READY))
-            FileTrees.delete(dir)
-            total -= size
+            // acquire() counts itself in before it takes the problem's lock, and reads READY under it: holding the
+            // victim's lock while its count is zero means nobody is using the data or about to.
+            val lock = locks.computeIfAbsent(hash) { ReentrantLock() }
+            if (!lock.tryLock()) continue
+            try {
+                if ((inUse[hash]?.get() ?: 0) > 0) continue
+                log.info("Evicting cached problem data {} ({} MB)", hash.take(12), size shr 20)
+                Files.deleteIfExists(dir.resolve(READY))
+                FileTrees.delete(dir)
+                total -= size
+            } finally {
+                lock.unlock()
+            }
         }
     }
 
     companion object {
         private const val READY = "READY"
+        private const val POISON = 0xFF.toByte()
 
         /** Bump when the on-disk format of prepared data changes. */
         private const val PREP_FORMAT = "v1"

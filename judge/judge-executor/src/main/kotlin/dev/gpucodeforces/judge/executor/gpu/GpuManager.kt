@@ -128,11 +128,15 @@ class GpuManager(private val props: ExecutorProperties) {
         }
     }
 
-    /** After a solution was killed or crashed hard: verify the GPU still works before giving it to the next job. */
-    fun checkAfterFailure(slot: GpuSlot, why: String) {
+    /**
+     * After a solution was killed or crashed hard: verify the GPU still works before giving it to the next job.
+     * Returns whether it does.
+     */
+    fun checkAfterFailure(slot: GpuSlot, why: String): Boolean {
         val reason = probe(slot)
         if (reason == null) log.info("{} healthy after {}", slot, why)
         else pool.markUnhealthy(slot, "probe after $why failed: $reason")
+        return reason == null
     }
 
     /** Scheduled: re-probe unhealthy GPUs and occasionally idle healthy ones. */

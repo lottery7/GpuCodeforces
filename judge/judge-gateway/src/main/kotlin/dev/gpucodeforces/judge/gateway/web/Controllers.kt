@@ -9,11 +9,13 @@ import dev.gpucodeforces.judge.gateway.service.ExecutorRegistry
 import dev.gpucodeforces.judge.gateway.service.ExecutorView
 import dev.gpucodeforces.judge.gateway.service.QueueView
 import dev.gpucodeforces.judge.gateway.service.SubmissionService
+import dev.gpucodeforces.judge.gateway.service.SubmissionInProgressException
 import dev.gpucodeforces.judge.gateway.service.ValidationException
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
 import org.slf4j.LoggerFactory
 import org.springframework.amqp.AmqpException
+import tools.jackson.databind.DatabindException
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.http.converter.HttpMessageNotReadableException
@@ -37,7 +39,8 @@ class SubmissionController(private val service: SubmissionService) {
         summary = "Enqueue a submission for judging",
         description = "Validates the request and persists the job in the broker. Returns 202 immediately; " +
             "progress and the verdict arrive asynchronously as JudgeEvent messages in the `judge.events` queue. " +
-            "Re-posting the same submissionId within the dedup window returns 200 with duplicate=true.",
+            "Re-posting the same submissionId within the dedup window returns 200 with duplicate=true and the jobId of " +
+            "the first request; 409 while that first request is still waiting for the broker.",
     )
     fun submit(@RequestBody req: SubmissionRequest): ResponseEntity<SubmissionAccepted> {
         val accepted = service.submit(req)
@@ -90,9 +93,18 @@ class ErrorHandler {
     @ExceptionHandler(ValidationException::class)
     fun validation(e: ValidationException) = ResponseEntity.badRequest().body(ErrorResponse("validation_failed", e.errors))
 
+    @ExceptionHandler(SubmissionInProgressException::class)
+    fun inProgress(e: SubmissionInProgressException) =
+        ResponseEntity.status(HttpStatus.CONFLICT).body(ErrorResponse("submission_in_progress", listOfNotNull(e.message)))
+
     @ExceptionHandler(HttpMessageNotReadableException::class)
-    fun unreadable(e: HttpMessageNotReadableException) =
-        ResponseEntity.badRequest().body(ErrorResponse("malformed_request", listOfNotNull(e.mostSpecificCause.message?.take(500))))
+    fun unreadable(e: HttpMessageNotReadableException): ResponseEntity<ErrorResponse> {
+        // The parser's own message names internal classes; the caller only needs to know which field is wrong.
+        val path = (e.cause as? DatabindException)?.path.orEmpty().joinToString(".") { it.propertyName ?: "[${it.index}]" }
+        val detail = if (path.isEmpty()) "the request body is not valid JSON for this endpoint" else "field '$path' is missing or invalid"
+        log.info("Malformed request: {}", e.mostSpecificCause.message)
+        return ResponseEntity.badRequest().body(ErrorResponse("malformed_request", listOf(detail)))
+    }
 
     @ExceptionHandler(AmqpException::class)
     fun broker(e: AmqpException): ResponseEntity<ErrorResponse> {

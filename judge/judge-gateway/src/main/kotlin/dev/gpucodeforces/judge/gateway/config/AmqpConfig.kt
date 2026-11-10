@@ -21,9 +21,9 @@ class AmqpConfig(private val props: GatewayProperties) {
     fun judgeTopology(): Declarables {
         val jobs = DirectExchange(Topology.JOBS_EXCHANGE, true, false)
         val dlx = FanoutExchange(Topology.JOBS_DLX, true, false)
-        val dead = QueueBuilder.durable(Topology.JOBS_DEAD_QUEUE).quorum().build()
+        val dead = QueueBuilder.durable(Topology.JOBS_DEAD_QUEUE).quorum().deliveryLimit(Topology.NEVER_DROP).build()
         val events = TopicExchange(Topology.EVENTS_EXCHANGE, true, false)
-        val eventsQueue = QueueBuilder.durable(Topology.EVENTS_QUEUE).quorum().build()
+        val eventsQueue = QueueBuilder.durable(Topology.EVENTS_QUEUE).quorum().deliveryLimit(Topology.NEVER_DROP).build()
         val heartbeats = FanoutExchange(Topology.HEARTBEATS_EXCHANGE, false, false)
         val control = FanoutExchange(Topology.CONTROL_EXCHANGE, false, false)
 

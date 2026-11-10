@@ -21,6 +21,8 @@ data class SubmissionAccepted(
     val queuedAt: Instant,
     /** True if this submission id was already accepted recently and was not enqueued again. */
     val duplicate: Boolean = false,
+    /** Id of the job that judges this submission; its events carry the same [JudgeEvent.jobId]. */
+    val jobId: String,
 )
 
 /** Message published by the gateway to `judge.jobs.<gpuProfile>`. */
@@ -30,6 +32,11 @@ data class JudgeJob(
     val source: String,
     val gpuProfile: String,
     val enqueuedAt: Instant,
+    /**
+     * Unique per accepted request (a UUID from the gateway). A submission id can end up in two jobs - a retry after
+     * a publish timeout, a rejudge - and their events would otherwise be indistinguishable.
+     */
+    val jobId: String,
 )
 
 enum class SubmissionStatus {
@@ -51,8 +58,12 @@ enum class SubmissionStatus {
 
 /**
  * Everything the backend receives from the judge, via queue `judge.events`.
- * Events of one attempt are published in order; [seq] grows within an attempt.
- * A new [attempt] (executor crash, retry) restarts from COMPILING with seq 1.
+ * [seq] grows within an attempt; a new [attempt] (executor crash, retry) restarts from COMPILING with seq 1.
+ *
+ * Delivery order is NOT guaranteed: events travel over different broker channels, and the gateway's QUEUED
+ * (attempt 0) may arrive after an executor's first events. A consumer has to order events by `(attempt, seq)`,
+ * never move a submission back once it has seen FINISHED, treat QUEUED as optional, and be idempotent: the same
+ * event can be delivered twice. The identity of an event is `(jobId, attempt, seq)`.
  */
 data class JudgeEvent(
     val submissionId: String,
@@ -64,6 +75,8 @@ data class JudgeEvent(
     val source: String,
     val progress: Progress? = null,
     val result: JudgeResult? = null,
+    /** The job this event belongs to, see [JudgeJob.jobId]. */
+    val jobId: String,
 )
 
 data class Progress(
@@ -121,7 +134,10 @@ data class TestResult(
     val runs: Int? = null,
     /** Safe to show to the contestant. For sample tests may include the first mismatch. */
     val message: String? = null,
-    /** Judges-only details (mismatch values of hidden tests, stderr of hidden tests). Never show to contestants. */
+    /**
+     * Details beyond [message] (first mismatch, stderr), present on sample tests only. What a hidden test would
+     * reveal - reference values, input data printed to stderr - never leaves the executor: it is in its log.
+     */
     val debug: String? = null,
 )
 

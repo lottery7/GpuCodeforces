@@ -23,6 +23,19 @@ object Topology {
     /** Max deliveries of one job (executor crashes / internal errors) before it is dead-lettered. */
     const val JOB_DELIVERY_LIMIT = 5
 
+    /**
+     * `x-delivery-limit` of the events queue and of the dead-jobs queue. Quorum queues otherwise drop a message
+     * after 20 redeliveries, and here that message is somebody's verdict: a consumer that keeps failing (the
+     * backend's database is down) has to find it still there when it recovers.
+     */
+    const val NEVER_DROP = -1
+
+    /**
+     * [JudgeEvent.attempt] of the FINISHED event the gateway publishes for a dead-lettered job. Far above any
+     * executor attempt, so its `(jobId, attempt, seq)` cannot collide with an executor's event.
+     */
+    const val DEAD_JOB_ATTEMPT = 1_000_000
+
     /** Topic exchange; routing key `submission.<status>` (lower case). */
     const val EVENTS_EXCHANGE = "judge.events"
 

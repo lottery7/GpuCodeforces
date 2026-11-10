@@ -89,7 +89,7 @@ object MockResults {
             message = failedTest?.let { failureMessage(directive.verdict, it) },
             tests = tests,
             maxTimeMs = tests.mapNotNull { it.timeMs }.maxOrNull(),
-            timingMode = problem.timing.effectiveMode(problem.signature),
+            timingMode = problem.timing.effectiveMode,
         )
     }
 
@@ -119,7 +119,7 @@ class MockJudge(
         inFlight.incrementAndGet()
         try {
             val started = System.nanoTime()
-            val reporter = JobReporter(job.submissionId, attempt, source = props.id, publisher, clock)
+            val reporter = JobReporter(job.submissionId, job.jobId, attempt, source = props.id, publisher, clock)
             val result = judge(job, reporter)
             reporter.finish(
                 result.copy(

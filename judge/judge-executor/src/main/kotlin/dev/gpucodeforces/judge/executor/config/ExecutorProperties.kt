@@ -33,6 +33,11 @@ data class ExecutorProperties(
     /** How often an idle healthy GPU is probed; unhealthy GPUs are re-probed every [unhealthyProbeInterval]. */
     val idleProbeInterval: Duration = Duration.ofMinutes(5),
     val unhealthyProbeInterval: Duration = Duration.ofSeconds(30),
+    /**
+     * How long a stopping executor lets the jobs it has taken finish. A job cut short goes back to the queue and
+     * that counts towards its delivery limit, so a few restarts in a row would dead-letter an innocent job.
+     */
+    val shutdownTimeout: Duration = Duration.ofMinutes(5),
 ) {
     init {
         // the name becomes a queue name and a routing key shared with the gateway
@@ -82,7 +87,9 @@ data class PathsConfig(
 data class ToolchainConfig(
     val nvcc: String = "/usr/local/cuda/bin/nvcc",
     val cuobjdump: String = "/usr/local/cuda/bin/cuobjdump",
-    val nm: String = "nm",
+    /** Absolute paths: these run inside the sandbox, which does not search PATH. */
+    val nm: String = "/usr/bin/nm",
+    val objcopy: String = "/usr/bin/objcopy",
     val python: String = "python3",
     val nvidiaSmi: String = "nvidia-smi",
     /** Host compiler passed to nvcc via -ccbin; pinned so all submissions are built identically. */
@@ -115,9 +122,14 @@ data class SandboxConfig(
     val readOnlyMounts: List<String> = listOf("/usr", "/lib", "/lib64", "/lib32", "/bin", "/sbin", "/etc/alternatives", "/etc/ld.so.cache", "/etc/ld.so.conf", "/etc/ld.so.conf.d"),
     /** Extra read-only mounts, e.g. a CUDA install outside /usr. */
     val extraReadOnlyMounts: List<String> = emptyList(),
-    /** uid/gid the sandboxed process runs as (outside the user namespace). */
+    /**
+     * First uid/gid sandboxed processes run as (outside the user namespace). Each concurrent sandbox gets its own
+     * out of [uidPoolSize] consecutive ones: RLIMIT_NPROC is counted per uid, and with a shared uid one solution
+     * spawning threads up to the limit would make compilations and runs of other submissions fail.
+     */
     val uid: Int = 99999,
     val gid: Int = 99999,
+    val uidPoolSize: Int = 32,
     /** Use nsjail cgroups v2 for memory/pids limits. Requires a delegated cgroup subtree; otherwise the executor polls RSS. */
     val useCgroupsV2: Boolean = false,
     val pidsLimit: Int = 256,
@@ -125,8 +137,7 @@ data class SandboxConfig(
     /** RLIMIT_STACK; also the default stack size of every thread the sandboxed process starts. */
     val stackLimitMb: Long = 64,
     /**
-     * RLIMIT_NPROC: processes and threads of the sandbox uid. All sandboxes of an executor share the uid, so this
-     * covers the solution, the compilers and the test generator running at the same time.
+     * RLIMIT_NPROC: processes and threads of one sandbox (each has a uid of its own, see [uid]).
      */
     val maxProcesses: Int = 2048,
 )

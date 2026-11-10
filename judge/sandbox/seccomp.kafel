@@ -2,17 +2,25 @@
 // Deny-list on top of namespaces: everything that could escape or inspect the sandbox or the kernel.
 // CUDA needs ioctl/mmap/threads, so a strict allow-list is impractical.
 POLICY judge {
-  ERRNO(1) {
+  // Nothing legitimate calls these, and each is a step out of the sandbox: the process is killed, which shows up
+  // as a runtime error and in the executor's log instead of as a quietly failed call.
+  KILL {
     ptrace, process_vm_readv, process_vm_writev,
     mount, pivot_root, chroot, unshare, setns,
     // the newer mount API reaches the same code as mount
     fsopen, fsconfig, fsmount, fspick, move_mount, open_tree, mount_setattr,
     kexec_load, reboot, swapon, swapoff,
     init_module, finit_module, delete_module,
-    bpf, perf_event_open, keyctl, add_key, request_key,
-    acct, quotactl, personality, syslog, open_by_handle_at,
+    bpf, open_by_handle_at, name_to_handle_at
+  },
+  // Libraries probe some of these and carry on when refused, so they fail instead of killing.
+  ERRNO(1) {
+    perf_event_open, keyctl, add_key, request_key,
+    acct, quotactl, personality, syslog,
     // large kernel attack surface that neither compilers nor CUDA use
     io_uring_setup, io_uring_enter, io_uring_register, userfaultfd,
+    // reach into other processes or kernel objects; harmless without capabilities, but nothing here needs them
+    modify_ldt, uselib, kcmp, pidfd_getfd, process_madvise, vmsplice,
     // CLONE_NEWNS | NEWCGROUP | NEWUTS | NEWIPC | NEWUSER | NEWPID | NEWNET: a nested user namespace would hand
     // the solution capabilities over namespaces of its own, the usual first step of a kernel exploit.
     clone { (clone_flags & 0x7E020000) != 0 }

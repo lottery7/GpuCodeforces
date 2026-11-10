@@ -58,6 +58,7 @@ class Toolchain(private val props: ExecutorProperties) {
         val torch = Proc.run(listOf(tc.python, "-c", TORCH_PROBE), Duration.ofSeconds(120))
         if (torch.ok) {
             val lines = torch.stdout.lines().map { it.trim() }
+            check(lines.size >= 3) { "unexpected torch probe output: $lines" }
             torchVersion = lines[0]
             pythonPrefix = Path.of(lines[2])
             if (lines[1] != "True") {

@@ -161,8 +161,9 @@ class HarnessRunnerTest {
         val o = run("ok,wrong")
         assertEquals(Verdict.WRONG_ANSWER, o.verdict)
         assertEquals(2, o.failedTest)
-        assertEquals("C: 1 of 8 elements differ", o.tests[1].message)
-        assertTrue(o.tests[1].debug!!.startsWith("C[1]: expected"), o.tests[1].debug)
+        assertEquals("Wrong answer", o.tests[1].message)
+        assertEquals(null, o.tests[1].debug, "what a hidden test reveals stays in the executor's log")
+        assertEquals(false, o.needsHealthCheck, "a wrong answer is no reason to probe the GPU")
     }
 
     @Test
@@ -205,7 +206,8 @@ class HarnessRunnerTest {
         val cuda = run("ok,cuda_error")
         assertEquals(Verdict.RUNTIME_ERROR, cuda.verdict)
         assertEquals(2, cuda.failedTest)
-        assertTrue(cuda.tests[1].message!!.contains("cudaErrorIllegalAddress"))
+        // test 2 is hidden: the text after runtime_error could be anything the solution chose to write
+        assertEquals("CUDA error", cuda.tests[1].message)
     }
 
     @Test

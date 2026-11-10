@@ -18,6 +18,11 @@ object SpecValidator {
         val maxMemoryLimitMb: Long = 32 * 1024,
         /** Max total number of inline sample values per test. */
         val maxInlineValues: Int = 100_000,
+        /**
+         * Max inline values of all tests together. A request has to fit into one broker message (16 MiB in
+         * RabbitMQ 4) with room to spare, or it could never be published however often it is retried.
+         */
+        val maxTotalInlineValues: Int = 500_000,
         val maxGeneratorBytes: Int = 256 * 1024,
     )
 
@@ -68,6 +73,10 @@ object SpecValidator {
             if (t.name.length > MAX_NAME_LENGTH) errors += "tests[$i]: name is longer than $MAX_NAME_LENGTH characters"
             if (!names.add(t.name)) errors += "$where: duplicate test name"
             validateTest(spec.signature, t, where, limits, errors)
+        }
+        val inlineValues = spec.tests.sumOf { t -> (t.data.orEmpty().values + t.expected.orEmpty().values).sumOf { it.size.toLong() } }
+        if (inlineValues > limits.maxTotalInlineValues) {
+            errors += "tests carry $inlineValues inline values in total, limit ${limits.maxTotalInlineValues}"
         }
 
         with(spec.checker) {
@@ -195,6 +204,7 @@ object SpecValidator {
         }
         if (bytes > limits.maxTestBytes) errors += "$where: test data is $bytes bytes, limit ${limits.maxTestBytes}"
 
+        if (t.expected != null && t.data == null) errors += "$where: expected needs hand-written data"
         val data = t.data ?: return
         val inputs = sig.arrays.filter { it.role == ParamRole.INPUT || it.role == ParamRole.INOUT }.map { it.name }.toSet()
         if (data.keys != inputs) errors += "$where: data must contain exactly the input arrays $inputs"
@@ -202,6 +212,14 @@ object SpecValidator {
         for ((name, values) in data) {
             val expected = sizes[name] ?: continue
             if (values.size.toLong() != expected) errors += "$where: data.$name has ${values.size} values, expected $expected"
+            total += values.size
+        }
+        val expected = t.expected.orEmpty()
+        val outputs = sig.outputs.map { it.name }.toSet()
+        if (t.expected != null && expected.keys != outputs) errors += "$where: expected must contain exactly the output arrays $outputs"
+        for ((name, values) in expected) {
+            val want = sizes[name] ?: continue
+            if (values.size.toLong() != want) errors += "$where: expected.$name has ${values.size} values, expected $want"
             total += values.size
         }
         if (total > limits.maxInlineValues) errors += "$where: too many inline values ($total > ${limits.maxInlineValues})"

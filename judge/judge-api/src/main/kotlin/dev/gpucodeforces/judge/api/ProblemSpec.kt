@@ -56,9 +56,6 @@ data class Signature(
     val arrays: List<ParamSpec> get() = params.filter { it.role != ParamRole.SCALAR }
     val scalars: List<ParamSpec> get() = params.filter { it.role == ParamRole.SCALAR }
     val outputs: List<ParamSpec> get() = params.filter { it.role == ParamRole.OUTPUT || it.role == ParamRole.INOUT }
-
-    /** True if every array lives in GPU memory, i.e. the problem is "GPU only". */
-    val deviceOnly: Boolean get() = arrays.all { it.memory == MemorySpace.DEVICE }
 }
 
 data class ParamSpec(
@@ -115,6 +112,11 @@ data class TestSpec(
      * When present the generator is not called for this test; the reference still is.
      */
     val data: Map<String, List<Number>>? = null,
+    /**
+     * Hand-written answers (OUTPUT/INOUT params) for a test with hand-written [data]: the examples of a problem
+     * statement are checked against what the statement says, not against whatever the reference computes.
+     */
+    val expected: Map<String, List<Number>>? = null,
 )
 
 enum class GeneratorLanguage { PYTHON }
@@ -165,8 +167,8 @@ enum class TimingMode {
 
 data class TimingSpec(
     /**
-     * Null = automatic: [TimingMode.WALL] if every array is in device memory,
-     * [TimingMode.GPU_KERNELS] if the input data starts on the host.
+     * Null = [TimingMode.WALL], wherever the data starts: with kernel time alone a solution that computes on the
+     * CPU would measure as zero. [TimingMode.GPU_KERNELS] has to be asked for.
      */
     val mode: TimingMode? = null,
     /** Untimed calls on the first test before measuring (CUDA lazy module loading, caches, clocks). */
@@ -177,8 +179,7 @@ data class TimingSpec(
      */
     val maxRuns: Int = 3,
 ) {
-    fun effectiveMode(signature: Signature): TimingMode =
-        mode ?: if (signature.deviceOnly) TimingMode.WALL else TimingMode.GPU_KERNELS
+    val effectiveMode: TimingMode get() = mode ?: TimingMode.WALL
 }
 
 /** Per-problem adjustments of the GPU profile's default policy. */

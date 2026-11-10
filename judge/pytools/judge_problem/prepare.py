@@ -130,9 +130,14 @@ def prepare(spec: dict, source: Path, out: Path, device: str) -> dict:
             for p in inputs_p:
                 entry["inputs"][p.name] = write_array(out / "inputs" / f"t{test.index}" / f"{p.name}.bin", inputs[p.name])
 
-            # The reference gets copies: it must not be able to change the stored inputs.
-            ref_out = module.reference(test, {k: v.clone() for k, v in inputs.items()})
-            ref_out = check_arrays("reference", test, ref_out, outputs_p)
+            if test.expected is not None:
+                # the answer was written by hand (an example from the statement): the reference has no say
+                ref_out = {p.name: torch.tensor(test.expected[p.name], dtype=torch_dtype(p.type), device=device) for p in outputs_p}
+                ref_out = check_arrays("expected", test, ref_out, outputs_p)
+            else:
+                # The reference gets copies: it must not be able to change the stored inputs.
+                ref_out = module.reference(test, {k: v.clone() for k, v in inputs.items()})
+                ref_out = check_arrays("reference", test, ref_out, outputs_p)
             for p in outputs_p:
                 entry["expected"][p.name] = write_array(out / "expected" / f"t{test.index}" / f"{p.name}.bin", ref_out[p.name])
             entry["seconds"] = round(time.monotonic() - t0, 3)

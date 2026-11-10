@@ -54,6 +54,7 @@ class Test:
     scalars: Dict[str, Any]
     sizes: Dict[str, int] = field(default_factory=dict)  # element count of every array param
     data: Optional[Dict[str, List[Any]]] = None
+    expected: Optional[Dict[str, List[Any]]] = None  # hand-written answers of a hand-written test
 
     def __getitem__(self, key: str) -> Any:
         """``test["N"]`` is a shortcut for ``test.scalars["N"]``."""
@@ -107,5 +108,5 @@ def parse_tests(tests: List[Dict[str, Any]], params: List[Param]) -> List[Test]:
             if p.role == "SCALAR" and p.name in scalars:
                 scalars[p.name] = float(scalars[p.name]) if p.type.startswith(("FLOAT", "BFLOAT")) else int(scalars[p.name])
         sizes = {p.name: eval_size(p.size, scalars) for p in params if p.is_array}
-        out.append(Test(i, t["name"], int(t.get("seed", 0)), bool(t.get("sample", False)), scalars, sizes, t.get("data")))
+        out.append(Test(i, t["name"], int(t.get("seed", 0)), bool(t.get("sample", False)), scalars, sizes, t.get("data"), t.get("expected")))
     return out

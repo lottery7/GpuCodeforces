@@ -12,8 +12,14 @@ services:
     build:
       context: ../..
       dockerfile: judge/deploy/executor.Dockerfile
-    # nsjail creates namespaces and mounts; clock locking needs root on the GPU
-    privileged: true
+    # nsjail needs CAP_SYS_ADMIN (namespaces, mounts) and a /proc it can mount over; nothing else of `privileged`.
+    # Docker's own seccomp and AppArmor profiles forbid exactly those calls, so they are off for this container:
+    # the boundary for untrusted code is nsjail with its seccomp policy. Clock locking (nvidia-smi -lgc) no longer
+    # works from inside; lock clocks on the host.
+    cap_add: [SYS_ADMIN]
+    security_opt: [seccomp=unconfined, apparmor=unconfined, systempaths=unconfined]
+    # a stopping executor finishes the jobs it has taken (judge.executor.shutdown-timeout is 5 min)
+    stop_grace_period: 6m
     environment:
       RABBITMQ_HOST: ${RABBITMQ_HOST:?address of the RabbitMQ of the main deployment}
       RABBITMQ_USER: ${RABBITMQ_USER:?}

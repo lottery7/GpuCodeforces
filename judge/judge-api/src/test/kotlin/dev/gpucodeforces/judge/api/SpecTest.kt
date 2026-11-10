@@ -89,13 +89,37 @@ class SpecValidatorTest {
     }
 
     @Test
-    fun `auto timing mode depends on memory space`() {
-        val dev = Fixtures.vectorAdd()
-        assertEquals(TimingMode.WALL, dev.timing.effectiveMode(dev.signature))
-        val host = dev.copy(signature = dev.signature.copy(params = dev.signature.params.map {
-            if (it.name == "A") it.copy(memory = MemorySpace.HOST) else it
-        }))
-        assertEquals(TimingMode.GPU_KERNELS, host.timing.effectiveMode(host.signature))
+    fun `time is the whole call unless the problem asks for kernel time`() {
+        val host = Fixtures.vectorAdd().let { p ->
+            p.copy(signature = p.signature.copy(params = p.signature.params.map { if (it.name == "A") it.copy(memory = MemorySpace.HOST) else it }))
+        }
+        assertEquals(TimingMode.WALL, Fixtures.vectorAdd().timing.effectiveMode)
+        assertEquals(TimingMode.WALL, host.timing.effectiveMode)
+        assertEquals(TimingMode.GPU_KERNELS, TimingSpec(mode = TimingMode.GPU_KERNELS).effectiveMode)
+    }
+
+    @Test
+    fun `hand-written answers need hand-written inputs and the right sizes`() {
+        val sample = TestSpec("s", scalars = mapOf("N" to 2), data = mapOf("A" to listOf(1, 2), "B" to listOf(3, 4)), expected = mapOf("C" to listOf(4, 6)))
+        assertEquals(emptyList(), SpecValidator.validateProblem(Fixtures.vectorAdd().copy(tests = listOf(sample))))
+
+        val bad = listOf(
+            sample.copy(name = "short", expected = mapOf("C" to listOf(4))),
+            sample.copy(name = "wrong-array", expected = mapOf("A" to listOf(1, 2))),
+            TestSpec("generated", scalars = mapOf("N" to 2), expected = mapOf("C" to listOf(4, 6))),
+        )
+        val errors = SpecValidator.validateProblem(Fixtures.vectorAdd().copy(tests = bad))
+        assertTrue(errors.any { "'short'" in it && "expected.C has 1 values" in it }, errors.toString())
+        assertTrue(errors.any { "'wrong-array'" in it && "exactly the output arrays" in it }, errors.toString())
+        assertTrue(errors.any { "'generated'" in it && "needs hand-written data" in it }, errors.toString())
+    }
+
+    @Test
+    fun `inline data of all tests together is bounded`() {
+        val values = List(60_000) { 0 }
+        val tests = List(10) { TestSpec("t$it", scalars = mapOf("N" to 60_000), data = mapOf("A" to values, "B" to values)) }
+        val errors = SpecValidator.validateProblem(Fixtures.vectorAdd().copy(tests = tests))
+        assertTrue(errors.any { "1200000 inline values in total" in it }, errors.toString())
     }
 }
 

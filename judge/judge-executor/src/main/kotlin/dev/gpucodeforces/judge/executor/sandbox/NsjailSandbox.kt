@@ -2,9 +2,11 @@ package dev.gpucodeforces.judge.executor.sandbox
 
 import dev.gpucodeforces.judge.executor.config.SandboxConfig
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
+import java.util.BitSet
 import kotlin.io.path.exists
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.writeText
@@ -31,12 +33,24 @@ class NsjailSandbox(private val cfg: SandboxConfig, val wsl: Boolean = isWsl2())
 
     override fun inside(spec: SandboxSpec, host: Path): String = mapThroughMounts(host, mounts(spec))
 
-    fun buildCommand(spec: SandboxSpec): List<String> = buildList {
+    /** Indexes into the uid pool taken by running sandboxes. */
+    private val uidsInUse = BitSet(cfg.uidPoolSize)
+
+    private fun takeUidIndex(): Int = synchronized(uidsInUse) {
+        val index = uidsInUse.nextClearBit(0)
+        check(index < cfg.uidPoolSize) { "all ${cfg.uidPoolSize} sandbox uids are in use (judge.executor.sandbox.uid-pool-size)" }
+        uidsInUse.set(index)
+        index
+    }
+
+    fun buildCommand(spec: SandboxSpec, uidIndex: Int = 0): List<String> = buildList {
         add(cfg.nsjail)
         addAll(listOf("--mode", "o", "--quiet"))
         addAll(listOf("--log", Sandbox.logFile(spec.workDir).toString()))
         addAll(listOf("--hostname", "judge", "--cwd", Sandbox.WORK))
-        addAll(listOf("--user", "${cfg.uid}:${cfg.uid}:1", "--group", "${cfg.gid}:${cfg.gid}:1"))
+        val uid = cfg.uid + uidIndex
+        val gid = cfg.gid + uidIndex
+        addAll(listOf("--user", "$uid:$uid:1", "--group", "$gid:$gid:1"))
         addAll(listOf("--time_limit", ((spec.wallTimeLimit.toMillis() + 999) / 1000).toString()))
         addAll(listOf("--rlimit_as", spec.addressSpaceBytes?.let { megabytes(it) } ?: "inf", "--rlimit_core", "0", "--rlimit_cpu", "inf"))
         addAll(listOf("--rlimit_fsize", megabytes(spec.maxFileBytes)))
@@ -53,7 +67,9 @@ class NsjailSandbox(private val cfg: SandboxConfig, val wsl: Boolean = isWsl2())
         cfg.seccompPolicy?.let { addAll(listOf("--seccomp_policy", it.toString())) }
 
         addAll(systemMountArgs(cfg.readOnlyMounts + cfg.extraReadOnlyMounts))
-        addAll(listOf("-R", "/sys", "-R", "/dev/urandom", "-R", "/dev/zero", "-B", "/dev/null"))
+        addAll(listOf("-R", "/dev/urandom", "-R", "/dev/zero", "-B", "/dev/null"))
+        // the host's /sys is for the CUDA driver; compilers and the linker have no use for it
+        if (spec.gpu != null) addAll(listOf("-R", "/sys"))
         addAll(listOf("-m", "none:/tmp:tmpfs:size=${spec.tmpBytes}", "-m", "none:/dev/shm:tmpfs:size=${spec.tmpBytes}"))
         for ((host, inside) in spec.readOnly) addAll(listOf("-R", "$host:$inside"))
         addAll(listOf("-B", "${spec.workDir}:${Sandbox.WORK}"))
@@ -97,7 +113,8 @@ class NsjailSandbox(private val cfg: SandboxConfig, val wsl: Boolean = isWsl2())
 
     private fun gpuDevices(gpu: GpuAccess): List<String> {
         if (wsl) return listOf("/dev/dxg")
-        val common = listOf("/dev/nvidiactl", "/dev/nvidia-uvm", "/dev/nvidia-uvm-tools", "/dev/nvidia-modeset")
+        // computing needs the control and UVM devices and the card; -uvm-tools and -modeset are extra attack surface
+        val common = listOf("/dev/nvidiactl", "/dev/nvidia-uvm")
             .filter { Path.of(it).exists() }
         val cards = gpu.deviceNode?.let { listOf(it) }
             ?: Path.of("/dev").listDirectoryEntries("nvidia*").map { it.toString() }.filter { it.matches(Regex("/dev/nvidia[0-9]+")) }
@@ -106,11 +123,18 @@ class NsjailSandbox(private val cfg: SandboxConfig, val wsl: Boolean = isWsl2())
 
     override fun start(spec: SandboxSpec): Process {
         Files.createDirectories(spec.workDir)
-        val cmd = buildCommand(spec)
+        val uidIndex = takeUidIndex()
+        val release = { synchronized(uidsInUse) { uidsInUse.clear(uidIndex) } }
+        val cmd = buildCommand(spec, uidIndex)
         log.debug("nsjail command: {}", cmd)
-        return ProcessBuilder(cmd)
-            .redirectInput(ProcessBuilder.Redirect.from(File("/dev/null")))
-            .start()
+        val process = try {
+            ProcessBuilder(cmd).redirectInput(ProcessBuilder.Redirect.from(File("/dev/null"))).start()
+        } catch (e: IOException) {
+            release()
+            throw e
+        }
+        process.onExit().thenRun(release)
+        return process
     }
 
     /**

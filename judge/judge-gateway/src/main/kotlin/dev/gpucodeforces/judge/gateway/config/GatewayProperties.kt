@@ -18,6 +18,8 @@ data class GatewayProperties(
     val dedupMaxEntries: Int = 100_000,
     /** Timeout for the broker to confirm a published job before the request fails with 503. */
     val publishConfirmTimeout: Duration = Duration.ofSeconds(5),
+    /** Largest request body accepted, checked before it is parsed. Must stay below the broker's message limit. */
+    val maxRequestBytes: Long = 8L shl 20,
     /**
      * Stricter limits than the contract's ([SpecValidator.Limits]) for this deployment. They can only be lowered:
      * executors validate every job against the contract's own limits and reject what exceeds them.

@@ -92,11 +92,11 @@ class ExecutorConfig(private val props: ExecutorProperties) {
     fun executorTopology(): Declarables {
         val jobs = DirectExchange(Topology.JOBS_EXCHANGE, true, false)
         val dlx = FanoutExchange(Topology.JOBS_DLX, true, false)
-        val dead = QueueBuilder.durable(Topology.JOBS_DEAD_QUEUE).quorum().build()
+        val dead = QueueBuilder.durable(Topology.JOBS_DEAD_QUEUE).quorum().deliveryLimit(Topology.NEVER_DROP).build()
         val queue = QueueBuilder.durable(Topology.jobsQueue(props.gpuProfile)).quorum()
             .deliveryLimit(Topology.JOB_DELIVERY_LIMIT).deadLetterExchange(Topology.JOBS_DLX).build()
         val events = TopicExchange(Topology.EVENTS_EXCHANGE, true, false)
-        val eventsQueue = QueueBuilder.durable(Topology.EVENTS_QUEUE).quorum().build()
+        val eventsQueue = QueueBuilder.durable(Topology.EVENTS_QUEUE).quorum().deliveryLimit(Topology.NEVER_DROP).build()
         return Declarables(
             jobs, dlx, dead, BindingBuilder.bind(dead).to(dlx),
             queue, BindingBuilder.bind(queue).to(jobs).with(props.gpuProfile),
@@ -120,7 +120,7 @@ class ExecutorConfig(private val props: ExecutorProperties) {
             setConcurrentConsumers(props.capacity)
             setMaxConcurrentConsumers(props.capacity)
             setDefaultRequeueRejected(true)
-            setShutdownTimeout(60_000)
+            setShutdownTimeout(props.shutdownTimeout.toMillis())
             setMessageListener(listener)
             log.info("Consuming {} with {} consumers ({} GPUs + {} prefetch)", Topology.jobsQueue(props.gpuProfile), props.capacity, props.gpus.size, props.prefetchExtra)
         }.also { container ->

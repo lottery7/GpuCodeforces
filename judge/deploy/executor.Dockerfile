@@ -3,26 +3,30 @@
 # Build context: the repository root (see compose.yaml).
 #
 # Pinned toolchain (single source of truth; the executor verifies it at startup and refuses to run on mismatch):
-ARG CUDA_IMAGE=nvidia/cuda:12.8.1-devel-ubuntu24.04
+# Images are pinned by digest and nsjail by commit: tags can be moved, and this image is the sandbox itself.
+ARG CUDA_IMAGE=nvidia/cuda:12.8.1-devel-ubuntu24.04@sha256:520292dbb4f755fd360766059e62956e9379485d9e073bbd2f6e3c20c270ed66
 ARG CUDA_RELEASE=12.8
 ARG GCC_MAJOR=13
 ARG TORCH_VERSION=2.9.1
 ARG TORCH_INDEX=https://download.pytorch.org/whl/cu128
 ARG NUMPY_VERSION=2.2.6
 ARG NSJAIL_VERSION=3.6
+ARG NSJAIL_COMMIT=f78475530b46d0186111a9096b30725f816b55fe
 
 # ---- nsjail -------------------------------------------------------------------------------------------------
-FROM ubuntu:24.04 AS nsjail
+FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852 AS nsjail
 ARG NSJAIL_VERSION
+ARG NSJAIL_COMMIT
 RUN apt-get update && apt-get install -y --no-install-recommends \
         autoconf bison ca-certificates flex g++ gcc git libnl-route-3-dev libprotobuf-dev libtool make pkg-config \
         protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 RUN git clone --depth 1 --branch "${NSJAIL_VERSION}" https://github.com/google/nsjail.git /nsjail \
+    && test "$(git -C /nsjail rev-parse HEAD)" = "${NSJAIL_COMMIT}" \
     && make -C /nsjail -j"$(nproc)"
 
 # ---- Kotlin service ----------------------------------------------------------------------------------------
-FROM eclipse-temurin:26-jdk-noble AS build
+FROM eclipse-temurin:26-jdk-noble@sha256:9c0e8eddecccc0d5679b317b0c90fa7103ad25cae33df1c00280675eb681c7f8 AS build
 WORKDIR /src
 COPY gradlew settings.gradle.kts build.gradle.kts gradle.properties ./
 COPY gradle gradle
@@ -43,10 +47,12 @@ ARG NUMPY_VERSION
 RUN apt-get update && apt-get install -y --no-install-recommends \
         binutils g++-${GCC_MAJOR} libnl-route-3-200 libprotobuf32t64 python3 python3-venv \
     && rm -rf /var/lib/apt/lists/*
-RUN python3 -m venv /opt/venv \
-    && /opt/venv/bin/pip install --no-cache-dir "numpy==${NUMPY_VERSION}" \
-    && /opt/venv/bin/pip install --no-cache-dir "torch==${TORCH_VERSION}" --index-url "${TORCH_INDEX}"
-COPY --from=eclipse-temurin:26-jre-noble /opt/java/openjdk /opt/java/openjdk
+# every package pinned, transitive ones included; the two ARGs above must agree with the file
+COPY judge/deploy/executor-requirements.txt /tmp/requirements.txt
+RUN grep -qx "torch==${TORCH_VERSION}+cu128" /tmp/requirements.txt && grep -qx "numpy==${NUMPY_VERSION}" /tmp/requirements.txt \
+    && python3 -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir --index-url "${TORCH_INDEX}" --extra-index-url https://pypi.org/simple -r /tmp/requirements.txt
+COPY --from=eclipse-temurin:26-jre-noble@sha256:adfd44c114916dc79fa9a24087fbac34252096edb9892d1c2d9d82db3f8947b3 /opt/java/openjdk /opt/java/openjdk
 COPY --from=nsjail /nsjail/nsjail /usr/local/bin/nsjail
 COPY judge/harness /opt/judge/harness
 COPY judge/pytools /opt/judge/pytools

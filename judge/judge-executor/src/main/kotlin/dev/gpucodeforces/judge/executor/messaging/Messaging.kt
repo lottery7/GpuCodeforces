@@ -54,6 +54,7 @@ class EventPublisher(
 /** Publishes the events of one judging attempt in order; progress updates are throttled. */
 class JobReporter(
     private val submissionId: String,
+    private val jobId: String,
     private val attempt: Int,
     private val source: String,
     private val publisher: EventPublisher,
@@ -86,7 +87,7 @@ class JobReporter(
     }
 
     private fun event(status: SubmissionStatus) =
-        JudgeEvent(submissionId, attempt = attempt, seq = ++seq, status, clock.instant(), source = source)
+        JudgeEvent(submissionId, attempt = attempt, seq = ++seq, status, clock.instant(), source = source, jobId = jobId)
 
     private fun send(status: SubmissionStatus, progress: Progress?) {
         val event = event(status).copy(progress = progress)
@@ -104,7 +105,13 @@ class JobReporter(
     }
 }
 
-/** Submissions cancelled via `judge.control`; remembered for an hour (the job may still be in the queue). */
+/**
+ * Submissions cancelled via `judge.control`; remembered for an hour (the job may still be in the queue).
+ *
+ * Cancellation is an optimisation, not a guarantee: the message is not persisted, so it is lost if no executor of
+ * the profile is connected, if the executor restarts, or if the job waits longer than this registry remembers. The
+ * backend decides what a cancelled submission is and has to ignore a verdict that still arrives for one.
+ */
 class CancelRegistry(private val clock: Clock) {
     private val cancelled = ConcurrentHashMap<String, Long>()
 

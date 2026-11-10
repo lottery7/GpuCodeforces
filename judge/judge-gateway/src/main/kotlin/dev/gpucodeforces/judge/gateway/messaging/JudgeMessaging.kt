@@ -27,6 +27,15 @@ class JudgeMessaging(
         }
     }
 
+    /** For events that are somebody's verdict: returns only once the broker has the event. */
+    fun publishEventConfirmed(event: JudgeEvent, confirmTimeout: Duration) {
+        val message = message(event, event.submissionId, persistent = true)
+        rabbit.invoke { ops ->
+            ops.send(Topology.EVENTS_EXCHANGE, Topology.eventRoutingKey(event.status), message)
+            ops.waitForConfirmsOrDie(confirmTimeout.toMillis())
+        }
+    }
+
     fun publishEvent(event: JudgeEvent) {
         rabbit.send(Topology.EVENTS_EXCHANGE, Topology.eventRoutingKey(event.status), message(event, event.submissionId, persistent = true))
     }

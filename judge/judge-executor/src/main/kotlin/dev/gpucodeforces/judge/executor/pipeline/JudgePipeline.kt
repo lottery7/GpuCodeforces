@@ -7,6 +7,7 @@ import dev.gpucodeforces.judge.api.JudgeResult
 import dev.gpucodeforces.judge.api.SpecValidator
 import dev.gpucodeforces.judge.api.SubmissionRequest
 import dev.gpucodeforces.judge.api.SubmissionStatus
+import dev.gpucodeforces.judge.api.TestResult
 import dev.gpucodeforces.judge.api.Topology
 import dev.gpucodeforces.judge.api.Verdict
 import dev.gpucodeforces.judge.executor.compile.BuildInfrastructureException
@@ -59,7 +60,7 @@ class JudgePipeline(
     override fun process(job: JudgeJob, attempt: Int): Disposition {
         inFlight.incrementAndGet()
         val started = System.nanoTime()
-        val reporter = JobReporter(job.submissionId, attempt, source = props.id, publisher, clock)
+        val reporter = JobReporter(job.submissionId, job.jobId, attempt, source = props.id, publisher, clock)
         var runDir: Path? = null
         var keepRunDir = false
         val cancelled = { cancels.isCancelled(job.submissionId) }
@@ -93,7 +94,7 @@ class JudgePipeline(
             val dir = Files.createTempDirectory(Files.createDirectories(props.paths.work), "${job.submissionId}-a$attempt-")
             runDir = dir
             FileTrees.makeReadableByAll(dir)
-            val timingMode = job.problem.timing.effectiveMode(job.problem.signature)
+            val timingMode = job.problem.timing.effectiveMode
             val policy = EffectivePolicy.of(props.profile.policy, job.problem.policy, timingMode)
             val build = timed("compile") { builder.build(job.source, job.problem.signature, job.problem.compile, policy, dir) }
             when (build) {
@@ -120,12 +121,29 @@ class JudgePipeline(
                 reporter.progress(0, total)
                 val slot = gpus.pool.acquire(job.submissionId, Duration.ofMinutes(2), cancelled)
                 var outcome: RunOutcome? = null
+                var probed = false
                 MDC.put("gpu", slot.index.toString())
                 try {
                     val o = timed("run") {
                         runner.run(job.problem, prepared, binary = build.binary, runDir = dir, slot, onTestStart = { reporter.progress(it, total) }, cancelled)
                     }
                     outcome = o
+                    if (o.solutionSuspected) {
+                        // Decided by the probe, which therefore runs before the verdict here: a healthy GPU means
+                        // the solution broke its own start-up, and that is not worth five retries on the GPU.
+                        probed = true
+                        if (gpus.checkAfterFailure(slot, "start-up failure of ${job.submissionId}")) {
+                            log.info("Solution failed before the first test: {}", o.internalReason)
+                            val first = prepared.tests.first()
+                            val message = "Runtime error on test 1 (the solution failed before the first test)"
+                            val result = JudgeResult(
+                                Verdict.RUNTIME_ERROR, failedTest = 1, message = message, compileLog = build.compileLog.ifBlank { null },
+                                tests = listOf(TestResult(1, first.spec.name, first.spec.sample, Verdict.RUNTIME_ERROR, message = message)),
+                                timingMode = timingMode, gpu = gpuInfo(slot, o),
+                            )
+                            return finish(reporter, started, result)
+                        }
+                    }
                     if (o.verdict == Verdict.INTERNAL_ERROR) {
                         keepRunDir = true
                         log.error("Internal error while running: {}", o.internalReason)
@@ -145,7 +163,7 @@ class JudgePipeline(
                 } finally {
                     // The verdict is already published: the probe creates a CUDA context, and the contestant
                     // should not wait for it. The GPU stays taken until it is known to be usable.
-                    if (outcome == null || outcome.needsHealthCheck) {
+                    if (!probed && (outcome == null || outcome.needsHealthCheck)) {
                         gpus.checkAfterFailure(slot, "${outcome?.verdict ?: "exception"} of ${job.submissionId}")
                     }
                     gpus.pool.release(slot)

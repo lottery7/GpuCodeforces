@@ -50,12 +50,10 @@ object SourceChecks {
         text.replace("\\\n", " ").substringAfter(':').split(WHITESPACE).filter { it.isNotBlank() && it != "\\" }
 
     /** Opcodes of `cuobjdump -sass` output, e.g. FFMA, HMMA, LDG. */
-    fun sassOpcodes(cuobjdump: String): Set<String> = buildSet {
-        for (line in cuobjdump.lineSequence()) {
-            val m = SASS_LINE.find(line) ?: continue
-            add(m.groupValues[1])
-        }
-    }
+    fun sassOpcodes(cuobjdump: String): Set<String> = cuobjdump.lineSequence().mapNotNull(::sassOpcode).toSet()
+
+    /** The opcode on one line of `cuobjdump -sass` output, if the line is an instruction. */
+    fun sassOpcode(line: String): String? = SASS_LINE.find(line)?.groupValues?.get(1)
 
     fun checkSass(opcodes: Set<String>, policy: EffectivePolicy): List<String> =
         opcodes.filter { it in policy.forbiddenSass }.sorted().map { "device code uses forbidden instruction $it" }
@@ -71,7 +69,7 @@ object SourceChecks {
             val parts = line.trim().split(WHITESPACE)
             when {
                 parts.size == 2 -> undefined += parts[1]
-                parts.size == 3 && parts[1].length == 1 && parts[1][0].isUpperCase() && parts[1] != "U" -> defined += parts[2]
+                parts.size == 3 && parts[1].length == 1 && parts[1][0] in GLOBAL_DEFINITIONS -> defined += parts[2]
             }
         }
         return undefined to defined
@@ -82,6 +80,9 @@ object SourceChecks {
             defined.filter { s -> policy.forbiddenDefinedSymbols.any { it.matches(s) } }.sorted().map { "defines reserved symbol $it" }
 
     private val WHITESPACE = Regex("\\s+")
+
+    /** nm type letters of symbols other objects can see: upper case, plus `i` (ifunc) and `u` (unique global). */
+    private const val GLOBAL_DEFINITIONS = "ABCDGRSTVWiu"
     private val INCLUDE_ARG = Regex("""([<"])([^<>"]+)[>"]\s*""")
     private val ASM = Regex("""(?<![\w$])(asm|__asm__|__asm)(?![\w$])""")
     private val SASS_LINE = Regex("""/\*[0-9a-f]{4,}\*/\s+(?:@!?U?P[T0-9]+\s+)?([A-Z][A-Z0-9_]*)""")

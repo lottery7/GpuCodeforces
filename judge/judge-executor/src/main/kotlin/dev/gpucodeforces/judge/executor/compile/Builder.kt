@@ -8,10 +8,13 @@ import dev.gpucodeforces.judge.executor.sandbox.SandboxSpec
 import dev.gpucodeforces.judge.executor.util.FileTrees
 import dev.gpucodeforces.judge.executor.util.Hashing
 import dev.gpucodeforces.judge.executor.util.Proc
+import dev.gpucodeforces.judge.executor.util.ProcResult
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.FileTime
+import java.nio.file.attribute.PosixFilePermissions
 import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Semaphore
@@ -60,7 +63,7 @@ class Builder(
         if (sourceViolations.isNotEmpty()) return BuildOutcome.Violation(sourceViolations, compileLog = "")
 
         val harness = harnessObject(signature)
-        val obj = solutionObject(source, compile.arch ?: props.profile.arch, compile.flags ?: props.compile.flags)
+        val obj = solutionObject(source, compile.arch ?: props.profile.arch, compile.flags ?: props.compile.flags, signature.function)
         if (!obj.ok) return BuildOutcome.CompileError(obj.log, "Compilation failed")
 
         val violations = buildList {
@@ -72,16 +75,10 @@ class Builder(
         if (violations.isNotEmpty()) return BuildOutcome.Violation(violations, obj.log)
 
         val binary = runDir.resolve("solution.bin")
-        val link = Proc.run(
-            listOf(tc.nvcc, "-ccbin", tc.hostCompiler) + gpuGencode +
-                listOf("-o", binary.toString(), obj.dir.resolve("solution.o").toString(), harness.toString(), "-cudart", "static") +
-                HarnessGenerator.WRAPPED_SYMBOLS.flatMap { listOf("-Xlinker", "--wrap=$it") },
-            props.compile.timeLimit,
-            maxOutputBytes = props.compile.maxLogBytes,
-        )
+        val link = link(obj.dir.resolve("solution.o"), harness, binary)
         if (link.timedOut) throw BuildInfrastructureException("link timed out: ${link.describe()}")
         if (!link.ok) {
-            val text = sanitize(link.stderr + link.stdout, listOf(obj.dir, harness.parent, runDir))
+            val text = sanitize(link.stderr + link.stdout, emptyList()).replace("$OBJECT_MOUNT/", "").replace("$HARNESS_MOUNT/", "")
             val hint = if ("undefined reference" in text && signature.function in text) {
                 "Function ${signature.function} with the required signature is not defined"
             } else {
@@ -92,17 +89,52 @@ class Builder(
         return BuildOutcome.Ok(binary, obj.log, obj.cached)
     }
 
+    /**
+     * Links in the sandbox: the linker parses the contestant's object file, like the compiler parsed the source.
+     * The result is copied to [binary] by the judge, into a directory the solution cannot write to.
+     */
+    private fun link(solution: Path, harness: Path, binary: Path): ProcResult {
+        val tmp = Files.createTempDirectory(Files.createDirectories(props.paths.work), "link-")
+        try {
+            FileTrees.makeWritableByAll(tmp)
+            // harness directories are created private to the judge; the sandboxed linker has another uid
+            FileTrees.makeReadableByAll(harness.parent)
+            val spec = SandboxSpec(
+                command = emptyList(),
+                workDir = tmp,
+                readOnly = mapOf(solution.parent to OBJECT_MOUNT, harness.parent to HARNESS_MOUNT),
+                wallTimeLimit = props.compile.timeLimit.plusSeconds(5),
+                addressSpaceBytes = props.compile.memoryLimitMb shl 20,
+                maxFileBytes = MAX_OBJECT_BYTES,
+            )
+            val linked = tmp.resolve("solution.bin")
+            val command = listOf(tc.nvcc, "-ccbin", tc.hostCompiler) + gpuGencode +
+                listOf("-o", sandbox.inside(spec, linked), sandbox.inside(spec, solution), sandbox.inside(spec, harness), "-cudart", "static") +
+                HarnessGenerator.WRAPPED_SYMBOLS.flatMap { listOf("-Xlinker", "--wrap=$it") }
+            val res = sandbox.runToCompletion(spec.copy(command = command), props.compile.timeLimit, props.compile.maxLogBytes)
+            if (res.ok) {
+                if (!Files.isRegularFile(linked, LinkOption.NOFOLLOW_LINKS)) throw BuildInfrastructureException("the linker left no binary: ${res.describe()}")
+                Files.copy(linked, binary, LinkOption.NOFOLLOW_LINKS)
+                Files.setPosixFilePermissions(binary, PosixFilePermissions.fromString("rwxr-xr-x"))
+            }
+            return res
+        } finally {
+            FileTrees.delete(tmp)
+            Sandbox.deleteLog(tmp)
+        }
+    }
+
     /** The contestant's object file with what the checks need, as cached on disk. */
     private class CompiledObject(
         val dir: Path, val ok: Boolean, val log: String, val deps: String,
         val sassOpcodes: Set<String>, val nm: String, val cached: Boolean,
     )
 
-    private fun solutionObject(source: String, arch: String, flags: List<String>): CompiledObject {
-        val key = Hashing.sha256(source, toolchain.fingerprint, arch, flags.joinToString(" "), OBJECT_FORMAT)
+    private fun solutionObject(source: String, arch: String, flags: List<String>, function: String): CompiledObject {
+        val key = Hashing.sha256(source, toolchain.fingerprint, arch, flags.joinToString(" "), function, OBJECT_FORMAT)
         val dir = objectsDir.resolve(key.take(2)).resolve(key)
         return lockFor(key).withLock {
-            load(dir, cached = true) ?: compileFresh(source, arch, flags, dir)
+            load(dir, cached = true) ?: compileFresh(source, arch, flags, function, dir)
         }
     }
 
@@ -121,7 +153,9 @@ class Builder(
         )
     }
 
-    private fun compileFresh(source: String, arch: String, flags: List<String>, dir: Path): CompiledObject {
+    private fun compileFresh(source: String, arch: String, flags: List<String>, function: String, dir: Path): CompiledObject {
+        // Itanium mangling of a function at namespace scope: _Z, the length of its name, the name, then the parameters
+        val entryPointPrefix = "_Z${function.length}$function"
         val tmp = Files.createDirectories(objectsDir.resolve("tmp")).let { Files.createTempDirectory(it, "c-") }
         try {
             FileTrees.makeWritableByAll(tmp)
@@ -164,13 +198,21 @@ class Builder(
             log.info("nvcc {} {} finished in {}ms: {}", arch, flags, ms, how)
             tmp.resolve("compile.log").writeText(logText)
             if (ok) {
-                val obj = tmp.resolve("solution.o").toString()
-                val sass = Proc.run(listOf(tc.cuobjdump, "-sass", obj), Duration.ofSeconds(60), maxOutputBytes = 256 shl 20)
+                // cuobjdump, nm and objcopy parse an object built from untrusted code: same sandbox as the compiler.
+                val obj = inside("solution.o")
+                // The disassembly of a large object runs to hundreds of MB and several compile at once: only the
+                // set of opcodes is kept, line by line.
+                val opcodes = sortedSetOf<String>()
+                val sassCommand = listOf(tc.cuobjdump, "-sass", obj)
+                val sass = Proc.awaitLines(sandbox.start(spec.copy(command = sassCommand)), sassCommand, Duration.ofSeconds(60)) { line ->
+                    SourceChecks.sassOpcode(line)?.let(opcodes::add)
+                }
                 if (!sass.ok) throw BuildInfrastructureException("cuobjdump failed: ${sass.describe()}")
-                tmp.resolve("sass.txt").writeText(SourceChecks.sassOpcodes(sass.stdout).sorted().joinToString("\n"))
-                val nm = Proc.run(listOf(tc.nm, obj), Duration.ofSeconds(30), maxOutputBytes = 16 shl 20)
+                tmp.resolve("sass.txt").writeText(opcodes.joinToString("\n"))
+                val nm = sandbox.runToCompletion(spec.copy(command = listOf(tc.nm, obj)), Duration.ofSeconds(30), 16 shl 20)
                 if (!nm.ok) throw BuildInfrastructureException("nm failed: ${nm.describe()}")
                 tmp.resolve("nm.txt").writeText(nm.stdout)
+                hideSymbols(spec, obj, nm.stdout, entryPointPrefix)
                 if (!tmp.resolve("solution.d").exists()) tmp.resolve("solution.d").writeText(NO_DEPENDENCIES)
             }
             // Timeouts are not cached: they may be caused by machine load.
@@ -185,6 +227,21 @@ class Builder(
             FileTrees.delete(tmp)
             Sandbox.deleteLog(tmp)
         }
+    }
+
+    /**
+     * Makes every symbol of the object local except the entry point. libc and libstdc++ are linked dynamically, so
+     * a solution that defined `clock_gettime`, `write` or `std::chrono::steady_clock::now` would replace them for
+     * the harness too, and with them the clock and the status channel. (nm.txt was taken before: the symbol checks
+     * see the object as the contestant wrote it.)
+     */
+    private fun hideSymbols(spec: SandboxSpec, obj: String, nm: String, entryPointPrefix: String) {
+        val entryPoints = SourceChecks.parseNm(nm).second.filter { it.startsWith(entryPointPrefix) }
+        // without an entry point the link fails with "undefined reference", which is reported to the contestant
+        if (entryPoints.isEmpty()) return
+        val command = listOf(tc.objcopy) + entryPoints.map { "--keep-global-symbol=$it" } + obj
+        val res = sandbox.runToCompletion(spec.copy(command = command), Duration.ofSeconds(30), props.compile.maxLogBytes)
+        if (!res.ok) throw BuildInfrastructureException("objcopy failed: ${res.describe()}")
     }
 
     /** The harness object for a signature: trusted code, compiled outside the sandbox and cached. */
@@ -219,7 +276,9 @@ class Builder(
 
     companion object {
         /** Bump when the cached artifact layout or checks change. */
-        private const val OBJECT_FORMAT = "v1"
+        private const val OBJECT_FORMAT = "v2"
+        private const val OBJECT_MOUNT = "/obj"
+        private const val HARNESS_MOUNT = "/harness"
 
         /** Code for exactly this architecture: no PTX is embedded, so nothing is JIT-compiled at run time. */
         private fun gencode(arch: String) = listOf("-gencode", "arch=${arch.replace("sm_", "compute_")},code=$arch")
