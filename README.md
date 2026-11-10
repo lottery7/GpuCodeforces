@@ -1,15 +1,22 @@
 # GpuCodeforces
 
-Multi-module Kotlin/Gradle project. `backend` is a Spring Boot application;
-add future modules with `include(":module-name")` in `settings.gradle.kts`.
-`judge-api`, `judge-gateway` and `judge-executor` (in `judge/`) are the testing system,
-see [judge/README.md](judge/README.md); its services are behind the `judge` and `gpu` Compose profiles.
+Multi-module Kotlin/Gradle project with a React frontend:
+
+| Part | Description |
+|---|---|
+| `backend` | Spring Boot application |
+| `judge-api`, `judge-gateway`, `judge-executor` (in `judge/`) | Testing system, see [Testing system](#testing-system) |
+| `frontend` | React application (npm, not part of the Gradle build), see [frontend/README.md](frontend/README.md) |
+
+Add future Gradle modules with `include(":module-name")` in `settings.gradle.kts`.
 
 ## Requirements
 
 - JDK 26 (also select it as the Gradle JVM in IntelliJ IDEA 2026.2).
 - Docker with a running daemon for PostgreSQL and integration tests.
 - Gradle is provided by the wrapper; no global installation is needed.
+- `python3` for the `judge-executor` tests.
+- For the GPU executor only: Linux or WSL2, NVIDIA driver 570+ and `nvidia-container-toolkit`.
 
 Versions: Kotlin 2.4.21, Gradle 9.7.0, Spring Boot 4.1.2.
 Spring Boot's BOM manages the backend libraries, including Hibernate,
@@ -31,13 +38,55 @@ Hibernate validates the schema rather than modifying it.
 ```sh
 ./gradlew test
 ./gradlew :backend:integrationTest # Starts and removes its own PostgreSQL container
-./gradlew build                   # Builds the application and runs all tests
+./gradlew build                   # Builds backend and judge services and runs all tests
 docker compose down              # Stops the development database, retaining data
 ```
 
 Integration tests use a separate disposable database with random ports, independent
 of Docker Compose. Docker must be available; these tests fail rather than silently
 skip when it is unavailable. The executable jar is under `backend/build/libs/`.
+
+## Testing system
+
+The judge accepts `.cu` submissions, compiles them, runs them on a GPU in an nsjail
+sandbox and reports verdicts asynchronously through RabbitMQ. Architecture, problem
+format, sandbox, verdicts and the backend contract are described (in Russian) in
+[judge/README.md](judge/README.md) and [judge/docs/problem-format.md](judge/docs/problem-format.md).
+
+Its services are behind Compose profiles, so plain `docker compose up -d --wait`
+still starts only PostgreSQL:
+
+```sh
+docker compose --profile judge up -d --wait          # RabbitMQ + judge gateway
+docker compose --profile mock up -d --wait --build   # + mock executor, no GPU needed
+docker compose --profile gpu up -d --wait --build    # + real executor on an NVIDIA GPU
+```
+
+| Service | Address |
+|---|---|
+| Gateway API, Swagger UI | <http://localhost:8090>, `/swagger-ui.html` |
+| RabbitMQ management UI | <http://localhost:15672> |
+| Executor actuator (`gpu` profile) | <http://localhost:8081/actuator/health> |
+
+The mock executor answers with the verdict requested in a source comment, for example
+`// judge-mock: verdict=WRONG_ANSWER test=2`, and `ACCEPTED` otherwise. Do not run it
+next to a real executor of the same GPU profile. Executors on other machines use
+[judge/deploy/compose.executor.yaml](judge/deploy/compose.executor.yaml).
+
+Send a submission from the console (`--watch` needs `pip install pika`):
+
+```sh
+python3 judge/tools/judge_cli.py submit judge/problems/examples/vector_add \
+  judge/problems/examples/vector_add/solutions/accepted.cu --watch
+```
+
+Judge tests need neither a GPU nor Docker. They are part of `./gradlew test`
+and run in CI ([judge.yml](.github/workflows/judge.yml)):
+
+```sh
+./gradlew :judge-api:test :judge-gateway:test :judge-executor:test
+(cd judge/pytools && python3 -m unittest discover -s tests -v)
+```
 
 ## Frontend API
 
