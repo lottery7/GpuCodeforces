@@ -11,8 +11,18 @@ spring:
       ddl-auto: validate
   flyway:
     enabled: true
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
 
 platform:
+  judge:
+    gateway-url: ${JUDGE_GATEWAY_URL:http://localhost:8090}
+  admin:
+    # Comma-separated handles of administrators (Groovy console, problem import).
+    handles: ${ADMIN_HANDLES:}
   gpu:
     profile: ${GPU_PROFILE:rtx3060}
     name: ${GPU_NAME:NVIDIA GeForce RTX 3060}

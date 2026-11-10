@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Администрирование</title>
+  <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<main>
+  <h1>Администрирование</h1>
+  <p id="who">Проверяем вход…</p>
+
+  <section>
+    <h2>Банк задач</h2>
+    <button id="sync" type="button">Импортировать задачи сейчас</button>
+    <pre id="sync-result"></pre>
+  </section>
+
+  <section>
+    <h2>Groovy-консоль</h2>
+    <p>В скрипте доступны <code>ctx</code> (Spring ApplicationContext) и <code>out</code>. Это полный доступ к процессу.</p>
+    <textarea id="script" spellcheck="false" rows="12">ctx.getBean('problemSyncService').sync()</textarea>
+    <button id="run" type="button">Выполнить</button>
+    <h3>Результат</h3>
+    <pre id="result"></pre>
+    <h3>Вывод</h3>
+    <pre id="output"></pre>
+  </section>
+</main>
+<script src="admin.js"></script>
+</body>
+</html>

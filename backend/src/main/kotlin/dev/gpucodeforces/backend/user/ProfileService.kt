@@ -4,6 +4,7 @@ import dev.gpucodeforces.backend.api.model.GetUserProfile200Response
 import dev.gpucodeforces.backend.api.model.GetUserProfile200ResponseContestsInner
 import dev.gpucodeforces.backend.contest.ContestRepository
 import dev.gpucodeforces.backend.rating.RatingHistoryRepository
+import dev.gpucodeforces.backend.submission.SubmissionStats
 import org.springframework.stereotype.Service
 import java.time.Instant
 
@@ -12,8 +13,8 @@ class ProfileService(
     private val userService: UserService,
     private val ratingHistoryRepository: RatingHistoryRepository,
     private val contestRepository: ContestRepository,
+    private val submissionStats: SubmissionStats,
 ) {
-    // solvedCount needs the submissions module; it reports 0 until that integration lands.
     fun buildProfile(id: String): GetUserProfile200Response {
         val user = userService.getById(id)
         val now = Instant.now()
@@ -30,6 +31,6 @@ class ProfileService(
                     history.ratingAfter,
                 )
             }
-        return GetUserProfile200Response(user.toApiModel(), 0, contests)
+        return GetUserProfile200Response(user.toApiModel(), submissionStats.solvedProblemCount(user.id), contests)
     }
 }

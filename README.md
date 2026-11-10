@@ -43,6 +43,12 @@ without it the bank is empty. The package format is described (in Russian) in
 PROBLEMS_DIRECTORY=../judge/problems/examples ./gradlew :backend:bootRun
 ```
 
+Submissions go to the judge gateway (`JUDGE_GATEWAY_URL`, default <http://localhost:8090>) and
+verdicts come back through RabbitMQ (`RABBITMQ_HOST`), so start the judge profile as well, see
+[Testing system](#testing-system). How submissions are queued and judged, how results are compared,
+and the administrator Groovy console (`ADMIN_HANDLES`, page `/admin`) are described (in Russian) in
+[docs/backend/submissions.md](docs/backend/submissions.md).
+
 ```sh
 ./gradlew test
 ./gradlew :backend:integrationTest # Starts and removes its own PostgreSQL container

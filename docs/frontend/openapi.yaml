@@ -186,6 +186,7 @@ paths:
       - {$ref: '#/components/parameters/Id'}
     post:
       operationId: checkExample
+      security: [{session: []}]
       summary: Проверить решение на примере из условия
       description: Ждет результата; не создает посылку и не меняет рекорды.
       parameters:
@@ -411,6 +412,60 @@ paths:
                       type: object
                       description: ID задачи -> лучшее время GPU; нерешенных задач в объекте нет.
                       additionalProperties: {type: number}
+        default: {$ref: '#/components/responses/Error'}
+  /admin/console:
+    post:
+      operationId: runAdminScript
+      summary: Выполнить Groovy-скрипт в работающем приложении
+      description: |
+        Только администраторам (ники из ADMIN_HANDLES). Скрипт получает Spring ApplicationContext в ctx
+        и PrintWriter в out; это полный доступ к процессу. Один скрипт одновременно, таймаут 30 секунд.
+      security: [{session: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [script]
+              properties:
+                script: {type: string, minLength: 1, maxLength: 65536}
+      responses:
+        '200':
+          description: Скрипт завершился; error содержит исключение скрипта или таймаут
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [output, result, error]
+                properties:
+                  output: {type: string, description: Вывод println и out.}
+                  result: {type: string, nullable: true, description: toString() возвращённого значения.}
+                  error: {type: string, nullable: true}
+        default: {$ref: '#/components/responses/Error'}
+  /admin/problems/sync:
+    post:
+      operationId: syncProblems
+      summary: Импортировать репозиторий задач сейчас
+      description: Только администраторам. Импорт также выполняется при старте и периодически.
+      security: [{session: []}]
+      responses:
+        '200':
+          description: Итог импорта
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [revision, imported, unchanged, removed, failed]
+                properties:
+                  revision: {type: string, nullable: true, description: 'Commit репозитория задач; null для локального каталога.'}
+                  imported: {type: integer, description: Новых версий.}
+                  unchanged: {type: integer}
+                  removed: {type: integer, description: 'Задач, ушедших из банка.'}
+                  failed:
+                    type: object
+                    description: Каталог задачи -> ошибка пакета.
+                    additionalProperties: {type: string}
         default: {$ref: '#/components/responses/Error'}
 components:
   securitySchemes:

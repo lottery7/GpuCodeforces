@@ -9,7 +9,13 @@ import dev.gpucodeforces.backend.api.model.ListProblems200Response
 import dev.gpucodeforces.backend.auth.CurrentUser
 import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.common.GpuProperties
-import dev.gpucodeforces.backend.common.ServiceUnavailableException
+import dev.gpucodeforces.backend.submission.ExampleChecks
+import dev.gpucodeforces.backend.submission.ProblemResult
+import dev.gpucodeforces.backend.submission.ResultScope
+import dev.gpucodeforces.backend.submission.SubmissionStats
+import dev.gpucodeforces.backend.user.UserRepository
+import dev.gpucodeforces.backend.user.UserService
+import dev.gpucodeforces.backend.user.toApiModel
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.RestController
 import java.math.BigDecimal
@@ -19,6 +25,10 @@ import dev.gpucodeforces.backend.api.model.Problem as ProblemApiModel
 class ProblemsController(
     private val problemService: ProblemService,
     private val problemCatalog: ProblemCatalog,
+    private val submissionStats: SubmissionStats,
+    private val exampleChecks: ExampleChecks,
+    private val userService: UserService,
+    private val userRepository: UserRepository,
     private val gpuProperties: GpuProperties,
 ) : ProblemsApi {
     override fun listProblems(
@@ -34,11 +44,14 @@ class ProblemsController(
     ): ResponseEntity<ListProblems200Response> {
         if (sort !in SORTS) throw BadRequestException("Неизвестная сортировка")
         val viewer = CurrentUser.resolve()
+        val subject = userId?.let { userService.getById(it) } ?: viewer
         val problemContext = problemService.context(context, viewer)
         val pool = problemService.problems(problemContext, viewer)
         val tags = pool.flatMap { it.version.tags }.distinct().sorted()
-        val items = problemService.filter(pool, q, difficulty, tag)
-            .map { it.version.toApiModel() }
+        val filtered = problemService.filter(pool, q, difficulty, tag)
+        val results = submissionStats.problemResults(scope(problemContext, filtered), subject?.id)
+        val items = filtered
+            .map { it.version.toApiModel(results.getValue(it.version.problemId)) }
             .filter { solved == null || it.solved == solved }
             .let { if (problemContext == ProblemContext.Practice) sorted(it, sort) else it }
         return ResponseEntity.ok(ListProblems200Response(items.drop(offset).take(limit), items.size, tags))
@@ -46,11 +59,12 @@ class ProblemsController(
 
     override fun getProblem(id: String, context: String): ResponseEntity<GetProblem200Response> {
         val viewer = CurrentUser.resolve()
-        val problem = problemService.problem(id, problemService.context(context, viewer), viewer)
+        val problemContext = problemService.context(context, viewer)
+        val problem = problemService.problem(id, problemContext, viewer)
         val version = problem.version
         val spec = problemCatalog.spec(version)
-        val summary = version.toApiModel()
-        val gpuName = (problem.context as? ProblemContext.InContest)?.contest?.gpu ?: gpuProperties.name
+        val summary = version.toApiModel(submissionStats.problemResults(scope(problemContext, listOf(problem)), viewer?.id).getValue(id))
+        val gpuName = (problemContext as? ProblemContext.InContest)?.contest?.gpu ?: gpuProperties.name
         return ResponseEntity.ok(
             GetProblem200Response(
                 summary.id, summary.code, summary.title, GetProblem200Response.DifficultyEnum.fromValue(summary.difficulty.value), summary.tags,
@@ -65,14 +79,32 @@ class ProblemsController(
         )
     }
 
-    override fun checkExample(id: String, checkExampleRequest: CheckExampleRequest, context: String): ResponseEntity<CheckExample200Response> =
-        throw ServiceUnavailableException("Проверка примера пока недоступна")
+    // SecurityConfig requires a session: the example runs on the judge's GPU.
+    override fun checkExample(id: String, checkExampleRequest: CheckExampleRequest, context: String): ResponseEntity<CheckExample200Response> {
+        val author = CurrentUser.resolve()!!
+        val problem = problemService.problem(id, problemService.context(context, author), author)
+        val outcome = exampleChecks.check(problem, checkExampleRequest.code, author)
+        return ResponseEntity.ok(CheckExample200Response(outcome.passed, outcome.diagnostic))
+    }
 
     override fun listProblemLeaders(id: String, context: String): ResponseEntity<List<ListProblemLeaders200ResponseInner>> {
         val viewer = CurrentUser.resolve()
-        problemService.problem(id, problemService.context(context, viewer), viewer)
-        return ResponseEntity.ok(emptyList())
+        val problemContext = problemService.context(context, viewer)
+        val problem = problemService.problem(id, problemContext, viewer)
+        val leaders = submissionStats.leaders(id, scope(problemContext, listOf(problem)), LEADERS_LIMIT)
+        val users = userRepository.findAllById(leaders.map { it.submission.userId }).associateBy { it.id }
+        return ResponseEntity.ok(
+            leaders.map {
+                ListProblemLeaders200ResponseInner(it.rank, users.getValue(it.submission.userId).toApiModel(), it.submission.timeMs, it.submission.id.toString())
+            },
+        )
     }
+
+    private fun scope(context: ProblemContext, problems: List<ContextProblem>) = ResultScope(
+        (context as? ProblemContext.InContest)?.contest?.id,
+        problems.associate { it.version.problemId to it.version.judgeHash },
+        gpuProperties.profile,
+    )
 
     private fun sorted(items: List<ProblemApiModel>, sort: String): List<ProblemApiModel> {
         val byCode = compareBy<ProblemApiModel> { it.code }
@@ -85,20 +117,21 @@ class ProblemsController(
 
     companion object {
         private val SORTS = setOf("code", "difficulty", "bestTime")
+        private const val LEADERS_LIMIT = 20
     }
 }
 
-fun ProblemVersion.toApiModel(): ProblemApiModel = ProblemApiModel(
+fun ProblemVersion.toApiModel(result: ProblemResult): ProblemApiModel = ProblemApiModel(
     problemId,
     code,
     title,
     ProblemApiModel.DifficultyEnum.fromValue(difficulty),
     tags,
-    false,
-    0,
-    null,
-    null,
-    null,
-    null,
-    null,
+    result.solved,
+    result.solvedCount,
+    result.last?.id?.toString(),
+    result.last?.status?.value,
+    result.best?.id?.toString(),
+    result.best?.timeMs,
+    result.record?.timeMs,
 )
