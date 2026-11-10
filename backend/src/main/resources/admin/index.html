@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GPU Forces — администрирование</title>
+  <link rel="stylesheet" href="/admin/style.css">
+  <script src="/admin/app.js" defer></script>
+</head>
+<body>
+<main>
+  <header>
+    <div><a href="/problems">GPU Forces</a><h1>Администрирование</h1></div>
+    <button id="logout" hidden>Выйти</button>
+  </header>
+  <p id="status" role="status" aria-live="polite">Проверяем доступ…</p>
+  <form id="login" hidden>
+    <h2>Вход</h2>
+    <label>Ник или почта<input name="identifier" autocomplete="username" required></label>
+    <label>Пароль<input name="password" type="password" autocomplete="current-password" required></label>
+    <button>Войти</button>
+  </form>
+  <form id="bootstrap" hidden>
+    <h2>Первый администратор</h2>
+    <p>Введите одноразовый секрет первоначальной настройки для текущего аккаунта.</p>
+    <label>Секрет<input name="token" type="password" autocomplete="off" required></label>
+    <button>Назначить администратором</button>
+  </form>
+  <div id="workspace" hidden>
+    <nav aria-label="Разделы администрирования">
+      <a href="#console">Groovy-консоль</a><a href="#settings">Настройки</a>
+    </nav>
+    <section id="console">
+      <h2>Groovy-консоль</h2>
+      <p><code>ctx</code> — контекст Spring, <code>out</code> — вывод консоли.</p>
+      <form id="console-form">
+        <label>Скрипт<textarea name="script" rows="12" spellcheck="false" required
+          >ctx.getBean('runtimeSettings').current()</textarea></label>
+        <button>Выполнить</button>
+      </form>
+      <pre id="console-output" aria-live="polite"></pre>
+    </section>
+    <section id="settings">
+      <h2>Настройки без перезапуска</h2>
+      <p>Изменения сохраняются в БД. Другие экземпляры приложения увидят их в течение секунды.</p>
+      <form id="settings-form">
+        <div id="fields"></div>
+        <button>Сохранить</button><button type="button" id="reload">Загрузить актуальные</button>
+      </form>
+      <p id="settings-status" role="status" aria-live="polite"></p>
+    </section>
+  </div>
+</main>
+</body>
+</html>

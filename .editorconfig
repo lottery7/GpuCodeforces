@@ -1,0 +1,11 @@
+root = true
+
+[{*.kt,*.kts}]
+indent_style = space
+indent_size = 4
+max_line_length = 120
+
+# Сохранять переносы по внешним условиям, выбранные при написании кода.
+ij_kotlin_keep_line_breaks = true
+ij_kotlin_align_multiline_binary_operation = false
+ij_kotlin_continuation_indent_in_if_conditions = false

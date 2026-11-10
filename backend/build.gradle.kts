@@ -120,6 +120,8 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-flyway")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
+    implementation("org.jetbrains:annotations:17.0.0")
+    implementation("org.apache.groovy:groovy")
     implementation("tools.jackson.module:jackson-module-kotlin")
     runtimeOnly("org.postgresql:postgresql")
     runtimeOnly("org.flywaydb:flyway-database-postgresql")
@@ -146,6 +148,8 @@ val integrationTest = tasks.register<Test>("integrationTest") {
         includeTags("integration")
     }
     shouldRunAfter(tasks.test)
+    systemProperty("queryPlan.reportDir", layout.buildDirectory.dir("reports/query-plans").get().asFile)
+    systemProperty("junit.jupiter.execution.parallel.enabled", "false")
 }
 
 tasks.check {

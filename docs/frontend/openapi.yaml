@@ -186,6 +186,7 @@ paths:
       - {$ref: '#/components/parameters/Id'}
     post:
       operationId: checkExample
+      security: [{session: []}]
       summary: Проверить решение на примере из условия
       description: Ждет результата; не создает посылку и не меняет рекорды.
       parameters:
@@ -450,6 +451,8 @@ components:
       properties:
         id: {type: string}
         code: {type: string, description: Номер задачи в банке.}
+        revision: {type: string, description: SHA commit исходного репозитория; в контесте версия зафиксирована.}
+        testCount: {type: integer, minimum: 1, description: Количество тестов полной проверки.}
         title: {type: string}
         difficulty: {type: string, enum: [easy, medium, hard]}
         tags: {type: array, items: {type: string}}
@@ -478,6 +481,18 @@ components:
         totalTests: {type: integer, nullable: true, description: В детали посылки; null до подготовки тестов.}
         previousBestTimeMs: {type: number, nullable: true, description: В детали посылки; личный рекорд в том же контексте и конфигурации до этой отправки.}
         environmentMarkdown: {type: string, description: В детали посылки; сохраненное оборудование и методика замера.}
+        revision: {type: string, description: SHA commit версии задачи для этой посылки.}
+        testResults:
+          type: array
+          description: Полученные результаты отдельных тестов в детали посылки; диагностика доступна только автору.
+          items:
+            type: object
+            required: [testNumber, verdict, timeMs]
+            properties:
+              testNumber: {type: integer, minimum: 1}
+              verdict: {type: string, enum: [accepted, compile_error, wrong_answer, runtime_error, time_limit, memory_limit, system_error, measurement_error]}
+              timeMs: {type: number, nullable: true}
+              diagnostic: {type: string}
         code: {type: string, description: 'Только автору в GET /submissions/{id}.'}
         diagnostic: {type: string, description: 'Только автору в GET /submissions/{id}.'}
     Contest:

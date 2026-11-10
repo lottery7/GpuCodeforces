@@ -11,6 +11,27 @@ spring:
       ddl-auto: validate
   flyway:
     enabled: true
+  task:
+    scheduling:
+      pool:
+        size: 4
+
+server:
+  tomcat:
+    max-http-form-post-size: 256KB
+    max-swallow-size: 256KB
+    threads:
+      max: 100
+    connection-timeout: 5s
+
+platform:
+  public-origin: ${PUBLIC_ORIGIN:http://localhost:5173}
+  secure-cookies: ${SECURE_COOKIES:true}
+  admin:
+    bootstrap-token: ${ADMIN_BOOTSTRAP_TOKEN:}
+  github:
+    app-id: ${GITHUB_APP_ID:}
+    private-key-file: ${GITHUB_APP_PRIVATE_KEY_FILE:}
 
 management:
   endpoints:

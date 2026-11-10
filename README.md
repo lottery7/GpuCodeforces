@@ -1,7 +1,29 @@
 # GpuCodeforces
 
-Multi-module Kotlin/Gradle project. `backend` is a Spring Boot application;
-add future modules with `include(":module-name")` in `settings.gradle.kts`.
+Платформа соревнований по CUDA: React-клиент и backend на Kotlin/Spring Boot,
+с хранением данных в PostgreSQL через JDBC и миграциями Flyway.
+
+Реализованы все 20 операций клиентского API: аккаунты и сессии, задачи,
+посылки, соревнования, регистрация, таблицы результатов и рейтинг.
+Задачи импортируются из `master` репозиториев, доступных GitHub App.
+Корневой `index.json` перечисляет несколько задач и пути к их манифестам.
+Сохраняются неизменяемые версии условий, генераторов и эталонов.
+Соревнования и посылки ссылаются на конкретные версии задач.
+
+Очередь посылок и буфер результатов хранятся в БД. Backend назначает задания
+внешним тестировщикам, ограничивает число одновременных посылок, обрабатывает
+результаты отдельных тестов в фоне, переназначает работу после таймаута
+и подтверждает живость тестировщиков по ответам о посылках и обратному pong.
+Сами тестировщики в проект не входят. Демонстрационный сервер frontend
+остаётся отдельным инструментом и прикладным backend не используется.
+
+На `/admin` доступны Groovy-консоль с контекстом приложения `ctx` и настройки
+без перезапуска. Админские права хранятся в БД; первого администратора назначают
+одноразовым секретом `ADMIN_BOOTSTRAP_TOKEN`. Порядок настройки описан в документации backend.
+
+**Настройка GitHub App, формат репозитория задачи, ограничения ресурсов,
+настройка тестировщиков и текущие ограничения:** [backend](docs/backend/README.md).
+**Сетевой протокол тестировщиков:** [judge-protocol.md](docs/backend/judge-protocol.md).
 
 ## Requirements
 
@@ -17,7 +39,7 @@ Flyway, Jackson, PostgreSQL JDBC, JUnit, and Testcontainers.
 
 ```sh
 docker compose up -d --wait
-./gradlew :backend:bootRun
+SECURE_COOKIES=false ./gradlew :backend:bootRun
 ```
 
 The application listens on port 8080. Health: <http://localhost:8080/actuator/health>.
@@ -25,6 +47,10 @@ Override `DATABASE_URL`, `DATABASE_USER`, and `DATABASE_PASSWORD` to use another
 PostgreSQL instance. The default credentials are for local development.
 Flyway manages migrations in `backend/src/main/resources/db/migration`;
 Hibernate validates the schema rather than modifying it.
+
+PostgreSQL integration tests automatically check application query plans for unexpected
+full scans. Intentional scans have explicit policies and justifications:
+[query plan checks](docs/backend/query-plans.md).
 
 ```sh
 ./gradlew test
@@ -50,8 +76,8 @@ checks. Password recovery, private problems and GPU selection remain outside the
 ```
 
 Java Spring interfaces and models are generated in `backend/build/generated/openapi`
-and included in compilation automatically. Implement the interfaces in backend
-controllers. Generated sources are not committed.
+and included in compilation automatically. Application controllers implement the
+HTTP contract independently of generated Java interfaces. Generated sources are not committed.
 
 CI regenerates Java and compares all file paths and SHA256 checksums with
 [openapi-java.sha256](docs/frontend/openapi-java.sha256):
