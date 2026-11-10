@@ -155,6 +155,8 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
 .notice { padding: 9px 12px; border-left: 2px solid #5b5e64; color: var(--muted); font-size: 13px; }
 .notice p + p { margin-top: 6px; }
 .notice.error { border-left-color: var(--error); }
+.error-copy { max-height: min(24dvh, 160px); overflow: auto; white-space: pre-wrap; overscroll-behavior: contain; }
+.feedback-anchor { scroll-margin-block: 12px; }
 .notice.success { border-left-color: var(--success); }
 .error { color: var(--error); }
 .success { color: var(--success); }
@@ -193,6 +195,9 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
 .contest-builder-actions { position: sticky; z-index: 25; bottom: 0; display: flex; align-items: center; justify-content: flex-end; gap: 12px; min-height: 54px; margin: 0; padding: 10px 12px; border-top: 1px solid var(--border); background: var(--chrome); }
 .contest-builder-actions #form-message { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 13px; }
 .contest-builder-actions .btn { flex-shrink: 0; }
+.contest-builder-actions .form-feedback { flex: 1; min-width: 0; max-height: min(28dvh, 180px); overflow: auto; }
+.data-table .contest-registration { width: 240px; white-space: normal; }
+.contest-registration .notice { margin-top: 6px; max-width: 320px; }
 .contest-authors { min-width: 0; margin: 0; padding: 0; border: 0; }
 .contest-authors legend { padding: 0; color: var(--text-strong); font-size: 13px; }
 .contest-selected-authors { display: flex; flex-wrap: wrap; gap: 6px; margin: 3px 0; }
@@ -235,7 +240,7 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
   .contest-task-picker .problem-choices > legend, .contest-picker-summary, .contest-picker-filters { flex-shrink: 0; }
   .contest-problem-list { flex: 1; min-height: 0; max-height: none; padding-right: 4px; scrollbar-gutter: stable; }
   .contest-builder .contest-authors { position: relative; }
-  .contest-builder .contest-author-results { position: absolute; z-index: 20; top: 100%; left: 0; width: 100%; max-height: 180px; margin-top: 4px; padding: 4px 10px; overflow: auto; border: 1px solid var(--border); border-radius: 3px; background: var(--chrome); box-shadow: 0 4px 12px #0003; }
+  .contest-builder .contest-author-results { width: 100%; max-height: 150px; margin-top: 4px; padding: 4px 10px; overflow: auto; border: 1px solid var(--border); border-radius: 3px; background: var(--chrome); }
   .contest-builder-actions { position: static; grid-column: 1 / -1; }
 }
 
@@ -284,6 +289,19 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
 .editor-status .cursor-position { font-family: var(--mono); font-size: 12px; }
 .save-state { margin-top: 7px; color: var(--muted); font-size: 12px; }
 .editor-section { min-width: 0; scroll-margin-top: 12px; }
+.code-editor { overflow: hidden; }
+.code-editor-fit { height: clamp(180px, 42dvh, 440px); min-height: 0; }
+.code-editor-fit > div { height: 100%; }
+.editor-section .editor-panel { display: flex; flex-direction: column; overflow: visible; }
+.editor-title { flex-shrink: 0; border-radius: 4px 4px 0 0; }
+.editor-status { flex-shrink: 0; }
+.editor-footer { position: sticky; z-index: 20; bottom: 0; min-height: 0; background: var(--chrome); border-radius: 0 0 4px 4px; }
+.editor-actions { flex-shrink: 0; border-radius: 0 0 4px 4px; }
+.editor-feedback { display: flex; flex-direction: column; gap: 6px; max-height: min(32dvh, 230px); padding: 8px 12px; border-top: 1px solid var(--border); overflow: auto; overscroll-behavior: contain; }
+.editor-feedback .notice { padding: 4px 8px; }
+.editor-feedback .run-console { margin: 0; border: 0; background: transparent; }
+.editor-feedback .tool-window-body { padding: 0; font: 13px/1.6 var(--font); }
+.editor-feedback .diagnostic { margin: 6px 0 0; max-height: min(20dvh, 140px); }
 .cm-editor, .cm-scroller { max-width: 100%; }
 .cm-scroller { font-variant-ligatures: none; line-height: 1.75; }
 .cm-content { tab-size: 4; }
@@ -309,7 +327,13 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
 .submission-steps { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 16px 0; color: var(--muted); font-size: 13px; }
 .submission-steps .current { color: var(--accent); font-weight: 600; }
 .submission-steps .done { color: var(--text-strong); }
-.diagnostic { margin: 12px 0; padding: 12px; border: 0; border-radius: 2px; background: #25272c; color: var(--error); font: 13px/1.65 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.diagnostic { max-height: min(30dvh, 220px); margin: 12px 0; padding: 12px; border: 0; border-radius: 2px; background: #25272c; color: var(--error); font: 13px/1.65 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; overscroll-behavior: contain; }
+.submission-verdict-bar { position: sticky; z-index: 15; top: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px; padding: 10px 0; background: var(--bg); border-bottom: 1px solid var(--border); }
+.submission-verdict-bar h2 { margin: 0; }
+.submission-verdict-bar .verdict { font-size: 16px; }
+.submission-verdict-bar .metrics { margin: 0; }
+.submission-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 12px 0; }
+.submission-actions .notice { flex: 1 1 240px; min-width: 0; }
 .disclosure { padding: 13px 0; border-top: 1px solid var(--border); }
 .disclosure > summary { font-size: 13px; list-style-position: inside; }
 .disclosure > summary .small { margin-left: 8px; color: var(--muted); }
@@ -328,6 +352,8 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
 #content:focus { outline: none; }
 .loading { padding: 24px 0; color: var(--muted); }
 .session-error { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; }
+.global-feedback { position: sticky; z-index: 30; top: 0; background: var(--bg); }
+.global-feedback:empty { display: none; }
 .pagination button { display: inline-flex; align-items: center; justify-content: center; min-width: 32px; min-height: 32px; padding: 4px 9px; border: 1px solid var(--border); border-radius: 3px; background: transparent; color: var(--text); }
 .pagination button:hover { background: var(--chrome); }
 .pagination button.active { border-color: var(--accent-border); background: var(--selection); color: var(--text-strong); }
@@ -344,6 +370,22 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
 .markdown blockquote { margin-left: 0; padding-left: 12px; border-left: 2px solid var(--border); color: var(--muted); }
 .markdown img { max-width: 100%; height: auto; }
 .editor-title .inline { padding: 3px 0; }
+
+@media (min-width: 951px) and (min-height: 600px) {
+  #root:has(.problem-workspace) { height: 100dvh; min-height: 0; overflow: hidden; }
+  #root:has(.problem-workspace) .site-header { flex-shrink: 0; }
+  .container:has(.problem-workspace) { display: flex; flex-direction: column; min-height: 0; overflow: hidden; padding-bottom: 16px; }
+  .container:has(.problem-workspace) > :not(.problem-workspace) { flex-shrink: 0; }
+  .problem-workspace { flex: 1; grid-template-rows: minmax(0, 1fr); min-height: 0; align-items: stretch; }
+  .statement-pane { display: flex; flex-direction: column; min-height: 0; }
+  .statement-pane > .tool-window-head { flex-shrink: 0; }
+  .statement-body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+  .editor-section { display: flex; flex-direction: column; min-height: 0; }
+  .editor-section .editor-panel { flex: 1; min-height: 0; }
+  .editor-section .code-editor-fit { flex: 1; height: auto; min-height: 0; }
+  .editor-footer { position: static; display: flex; flex: 0 1 auto; flex-direction: column; max-height: 60%; }
+  .editor-feedback { flex: 0 1 auto; min-height: 0; }
+}
 
 @media (max-width: 950px) {
   .header-inner { gap: 4px 12px; }
@@ -401,6 +443,9 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
   .tabs a, .tabs button, .tab, .problem-tabs a { min-height: 42px; padding-right: 11px; padding-left: 11px; }
   .field-pair { grid-template-columns: minmax(0, 1fr); gap: 16px; }
   .contest-selected-author { min-height: 40px; }
+  .contest-builder-actions { flex-wrap: wrap; }
+  .contest-builder-actions .form-feedback { flex-basis: 100%; }
+  .contest-builder-actions .form-feedback:empty { display: none; }
   .metrics { gap: 9px 20px; margin-bottom: 18px; }
   .metrics strong { font-size: 16px; }
   .problem-meta { margin-top: 6px; font-size: 12px; }

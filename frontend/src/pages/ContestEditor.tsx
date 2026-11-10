@@ -4,7 +4,7 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import { api } from '../api/client';
 import type { ContestInput, User } from '../api/types';
 import { useSession } from '../auth';
-import { Empty, ErrorMessage, LoginRequired, PageHeader, UserLink } from '../ui';
+import { Empty, ErrorMessage, LoginRequired, PageHeader, UserLink, useFeedbackVisibility } from '../ui';
 import { difficultyLabels, phaseOf } from '../utils';
 
 type Values = { title: string; startAt: string; duration: string; authors: User[]; problemIds: string[] };
@@ -27,7 +27,8 @@ export default function ContestEditor() {
   const [difficulty, setDifficulty] = useState('all');
   const [tag, setTag] = useState('all');
   const [selectedOnly, setSelectedOnly] = useState(false);
-  const [formError, setFormError] = useState('');
+  const [formError, setFormError] = useState<Error | null>(null);
+  const formErrorRef = useFeedbackVisibility<HTMLDivElement>(formError);
   const formKey = `${id ?? 'new'}:${user?.id ?? ''}`;
   const [, tick] = useState(0);
   useEffect(() => {
@@ -76,7 +77,7 @@ export default function ContestEditor() {
     setDifficulty('all');
     setTag('all');
     setSelectedOnly(false);
-    setFormError('');
+    setFormError(null);
   }, [contest.data, id, user, formKey]);
   const save = useMutation({
     mutationFn: (body: ContestInput) => id ? api.updateContest(id, body) : api.createContest(body),
@@ -95,9 +96,9 @@ export default function ContestEditor() {
   if (isLoading) return <p className="loading" role="status">Загрузка аккаунта...</p>;
   if (!user) return <><PageHeader title={id ? 'Настройки контеста' : 'Новый контест'} /><LoginRequired returnTo={location.pathname + location.search}>Войдите, чтобы создать или изменить контест.</LoginRequired></>;
   if (id && contest.isPending) return <p className="loading" role="status">Загрузка контеста...</p>;
-  if (contest.error && id) return <><PageHeader title="Настройки контеста" /><ErrorMessage error={contest.error} /><button className="text-link" onClick={() => void contest.refetch()}>Повторить</button></>;
+  if (contest.error && id && contest.data === undefined) return <><PageHeader title="Настройки контеста" /><ErrorMessage error={contest.error} /><button className="text-link" onClick={() => void contest.refetch()}>Повторить</button></>;
   if (id && contest.data && (phaseOf(contest.data) !== 'upcoming' || !contest.data.authors.some(author => author.id === user.id))) return <><PageHeader title="Настройки недоступны" /><Empty>Изменять контест могут его авторы до начала соревнования.</Empty><Link className="btn secondary" to={`/contest/${encodeURIComponent(id)}`}>К контесту</Link></>;
-  if (pool.error || id && snapshots.error) return <><PageHeader title={id ? 'Настройки контеста' : 'Новый контест'} /><ErrorMessage error={pool.error ?? snapshots.error} /><button className="text-link" onClick={() => { void pool.refetch(); if (id) void snapshots.refetch(); }}>Повторить</button></>;
+  if (pool.error && pool.data === undefined || id && snapshots.error && snapshots.data === undefined) return <><PageHeader title={id ? 'Настройки контеста' : 'Новый контест'} /><ErrorMessage error={pool.error && pool.data === undefined ? pool.error : snapshots.error} /><button className="text-link" onClick={() => { void pool.refetch(); if (id) void snapshots.refetch(); }}>Повторить</button></>;
   if (!values || initialized.current !== formKey || pool.isPending || id && snapshots.isPending) return <p className="loading" role="status">Загрузка задач...</p>;
 
   const problems = [...new Map([...(pool.data ?? []), ...(snapshots.data ?? [])].map(problem => [problem.id, problem])).values()];
@@ -110,6 +111,7 @@ export default function ContestEditor() {
   const authorSearchReady = authorSearch === authorQuery.trim();
   const matches = authorSearchReady ? users.data?.items.filter(person => !values.authors.some(author => author.id === person.id)) ?? [] : [];
   const filtersActive = Boolean(query || difficulty !== 'all' || tag !== 'all' || selectedOnly);
+  const backgroundError = contest.error ?? pool.error ?? (id ? snapshots.error : null);
   const update = (patch: Partial<Values>) => setValues(current => current ? { ...current, ...patch } : current);
   const addAuthor = (person: User) => {
     update({ authors: [...values.authors, person] });
@@ -130,15 +132,16 @@ export default function ContestEditor() {
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (save.isPending) return;
-    setFormError('');
+    setFormError(null);
+    save.reset();
     const start = Date.parse(`${values.startAt}+03:00`);
     const minutes = Number(values.duration);
-    if (!values.title.trim()) { setFormError('Введите название контеста.'); return; }
-    if (!Number.isFinite(start) || start <= Date.now()) { setFormError('Начало контеста должно быть в будущем.'); return; }
+    if (!values.title.trim()) { setFormError(new Error('Введите название контеста.')); return; }
+    if (!Number.isFinite(start) || start <= Date.now()) { setFormError(new Error('Начало контеста должно быть в будущем.')); return; }
     const end = new Date(start + minutes * 60000);
-    if (!Number.isInteger(minutes) || minutes < 1 || !Number.isFinite(end.getTime())) { setFormError('Укажите длительность в минутах.'); return; }
-    if (!values.authors.length) { setFormError('Нужен хотя бы один автор.'); return; }
-    if (!values.problemIds.length) { setFormError('Выберите хотя бы одну задачу.'); return; }
+    if (!Number.isInteger(minutes) || minutes < 1 || !Number.isFinite(end.getTime())) { setFormError(new Error('Укажите длительность в минутах.')); return; }
+    if (!values.authors.length) { setFormError(new Error('Нужен хотя бы один автор.')); return; }
+    if (!values.problemIds.length) { setFormError(new Error('Выберите хотя бы одну задачу.')); return; }
     save.mutate({
       title: values.title.trim(),
       startAt: new Date(start).toISOString(),
@@ -195,7 +198,15 @@ export default function ContestEditor() {
         </fieldset>
       </div>
       <div className="contest-builder-actions">
-        <div>{formError && <p className="error" role="alert">{formError}</p>}{save.error && <ErrorMessage error={save.error} />}</div>
+        <div className="form-feedback">
+          {formError && <div className="notice error feedback-anchor" role="alert" ref={formErrorRef}>{formError.message}</div>}
+          <ErrorMessage error={save.error} reveal />
+          {backgroundError && <><ErrorMessage error={backgroundError} /><button type="button" className="text-link" onClick={() => {
+            if (contest.error) void contest.refetch();
+            if (pool.error) void pool.refetch();
+            if (id && snapshots.error) void snapshots.refetch();
+          }}>Повторить загрузку</button></>}
+        </div>
         <button className="btn primary" type="submit" disabled={save.isPending || !values.problemIds.length}>{save.isPending ? 'Сохранение...' : id ? 'Сохранить' : 'Создать контест'}</button>
       </div>
     </form>

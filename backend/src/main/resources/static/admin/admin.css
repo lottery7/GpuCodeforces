@@ -1,7 +1,22 @@
 body { margin: 0; font: 15px/1.5 system-ui, sans-serif; background: #f6f7f9; color: #1d2330; }
 main { max-width: 960px; margin: 0 auto; padding: 24px 16px; }
 section { background: #fff; border: 1px solid #dde1e7; border-radius: 8px; padding: 16px; margin-top: 16px; }
-textarea { width: 100%; box-sizing: border-box; font: 13px/1.4 ui-monospace, monospace; }
-pre { background: #f0f2f5; padding: 8px; white-space: pre-wrap; word-break: break-word; min-height: 1.5em; }
-button { margin-top: 8px; padding: 6px 14px; }
+textarea { width: 100%; height: clamp(140px, 24dvh, 220px); min-height: 140px; resize: vertical; box-sizing: border-box; font: 13px/1.4 ui-monospace, monospace; }
+pre { max-height: 180px; overflow: auto; background: #f0f2f5; padding: 8px; white-space: pre-wrap; word-break: break-word; min-height: 1.5em; scroll-margin-block: 12px; }
+button { padding: 6px 14px; }
+button:disabled { cursor: wait; opacity: .65; }
+.operation-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 8px; }
+.operation-actions [role="status"] { min-width: 0; overflow-wrap: anywhere; }
+.console-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.console-workspace > div { min-width: 0; }
+.console-workspace label { display: block; margin-bottom: 6px; }
+.console-workspace h3 { margin: 0 0 6px; font-size: 15px; }
+.console-workspace pre { margin: 0 0 12px; }
+[hidden] { display: none !important; }
 .error { color: #b42318; }
+
+@media (max-width: 700px) {
+  main { padding: 16px 12px; }
+  .console-workspace { grid-template-columns: minmax(0, 1fr); }
+  button { min-height: 40px; }
+}

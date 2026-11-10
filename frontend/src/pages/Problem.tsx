@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import { api, ApiError } from '../api/client';
@@ -6,7 +6,7 @@ import type { Contest, ProblemDetail } from '../api/types';
 import { useSession } from '../auth';
 import CodeEditor from '../components/CodeEditor';
 import { readDraft, rememberEditorLogin, writeDraft } from '../drafts';
-import { Empty, ErrorMessage, Markdown, PageHeader, QueryState, Tabs, TimeValue, UserLink } from '../ui';
+import { Empty, ErrorMessage, Markdown, PageHeader, QueryState, Tabs, TimeValue, UserLink, useFeedbackVisibility } from '../ui';
 import { contextFromSearch, difficultyLabels, problemPath } from '../utils';
 import { SubmissionList } from './Submissions';
 
@@ -25,10 +25,16 @@ function EditorPane({ problem, context, contest, contestLoading, phase }: { prob
   const [undo, setUndo] = useState<{ code: string; message: string } | null>(null);
   const [localError, setLocalError] = useState<Error | null>(null);
   const [example, setExample] = useState<{ code: string; passed: boolean; diagnostic: string } | null>(null);
+  function clearErrors() {
+    setLocalError(null);
+    if (check.isError) check.reset();
+    if (submit.isError) submit.reset();
+    if (join.isError) join.reset();
+  }
   function changeCode(value: string) {
     setCode(value);
     setSaved(writeDraft(user?.id || null, problem.id, context, value));
-    setLocalError(null);
+    clearErrors();
     setUndo(null);
   }
   function requestLogin() {
@@ -55,6 +61,8 @@ function EditorPane({ problem, context, contest, contestLoading, phase }: { prob
   });
   const busy = check.isPending || submit.isPending || join.isPending;
   const error = localError || submit.error || join.error || check.error;
+  const feedback = useMemo(() => ({ error, example, undo, pending: check.isPending }), [error, example, undo, check.isPending]);
+  const feedbackRef = useFeedbackVisibility(feedback, Boolean(error || example || undo || check.isPending));
   function reset() {
     changeCode(problem.starterCode);
     setUndo({ code, message: 'Шаблон восстановлен.' });
@@ -83,22 +91,26 @@ function EditorPane({ problem, context, contest, contestLoading, phase }: { prob
           try { changeCode(await file.text()); setUndo({ code, message: 'Файл загружен.' }); } catch { setLocalError(new Error('Не удалось прочитать файл.')); }
         }} /></label></div>
       </div>
-      <CodeEditor value={code} onChange={changeCode} status={saved ? 'Черновик сохранен' : 'Хранилище недоступно. Скачайте код.'} />
+      <CodeEditor fit value={code} onChange={changeCode} status={saved ? 'Черновик сохранен' : 'Хранилище недоступно. Скачайте код.'} />
+      <div className="editor-footer" ref={feedbackRef}>
+      {(undo || error || check.isPending || example) && <div className="editor-feedback">
+        {undo !== null && <div className="small">{undo.message} <button type="button" className="text-link" onClick={() => changeCode(undo.code)}>Отменить</button></div>}
+        <ErrorMessage error={error} />
+        {(check.isPending || example) && <section className="run-console" aria-label="Вывод проверки"><div className="tool-window-body">
+          {check.isPending ? <p role="status">Проверяем пример...</p> : example && (example.code !== code ? <p className="muted" role="status">Код изменен. Проверьте пример снова.</p> : <><p role="status" className={example.passed ? 'success' : 'error'}>{example.passed ? 'Пример пройден.' : 'Пример не пройден.'}</p>{example.diagnostic && <pre className="diagnostic" tabIndex={0} aria-label="Диагностика примера">{example.diagnostic}</pre>}</>)}
+        </div></section>}
+      </div>}
       <div className="editor-actions">
         <button type="button" className="text-link" onClick={reset} disabled={busy}>Восстановить шаблон</button>
-        <button type="button" className="btn secondary run-btn" onClick={() => { setExample(null); check.mutate(code); }} disabled={busy || !code.trim()}>{check.isPending ? 'Проверяем пример...' : 'Проверить пример'}</button>
+        <button type="button" className="btn secondary run-btn" onClick={() => { clearErrors(); setExample(null); check.mutate(code); }} disabled={busy || !code.trim()}>{check.isPending ? 'Проверяем пример...' : 'Проверить пример'}</button>
         {phase === 'finished' ? <button type="button" className="btn primary" onClick={practice}>Продолжить в практике</button>
           : phase === 'upcoming' ? <button type="button" className="btn primary" disabled>Отправка после начала</button>
           : !user ? <button type="button" className="btn primary" onClick={requestLogin}>Войти и отправить</button>
-          : context !== 'practice' && !contest?.registered ? <button type="button" className="btn primary" disabled={busy || contestLoading} onClick={() => join.mutate()}>{join.isPending ? 'Регистрируем...' : 'Участвовать'}</button>
-          : <button type="button" className="btn primary" disabled={busy || !code.trim() || contestLoading} onClick={() => submit.mutate()}>{submit.isPending ? 'Отправляем...' : 'Отправить'}</button>}
+          : context !== 'practice' && !contest?.registered ? <button type="button" className="btn primary" disabled={busy || contestLoading} onClick={() => { clearErrors(); join.mutate(); }}>{join.isPending ? 'Регистрируем...' : 'Участвовать'}</button>
+          : <button type="button" className="btn primary" disabled={busy || !code.trim() || contestLoading} onClick={() => { clearErrors(); submit.mutate(); }}>{submit.isPending ? 'Отправляем...' : 'Отправить'}</button>}
+      </div>
       </div>
     </div>
-    {undo !== null && <div className="notice">{undo.message} <button type="button" className="text-link" onClick={() => changeCode(undo.code)}>Отменить</button></div>}
-    <ErrorMessage error={error} />
-    {(check.isPending || example) && <section className="run-console" aria-label="Вывод проверки"><div className="tool-window-head">Вывод</div><div className="tool-window-body" role="status">
-      {check.isPending ? 'Проверяем пример...' : example && (example.code !== code ? <p className="muted">Код изменен. Проверьте пример снова.</p> : <><p className={example.passed ? 'success' : 'error'}>{example.passed ? 'Пример пройден.' : 'Пример не пройден.'}</p>{example.diagnostic && <pre className="diagnostic">{example.diagnostic}</pre>}</>)}
-    </div></section>}
     <a href="#statement" className="back-to-statement">К условию</a>
   </section>;
 }

@@ -21,6 +21,7 @@ const diagnostics = {
   system: 'Тестовый временный сбой проверяющей системы. Повторите проверку.',
   'measurement-error': 'Корректность подтверждена, но замер времени завершился сбоем.',
 };
+const longDiagnostic = 'solution.cu(42): error: identifier "invalid_index" is undefined\n    output[invalid_index] = input[invalid_index];\n           ^\n'.repeat(160).slice(0, 16 * 1024);
 
 class ApiError extends Error {
   constructor(status, message) {
@@ -107,6 +108,7 @@ function environmentMarkdown(benchmark) {
 }
 
 function outcomeFor(code) {
+  if (code.includes('FIXTURE_LONG_DIAGNOSTIC')) return 'system';
   for (const [wire, model] of Object.entries(modelStatuses)) {
     if (['queued', 'compiling', 'checking', 'measuring'].includes(wire)) continue;
     if (code.includes(`FIXTURE_${wire.toUpperCase()}`)) return model;
@@ -257,7 +259,7 @@ export function createApiServer() {
         const benchmark = submission.benchmarkSnapshot ?? submission.benchmark;
         model.updateSubmission(id, {
           status, timeMs: status === 'accepted' ? Number((benchmark.referenceMs * 0.8).toFixed(4)) : null,
-          diagnostic: diagnostics[status] ?? null,
+          diagnostic: status === 'system' && submission.code.includes('FIXTURE_LONG_DIAGNOSTIC') ? longDiagnostic : diagnostics[status] ?? null,
           passedTests: ['accepted', 'measurement-error', 'measuring'].includes(status) ? submission.totalTests : status === 'wrong' ? 6 : 0,
         });
       }, 350 * (index + 1));
@@ -411,7 +413,7 @@ export function createApiServer() {
         if (method === 'POST' && action === 'example') {
           const code = textBody(body, 'code');
           const outcome = outcomeFor(code);
-          return send(response, 200, { passed: outcome === 'accepted', diagnostic: diagnostics[outcome] ?? '' });
+          return send(response, 200, { passed: outcome === 'accepted', diagnostic: code.includes('FIXTURE_LONG_DIAGNOSTIC') ? longDiagnostic : diagnostics[outcome] ?? '' });
         }
       }
 

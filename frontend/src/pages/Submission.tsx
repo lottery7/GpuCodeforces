@@ -55,15 +55,19 @@ export default function Submission() {
   return <QueryState query={submission}>{item && <>
     <PageHeader title={`Посылка #${item.id}`} actions={owner && typeof item.code === 'string' ? <button type="button" className="btn secondary" onClick={edit}>Открыть в редакторе</button> : undefined} />
     <p className="breadcrumbs"><Link to={problemPath(item.problemId, context)}>{item.problemTitle}</Link><span>/</span><UserLink user={item.user} /><span>/</span>{item.contestId ? <Link to={`/contest/${encodeURIComponent(item.contestId)}`}>{item.contestTitle || 'Контест'}</Link> : 'Практика'}<span>/</span><time dateTime={item.createdAt}>{dateTime(item.createdAt)} МСК</time></p>
-    <section className="submission-summary" aria-live="polite">
+    <div className="submission-verdict-bar" aria-live="polite">
       <h2><Status status={item.status} />{item.totalTests != null && <span className="muted"> {item.passedTests ?? 0}/{item.totalTests}</span>}</h2>
-      {pending && <div className="submission-steps" aria-label="Этапы проверки">{[['queued', 'Очередь'], ['compiling', 'Компиляция'], ['checking', 'Корректность'], ['measuring', 'Замер GPU']].map(([status, label]) => <span key={status} className={status === item.status ? 'current' : undefined}>{label}</span>)}</div>}
       {accepted && <p className="metrics">Время GPU: <strong className="mono"><TimeValue value={item.timeMs} /> мс</strong></p>}
+    </div>
+    <section className="submission-summary">
+      {pending && <div className="submission-steps" aria-label="Этапы проверки">{[['queued', 'Очередь'], ['compiling', 'Компиляция'], ['checking', 'Корректность'], ['measuring', 'Замер GPU']].map(([status, label]) => <span key={status} className={status === item.status ? 'current' : undefined}>{label}</span>)}</div>}
       {comparison && <p>{comparison} Предыдущий: <TimeValue value={item.previousBestTimeMs} /> мс.</p>}
       {accepted && !item.comparable && <p className="notice">Результат получен в другой конфигурации проверки и не участвует в текущих рекордах.</p>}
-      {owner && !pending && !accepted && item.diagnostic && <pre className="diagnostic">{item.diagnostic}</pre>}
-      {retryAvailable && <button type="button" className="btn secondary" onClick={() => recheck.mutate()} disabled={recheck.isPending}>{recheck.isPending ? 'Возвращаем в очередь...' : 'Повторить проверку'}</button>}
-      <ErrorMessage error={recheck.error} />
+      {(retryAvailable || Boolean(recheck.error)) && <div className="submission-actions">
+        {retryAvailable && <button type="button" className="btn secondary" onClick={() => recheck.mutate()} disabled={recheck.isPending}>{recheck.isPending ? 'Возвращаем в очередь...' : 'Повторить проверку'}</button>}
+        <ErrorMessage error={recheck.error} reveal />
+      </div>}
+      {owner && !pending && !accepted && item.diagnostic && <pre className="diagnostic" tabIndex={0} aria-label="Диагностика посылки">{item.diagnostic}</pre>}
     </section>
     {accepted && <p><Link to={problemPath(item.problemId, context, 'leaders')}>Таблица лидеров</Link></p>}
     {owner && typeof item.code === 'string' ? <details className="disclosure" open={!accepted && !pending}><summary>Код решения</summary><div className="editor-panel"><CodeEditor value={item.code} readOnly label="Исходный код посылки" /></div></details> : <p className="muted small">Исходный код доступен автору посылки.</p>}
