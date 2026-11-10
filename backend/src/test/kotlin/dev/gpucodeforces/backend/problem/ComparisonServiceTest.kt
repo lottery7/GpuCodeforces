@@ -8,6 +8,8 @@ import dev.gpucodeforces.backend.contest.ContestRepository
 import dev.gpucodeforces.backend.submission.Submission
 import dev.gpucodeforces.backend.submission.SubmissionRepository
 import dev.gpucodeforces.backend.submission.SubmissionStatus
+import dev.gpucodeforces.backend.submission.MeasurementData
+import dev.gpucodeforces.backend.submission.MeasuredTest
 import dev.gpucodeforces.backend.user.User
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
@@ -44,11 +46,12 @@ class ComparisonServiceTest {
         draft: Boolean = false,
         format: String = ProblemFormatData.STANDARD,
         judgeSpec: String = mapper.writeValueAsString(sample.spec),
+        data: ProblemFormatData = ProblemFormatData(format = format),
     ) = ProblemVersion(
         UUID.randomUUID(), sample.id, sample.frontMatter.code, sample.frontMatter.title,
         sample.frontMatter.difficulty, sample.frontMatter.tags, sample.frontMatter.authors,
         draft, sample.statementMarkdown, sample.starterCode, judgeSpec, sample.contentHash,
-        judgeHash, null, format = format,
+        judgeHash, null, format = format, formatData = mapper.writeValueAsString(data),
     ).also { given(versions.findById(it.id)).willReturn(Optional.of(it)) }
 
     private fun submission(
@@ -169,5 +172,28 @@ class ComparisonServiceTest {
 
         contest.endAt = now.minusSeconds(1)
         assertThat(create(first, second).format).isEqualTo(ProblemFormatData.GUESS)
+    }
+
+    @Test
+    fun `rejects mixing legacy maximum with geometric mean and synthetic with real measurements`() {
+        val definition = BenchmarkDefinition("Векторы длиной 1 и 4", BenchmarkDefinition.GEOMETRIC_MEAN)
+        val geometric = version(format = "optimization", data = ProblemFormatData(format = "optimization", benchmark = definition))
+        val first = submission(geometric)
+        val legacy = submission(version(format = "optimization"))
+
+        assertThatThrownBy { create(first, legacy) }.isInstanceOf(BadRequestException::class.java).hasMessageContaining("метрики")
+
+        val second = submission(geometric)
+        fun measurement(time: BigDecimal, synthetic: Boolean) = mapper.writeValueAsString(
+            MeasurementData("geometric_mean", "wall", "GPU", "nvcc", synthetic, listOf(MeasuredTest(time, 1))),
+        )
+        first.measurement = measurement(first.timeMs!!, false)
+        second.measurement = measurement(second.timeMs!!, true)
+        assertThatThrownBy { create(first, second) }.isInstanceOf(BadRequestException::class.java)
+
+        first.measurement = measurement(first.timeMs!!, true)
+        val published = mapper.readValue(create(first, second).formatData, ProblemFormatData::class.java)
+        assertThat(published.benchmark).isEqualTo(definition)
+        assertThat(published.benchmarkSynthetic).isTrue()
     }
 }

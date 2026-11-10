@@ -6,7 +6,7 @@ import DuelBoard from '../components/DuelBoard';
 import type { Problem } from '../api/types';
 import { useSession } from '../auth';
 import { Empty, ErrorMessage, Markdown, PageHeader, Status, Tabs, UserLink } from '../ui';
-import { canJoinContest, dateTime, difficultyLabels, formatLabels, phaseOf, problemPath, solveTime, statusLabels, userPath } from '../utils';
+import { canJoinContest, dateTime, difficultyLabels, formatLabels, phaseOf, problemPath, solveTime, statusLabels } from '../utils';
 
 function countdown(value: string, now: number) {
   const seconds = Math.max(0, Math.ceil((Date.parse(value) - now) / 1000));
@@ -44,6 +44,7 @@ export default function Contest() {
   const location = useLocation();
   const queryClient = useQueryClient();
   const [now, setNow] = useState(Date.now());
+  const runtime = useQuery({ queryKey: ['runtime'], queryFn: ({ signal }) => api.getRuntime(signal), staleTime: 300000 });
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
@@ -99,7 +100,7 @@ export default function Contest() {
   const base = `/contest/${encodeURIComponent(id)}`;
   const actions = <>
     {phase !== 'finished' && (item.registered ? <span className="success">{phase === 'upcoming' ? 'Вы зарегистрированы' : 'Вы участвуете'}</span> : !canJoinContest(item, user?.id) ? <span className="muted">Дуэль по приглашению</span> : user ? <button className="btn secondary" disabled={join.isPending} onClick={() => join.mutate()}>{join.isPending ? 'Регистрация...' : item.format === 'duel' ? 'Принять дуэль' : 'Зарегистрироваться'}</button> : <Link className="btn secondary" to={`/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`}>Зарегистрироваться</Link>)}
-    {author && phase === 'upcoming' && <Link className="btn secondary" to={`${base}/edit`}>Изменить</Link>}
+    {author && phase === 'upcoming' && item.format !== 'duel' && <Link className="btn secondary" to={`${base}/edit`}>Изменить</Link>}
   </>;
   const columns = tasks.data ?? [];
 
@@ -107,10 +108,9 @@ export default function Contest() {
     <PageHeader title={item.title} actions={actions} />
     {contest.error && <ErrorMessage error={contest.error} />}
     <div className="toolbar small contest-meta">
-      {item.format === 'duel' && <span>Дуэль: <Link to={userPath(item.challengerId ?? '')}>Инициатор</Link> против <Link to={userPath(item.opponentId ?? '')}>Соперника</Link></span>}
       <span className="muted">{dateTime(item.startAt)} - {dateTime(item.endAt)} МСК</span>
       <span>{phase === 'finished' ? 'Завершен' : <>{phase === 'upcoming' ? 'До начала' : 'До конца'} <time>{countdown(phase === 'upcoming' ? item.startAt : item.endAt, now)}</time></>}</span>
-      <span className="muted">{item.gpu}</span>
+      {runtime.data?.executionMode === 'gpu' && <span className="muted">Целевая GPU: {runtime.data.gpuName ?? item.gpu}</span>}
       <span className="muted">Авторы: {item.authors.map((person, index) => <span key={person.id}>{index > 0 && ', '}<UserLink user={person} /></span>)}</span>
     </div>
     {join.error && <ErrorMessage error={join.error} />}

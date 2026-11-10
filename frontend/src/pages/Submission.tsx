@@ -5,8 +5,9 @@ import { api } from '../api/client';
 import { useSession } from '../auth';
 import CodeEditor from '../components/CodeEditor';
 import GuessResult from '../components/GuessResult';
+import { SyntheticResultsNotice } from '../components/RuntimeNotice';
 import { writeDraft } from '../drafts';
-import { ErrorMessage, Markdown, PageHeader, QueryState, Status, TimeValue, UserLink } from '../ui';
+import { ErrorMessage, PageHeader, QueryState, Status, TimeValue, UserLink } from '../ui';
 import { dateTime, pendingStatuses, problemPath } from '../utils';
 
 export default function Submission() {
@@ -59,10 +60,10 @@ export default function Submission() {
     <p className="breadcrumbs"><Link to={problemPath(item.problemId, context)}>{item.problemTitle}</Link><span>/</span><UserLink user={item.user} /><span>/</span>{item.contestId ? <Link to={`/contest/${encodeURIComponent(item.contestId)}`}>{item.contestTitle || 'Контест'}</Link> : 'Практика'}<span>/</span><time dateTime={item.createdAt}>{dateTime(item.createdAt)} МСК</time></p>
     <div className="submission-verdict-bar" aria-live="polite">
       <h2><Status status={item.status} />{item.totalTests != null && <span className="muted"> {item.passedTests ?? 0}/{item.totalTests}</span>}</h2>
-      {accepted && !isGuess && <p className="metrics">Время GPU: <strong className="mono"><TimeValue value={item.timeMs} /> мс</strong></p>}
+      {accepted && !isGuess && <p className="metrics">{item.measurement?.aggregation === 'geometric_mean' ? 'Геометрическое среднее' : item.measurement ? 'Максимум по тестам' : 'Время решения'}: <strong className="mono"><TimeValue value={item.timeMs} /> мс</strong></p>}
     </div>
     <section className="submission-summary">
-      {pending && <div className="submission-steps" aria-label="Этапы проверки">{[['queued', 'Очередь'], ['compiling', 'Компиляция'], ['checking', 'Корректность'], ['measuring', 'Замер GPU']].map(([status, label]) => <span key={status} className={status === item.status ? 'current' : undefined}>{label}</span>)}</div>}
+      {pending && <div className="submission-steps" aria-label="Этапы проверки">{[['queued', 'Очередь'], ['compiling', 'Компиляция'], ['checking', 'Корректность'], ['measuring', 'Измерение']].map(([status, label]) => <span key={status} className={status === item.status ? 'current' : undefined}>{label}</span>)}</div>}
       {comparison && <p>{comparison} Предыдущий: <TimeValue value={item.previousBestTimeMs} /> мс.</p>}
       {accepted && !isGuess && !item.comparable && <p className="notice">Результат получен в другой конфигурации проверки и не участвует в текущих рекордах.</p>}
       {(retryAvailable || Boolean(recheck.error)) && <div className="submission-actions">
@@ -75,6 +76,6 @@ export default function Submission() {
       {accepted && <p><Link to={problemPath(item.problemId, context, 'leaders')}>Таблица лидеров</Link></p>}
       {owner && typeof item.code === 'string' ? <details className="disclosure" open={!accepted && !pending}><summary>Код решения</summary><div className="editor-panel"><CodeEditor value={item.code} readOnly label="Исходный код посылки" /></div></details> : <p className="muted small">Исходный код доступен автору посылки.</p>}
     </>}
-    {item.environmentMarkdown && <details className="disclosure"><summary>Среда и методика замера</summary><Markdown>{item.environmentMarkdown}</Markdown></details>}
+    {item.measurement && !isGuess && <p className="small muted"><SyntheticResultsNotice synthetic={item.measurement.synthetic} />{' '}{item.measurement.timingMode === 'wall' ? 'Измеряется вызов решения до завершения работы, включая запуск и синхронизацию GPU.' : 'Измеряются интервалы работы ядер GPU.'} Тестов: {item.measurement.testCount}.{item.measurement.gpuName && !item.measurement.synthetic && ` GPU: ${item.measurement.gpuName}.`}</p>}
   </>}</QueryState>;
 }

@@ -22,7 +22,7 @@ import org.slf4j.MDC
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
-import java.math.BigDecimal
+import tools.jackson.databind.json.JsonMapper
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -45,6 +45,7 @@ class SubmissionService(
     private val judgeProperties: JudgeProperties,
     private val gpuProperties: GpuProperties,
     private val transactionTemplate: TransactionTemplate,
+    private val jsonMapper: JsonMapper,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -66,7 +67,7 @@ class SubmissionService(
                     problemVersionId = version.id,
                     contestId = contest?.id,
                     code = code,
-                    environmentMarkdown = environmentMarkdown(problemCatalog.spec(version), contest?.gpu ?: gpuProperties.name),
+                    environmentMarkdown = environmentMarkdown(problemCatalog.spec(version), (contest?.gpu ?: gpuProperties.name).takeUnless { judgeProperties.synthetic }),
                     judgeHash = version.judgeHash,
                     gpuProfile = gpuProperties.profile,
                     previousBestTimeMs = submissionStats.bestTime(author.id, version.problemId, contest?.id, version.judgeHash, gpuProperties.profile),
@@ -97,6 +98,7 @@ class SubmissionService(
             submission.recheckCount++
             submission.status = SubmissionStatus.QUEUED
             submission.timeMs = null
+            submission.measurement = null
             submission.passedTests = 0
             submission.totalTests = null
             submission.diagnostic = ""
@@ -195,11 +197,21 @@ class SubmissionService(
         submission.status = result.verdict.toStatus()
         submission.passedTests = result.tests.count { it.verdict == Verdict.ACCEPTED }
         if (result.verdict == Verdict.ACCEPTED) {
-            submission.totalTests = result.tests.size
-            submission.timeMs = result.maxTimeMs?.let(BigDecimal::valueOf)
-                ?: error("Accepted result ${event.jobId} has no time")
+            val expectedTestCount = submission.totalTests
+            submission.totalTests = expectedTestCount ?: result.tests.size
+            val version = problemCatalog.versions(listOf(submission.problemVersionId)).getValue(submission.problemVersionId)
+            try {
+                val measurement = captureMeasurement(result, problemCatalog.spec(version), problemCatalog.format(version).aggregation(), judgeProperties.synthetic, expectedTestCount)
+                submission.timeMs = measurement.timeMs
+                submission.measurement = jsonMapper.writeValueAsString(measurement.data)
+            } catch (exception: InvalidMeasurementException) {
+                submission.status = SubmissionStatus.MEASUREMENT_ERROR
+                submission.timeMs = null
+                submission.measurement = null
+                submission.diagnostic = exception.message!!
+            }
         }
-        submission.diagnostic = result.diagnostic()
+        if (submission.status != SubmissionStatus.MEASUREMENT_ERROR) submission.diagnostic = result.diagnostic()
         submission.finishedAt = event.timestamp
         val format = "Verdict {} -> {}: passed {}/{} failedTest={} time={} ms, judged in {} ms on {}: {}"
         val args = arrayOf<Any?>(

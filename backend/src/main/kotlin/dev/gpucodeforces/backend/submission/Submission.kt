@@ -10,6 +10,8 @@ import jakarta.persistence.Table
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Query
+import org.hibernate.annotations.JdbcTypeCode
+import org.hibernate.type.SqlTypes
 import java.math.BigDecimal
 import java.time.Instant
 import java.util.UUID
@@ -80,6 +82,10 @@ class Submission(
 
     @Column(name = "time_ms")
     var timeMs: BigDecimal? = null
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "measurement")
+    var measurement: String? = null
 
     @Column(name = "passed_tests", nullable = false)
     var passedTests: Int = 0

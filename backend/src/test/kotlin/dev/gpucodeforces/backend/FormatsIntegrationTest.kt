@@ -37,7 +37,6 @@ import java.time.ZoneOffset
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
-import dev.gpucodeforces.backend.api.model.Contest as ContestApi
 
 @Tag("integration")
 @Testcontainers
@@ -175,38 +174,15 @@ class FormatsIntegrationTest {
     }
 
     @Test
-    fun `a duel registers its challenger and admits only its fixed opponent`() {
+    fun `the generic contest API rejects scheduled duels`() {
         val (challenger, cookie) = register()
-        val (opponent, opponentCookie) = register()
-        val (outsider, outsiderCookie) = register()
+        val (opponent, _) = register()
         val start = Instant.now().plusSeconds(3600).atOffset(ZoneOffset.UTC)
         val input = ContestInput("Дуэль", start, start.plusHours(1), setOf(challenger.id), setOf("vector_add"))
             .format(ContestInput.FormatEnum.DUEL).opponentId(opponent.id)
 
-        val duel = client.post().uri("/contests").contentType(MediaType.APPLICATION_JSON).cookie("session", cookie)
-            .body(input).exchange().expectStatus().isCreated.expectBody(ContestApi::class.java).returnResult().responseBody!!
-        assertThat(duel.registered).isTrue()
-        assertThat(duel.challengerId).isEqualTo(challenger.id)
-        assertThat(duel.opponentId).isEqualTo(opponent.id)
-        assertThat(duel.format).isEqualTo(ContestApi.FormatEnum.DUEL)
-        assertThat(duel.authors.map { it.id }).containsExactly(challenger.id)
-        assertThat(duel.problemIds).containsExactly("vector_add")
-
-        client.put().uri("/contests/${duel.id}/registration").cookie("session", opponentCookie)
-            .exchange().expectStatus().isNoContent
-        client.put().uri("/contests/${duel.id}/registration").cookie("session", outsiderCookie)
-            .exchange().expectStatus().isForbidden
-        val participantView = client.get().uri("/contests/${duel.id}").cookie("session", opponentCookie)
-            .exchange().expectStatus().isOk.expectBody(ContestApi::class.java).returnResult().responseBody!!
-        assertThat(participantView.registered).isTrue()
-
-        client.put().uri("/contests/${duel.id}").contentType(MediaType.APPLICATION_JSON).cookie("session", cookie)
-            .body(input.opponentId(outsider.id)).exchange().expectStatus().isBadRequest
-        client.put().uri("/contests/${duel.id}").contentType(MediaType.APPLICATION_JSON).cookie("session", cookie)
-            .body(input.opponentId(opponent.id).authorIds(setOf(challenger.id, outsider.id)))
-            .exchange().expectStatus().isBadRequest
-        client.put().uri("/contests/${duel.id}").contentType(MediaType.APPLICATION_JSON).cookie("session", opponentCookie)
-            .body(input.authorIds(setOf(challenger.id))).exchange().expectStatus().isForbidden
+        client.post().uri("/contests").contentType(MediaType.APPLICATION_JSON).cookie("session", cookie)
+            .body(input).exchange().expectStatus().isBadRequest
     }
 
     companion object {

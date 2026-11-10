@@ -5,6 +5,9 @@ import dev.gpucodeforces.backend.api.model.ListSubmissions200Response
 import dev.gpucodeforces.backend.api.model.SubmitSolutionRequest
 import dev.gpucodeforces.backend.api.model.GuessChoice
 import dev.gpucodeforces.backend.api.model.GuessResult
+import dev.gpucodeforces.backend.api.model.MeasurementSummary
+import dev.gpucodeforces.backend.api.model.BenchmarkAggregation
+import dev.gpucodeforces.backend.api.model.MeasurementTiming
 import dev.gpucodeforces.backend.auth.CurrentUser
 import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.common.GpuProperties
@@ -21,6 +24,7 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.stereotype.Component
 import org.springframework.web.bind.annotation.RestController
+import tools.jackson.databind.json.JsonMapper
 import java.time.ZoneOffset
 import java.util.UUID
 import dev.gpucodeforces.backend.api.model.Submission as SubmissionApiModel
@@ -76,6 +80,7 @@ class SubmissionViews(
     private val contestRepository: ContestRepository,
     private val userRepository: UserRepository,
     private val gpuProperties: GpuProperties,
+    private val jsonMapper: JsonMapper,
 ) {
     fun summaries(rows: List<SubmissionRow>): List<SubmissionApiModel> {
         val versions = problemCatalog.versions(rows.map { it.problemVersionId }.toSet())
@@ -108,6 +113,16 @@ class SubmissionViews(
             .totalTests(submission.totalTests)
             .previousBestTimeMs(submission.previousBestTimeMs)
             .environmentMarkdown(submission.environmentMarkdown)
+        submission.measurement?.let { source ->
+            val measured = jsonMapper.readValue(source, MeasurementData::class.java)
+            summary.measurement(
+                MeasurementSummary().aggregation(BenchmarkAggregation.fromValue(measured.aggregation))
+                    .timingMode(MeasurementTiming.fromValue(measured.timingMode))
+                    .gpuName(measured.gpuName.takeUnless { measured.synthetic })
+                    .synthetic(measured.synthetic)
+                    .testCount(measured.tests.size),
+            )
+        }
         if (viewer?.id != submission.userId) return summary
         summary.code(submission.code).diagnostic(submission.diagnostic)
         submission.guessChoice?.let { choice ->

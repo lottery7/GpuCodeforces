@@ -135,6 +135,59 @@ export function createApiServer() {
   const sessions = new Map();
   const passwords = new Map(model.users().map(user => [user.id, passwordHash('password123')]));
   const timers = new Set();
+  const duelRequests = new Map();
+  const notifications = [];
+
+  function expireDuels() {
+    for (const duel of duelRequests.values()) {
+      if (['queued', 'invited'].includes(duel.status) && Date.parse(duel.expiresAt) <= Date.now()) duel.status = 'expired';
+    }
+  }
+
+  function activeDuel(userId) {
+    expireDuels();
+    return [...duelRequests.values()].find(item => Date.parse(item.expiresAt) > Date.now() && (['queued', 'invited'].includes(item.status) && item.creatorId === userId || item.status === 'matched' && [item.creatorId, item.opponentId].includes(userId)));
+  }
+
+  function duelDto(duel) {
+    return { id: duel.id, mode: duel.mode, status: duel.status, creator: publicUser(userById(duel.creatorId)), opponent: duel.opponentId ? publicUser(userById(duel.opponentId)) : null, topics: duel.topics, createdAt: duel.createdAt, expiresAt: duel.expiresAt, contestId: duel.contestId };
+  }
+
+  function visibleDuel(id, user) {
+    expireDuels();
+    const duel = duelRequests.get(id);
+    if (!duel) throw new ApiError(404, 'Дуэль не найдена.');
+    if (![duel.creatorId, duel.opponentId].includes(user.id)) throw new ApiError(403, 'Дуэль доступна только ее участникам.');
+    return duel;
+  }
+
+  function notify(userId, type, message, duel) {
+    notifications.unshift({ id: randomUUID(), userId, type, message, duelRequestId: duel.id, contestId: duel.contestId, createdAt: new Date().toISOString(), readAt: null });
+  }
+
+  function cancelWaiting(duel) {
+    duel.status = 'cancelled';
+    if (duel.mode === 'invite') notify(duel.opponentId, 'duel_cancelled', 'Приглашение на дуэль отменено.', duel);
+  }
+
+  function codingPool(topics = []) {
+    return model.problems().filter(problem => problem.format !== 'guess' && (!topics.length || problem.tags.some(tag => topics.includes(tag))));
+  }
+
+  function startDuel(firstId, secondId, candidates) {
+    const problem = candidates[Math.floor(Math.random() * candidates.length)];
+    const start = Date.now();
+    const contest = { id: `duel-${randomUUID()}`, title: `Дуэль: ${userById(firstId).handle} vs ${userById(secondId).handle}`, authorIds: [firstId], ownerId: firstId, format: 'duel', challengerId: firstId, opponentId: secondId, startAt: new Date(start).toISOString(), endAt: new Date(start + 30 * 60000).toISOString(), durationMinutes: 30, registrationOpen: true, gpuId: 'a100', scoring: 'solve-time', problemIds: [problem.id], benchmarks: { [problem.id]: problem.benchmark }, problemSnapshots: { [problem.id]: problem } };
+    mutateModel(state => {
+      state.contests.push(contest);
+      state.registrations.push(...[firstId, secondId].map(userId => ({ userId, contestId: contest.id })));
+    });
+    return contest;
+  }
+
+  function matched(duel, opponentId, contest) {
+    Object.assign(duel, { status: 'matched', opponentId, contestId: contest.id, expiresAt: contest.endAt });
+  }
 
   function publicUser(user) {
     if (!user) return null;
@@ -262,6 +315,7 @@ export function createApiServer() {
       comparable: problem.format === 'guess' ? true : model.canCompare(submission),
       ...(detail ? {
         passedTests: submission.passedTests, totalTests: submission.totalTests,
+        measurement: { aggregation: 'geometric_mean', timingMode: 'wall', gpuName: null, synthetic: true, testCount: 1 },
         previousBestTimeMs: previous, environmentMarkdown: environmentMarkdown(benchmark),
         ...(owner ? problem.format === 'guess' ? { guessResult: submission.guessResult } : { code: submission.code, diagnostic } : {}),
       } : {}),
@@ -306,12 +360,7 @@ export function createApiServer() {
     }
     for (const id of body.problemIds) problemById(id);
     const format = body.format ?? 'standard';
-    if (!['standard', 'duel'].includes(format)) throw new ApiError(400, 'Неизвестный формат.');
-    if (format === 'duel') {
-      const user = requireUser();
-      const opponent = userById(textBody(body, 'opponentId'));
-      if (opponent.id === user.id || body.problemIds.length !== 1 || body.authorIds.length !== 1 || body.authorIds[0] !== user.id) throw new ApiError(400, 'Дуэль требует двух разных участников, одного автора и одну задачу.');
-    } else if (body.opponentId) throw new ApiError(400, 'Соперник доступен только в дуэли.');
+    if (format !== 'standard' || body.opponentId) throw new ApiError(400, 'Для дуэли используйте подбор соперника.');
     return { ...body, format, durationMinutes: (end - start) / 60000, gpuId: 'a100' };
   }
 
@@ -333,10 +382,95 @@ export function createApiServer() {
       const method = request.method;
       const query = url.searchParams;
       const sessionToken = /(?:^|;\s*)session=([^;]+)/.exec(request.headers.cookie ?? '')?.[1];
-      const needsBody = method === 'POST' && (resource === 'session' || resource === 'users' || resource === 'submissions' && !id || resource === 'contests' && !id || resource === 'problems' && ['example', 'guess', 'comparisons'].includes(action))
+      const needsBody = method === 'POST' && (resource === 'session' || resource === 'users' || resource === 'duels' && !id || resource === 'submissions' && !id || resource === 'contests' && !id || resource === 'problems' && ['example', 'guess', 'comparisons'].includes(action))
         || method === 'PUT' && resource === 'contests' && id && !action;
       const body = needsBody ? await readBody(request) : {};
       model.setSession(sessions.get(sessionToken) ?? null);
+
+      if (resource === 'runtime' && method === 'GET') return send(response, 200, { executionMode: 'mock', gpuName: null });
+
+      if (resource === 'duels') {
+        expireDuels();
+        if (method === 'GET' && id === 'topics') return send(response, 200, [...new Set(codingPool().flatMap(problem => problem.tags))].sort());
+        const user = requireUser();
+        if (method === 'GET' && id === 'current') {
+          const active = activeDuel(user.id);
+          return send(response, active ? 200 : 204, active ? duelDto(active) : null);
+        }
+        if (method === 'POST' && !id) {
+          if (!['random', 'invite'].includes(body.mode)) throw new ApiError(400, 'Выберите способ поиска соперника.');
+          if (activeDuel(user.id)) throw new ApiError(400, 'Сначала завершите текущую дуэль или отмените поиск.');
+          const known = new Map(codingPool().flatMap(problem => problem.tags).map(tag => [tag.toLowerCase(), tag]));
+          if (!Array.isArray(body.topics) || body.topics.length > 20 || body.topics.some(topic => typeof topic !== 'string' || !known.has(topic.trim().toLowerCase()))) throw new ApiError(400, 'Выберите доступные темы задач.');
+          const topics = [...new Set(body.topics.map(topic => known.get(topic.trim().toLowerCase())))];
+          const candidates = codingPool(topics);
+          if (!candidates.length) throw new ApiError(400, 'По выбранным темам нет задач.');
+          const opponent = body.mode === 'invite' ? model.users().find(person => person.handle.toLowerCase() === textBody(body, 'opponentHandle').trim().toLowerCase()) : null;
+          if (body.mode === 'invite' && (!opponent || opponent.id === user.id)) throw new ApiError(400, 'Укажите ник другого участника.');
+          if (body.mode === 'random' && body.opponentHandle !== undefined) throw new ApiError(400, 'Ник не нужен для случайного поиска.');
+          const now = Date.now();
+          const duel = { id: randomUUID(), mode: body.mode, status: body.mode === 'random' ? 'queued' : 'invited', creatorId: user.id, opponentId: opponent?.id ?? null, topics, createdAt: new Date(now).toISOString(), expiresAt: new Date(now + (body.mode === 'random' ? 15 * 60000 : 24 * 3600000)).toISOString(), contestId: null };
+          duelRequests.set(duel.id, duel);
+          if (opponent) notify(opponent.id, 'duel_invitation', `${user.handle} приглашает вас на дуэль.`, duel);
+          else {
+            const peer = [...duelRequests.values()].find(item => item.id !== duel.id && item.mode === 'random' && item.status === 'queued' && candidates.some(problem => !item.topics.length || problem.tags.some(tag => item.topics.includes(tag))));
+            if (peer) {
+              const common = candidates.filter(problem => !peer.topics.length || problem.tags.some(tag => peer.topics.includes(tag)));
+              const contest = startDuel(peer.creatorId, user.id, common);
+              matched(peer, user.id, contest); matched(duel, peer.creatorId, contest);
+              notify(peer.creatorId, 'duel_started', 'Соперник найден. Дуэль началась.', peer);
+              notify(user.id, 'duel_started', 'Соперник найден. Дуэль началась.', duel);
+            }
+          }
+          return send(response, 201, duelDto(duel));
+        }
+        if (id) {
+          const duel = visibleDuel(id, user);
+          if (method === 'GET' && !action) return send(response, 200, duelDto(duel));
+          if (method === 'POST' && action === 'cancel') {
+            if (duel.creatorId !== user.id) throw new ApiError(403, 'Отменить поиск может только его автор.');
+            if (duel.status !== 'cancelled' && !['queued', 'invited'].includes(duel.status)) throw new ApiError(400, 'Этот поиск уже завершен.');
+            if (duel.status !== 'cancelled') cancelWaiting(duel);
+            return send(response, 200, duelDto(duel));
+          }
+          if (method === 'POST' && ['accept', 'decline'].includes(action)) {
+            if (duel.mode !== 'invite' || duel.opponentId !== user.id) throw new ApiError(403, 'Ответить на приглашение может только соперник.');
+            if (action === 'accept' && duel.status === 'matched' || action === 'decline' && duel.status === 'declined') return send(response, 200, duelDto(duel));
+            if (duel.status !== 'invited') throw new ApiError(400, 'Приглашение уже недоступно.');
+            if (action === 'decline') {
+              duel.status = 'declined';
+              notify(duel.creatorId, 'duel_declined', `${user.handle} отклонил приглашение.`, duel);
+            } else {
+              const active = activeDuel(user.id);
+              if (active?.status === 'matched') throw new ApiError(400, 'Сначала завершите текущую дуэль.');
+              if (active) cancelWaiting(active);
+              const candidates = codingPool(duel.topics);
+              if (!candidates.length) throw new ApiError(400, 'По выбранным темам нет задач.');
+              const contest = startDuel(duel.creatorId, user.id, candidates);
+              matched(duel, user.id, contest);
+              notify(duel.creatorId, 'duel_started', `${user.handle} принял приглашение. Дуэль началась.`, duel);
+              notify(user.id, 'duel_started', 'Вы приняли приглашение. Дуэль началась.', duel);
+            }
+            return send(response, 200, duelDto(duel));
+          }
+        }
+      }
+
+      if (resource === 'notifications') {
+        const user = requireUser();
+        expireDuels();
+        if (method === 'GET' && !id) {
+          const own = notifications.filter(item => item.userId === user.id);
+          const items = own.map(({ userId, ...item }) => ({ ...item, duelStatus: duelRequests.get(item.duelRequestId)?.status, contestId: duelRequests.get(item.duelRequestId)?.contestId ?? item.contestId }));
+          return send(response, 200, { ...page(items, query), unreadCount: own.filter(item => !item.readAt).length });
+        }
+        if (method === 'PUT' && action === 'read') {
+          const item = notifications.find(item => item.id === id && item.userId === user.id);
+          if (!item) throw new ApiError(404, 'Уведомление не найдено.');
+          item.readAt ??= new Date().toISOString();
+          return send(response, 204);
+        }
+      }
 
       if (resource === 'session' && segments.length === 1) {
         if (method === 'GET') return send(response, 200, publicUser(requireUser()));
@@ -431,6 +565,7 @@ export function createApiServer() {
             versionId: `fixture-${problem.id}-v1`, statementMarkdown: statementMarkdown(problem), starterCode: problem.starter,
             timeLimitSeconds: problem.limits.timeSeconds, memoryLimitMb: problem.limits.memoryMb,
             environmentMarkdown: environmentMarkdown(problem.benchmark),
+            benchmark: { inputDescription: problem.benchmark.caseLabel, aggregation: 'geometric_mean', timingMode: 'wall', warmupRuns: 1, maxRuns: 3, gpuName: null, synthetic: true },
             firstCode: problem.firstCode ?? null, secondCode: problem.secondCode ?? null,
             guessSubmissionId: problem.format === 'guess' && model.user() ? String(model.submissions({ userId: model.user().id, problemId: id, contestId }).find(item => item.guessResult)?.id ?? '') || null : null,
           });
@@ -538,10 +673,6 @@ export function createApiServer() {
           const values = validateContestInput(body);
           const result = model.saveContest(null, values);
           if (!result.ok) throw new ApiError(400, result.error);
-          if (values.format === 'duel') mutateModel(state => {
-            Object.assign(state.contests.find(item => item.id === result.contest.id), { format: 'duel', challengerId: model.user().id, opponentId: values.opponentId });
-            state.registrations.push({ contestId: result.contest.id, userId: model.user().id });
-          });
           return send(response, 201, contestDto(contestById(result.contest.id), true));
         }
       }

@@ -47,6 +47,8 @@ class SecurityConfig(
             }
             .authorizeHttpRequests { authorize ->
                 authorize
+                    .requestMatchers(HttpMethod.GET, "/api/duels/topics").permitAll()
+                    .requestMatchers("/api/duels", "/api/duels/**", "/api/notifications", "/api/notifications/**").authenticated()
                     .requestMatchers(HttpMethod.GET, "/api/session").authenticated()
                     .requestMatchers(HttpMethod.DELETE, "/api/session").authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/submissions/*/recheck").authenticated()

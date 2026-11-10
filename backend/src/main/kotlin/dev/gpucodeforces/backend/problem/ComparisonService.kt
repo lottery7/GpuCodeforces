@@ -9,6 +9,7 @@ import dev.gpucodeforces.backend.contest.ContestRepository
 import dev.gpucodeforces.backend.submission.Submission
 import dev.gpucodeforces.backend.submission.SubmissionRepository
 import dev.gpucodeforces.backend.submission.SubmissionStatus
+import dev.gpucodeforces.backend.submission.MeasurementData
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.judge.api.ProblemSpec
 import org.springframework.stereotype.Service
@@ -45,6 +46,19 @@ class ComparisonService(
         val now = Instant.now()
         val firstVersion = validate(first, problemId, now)
         val secondVersion = validate(second, problemId, now)
+        val firstFormat = jsonMapper.readValue(firstVersion.formatData, ProblemFormatData::class.java)
+        val secondFormat = jsonMapper.readValue(secondVersion.formatData, ProblemFormatData::class.java)
+        val firstMeasurement = first.measurement?.let { jsonMapper.readValue(it, MeasurementData::class.java) }
+        val secondMeasurement = second.measurement?.let { jsonMapper.readValue(it, MeasurementData::class.java) }
+        if (firstFormat.aggregation() != secondFormat.aggregation() ||
+            firstMeasurement?.aggregation?.let { it != firstFormat.aggregation() } == true ||
+            secondMeasurement?.aggregation?.let { it != secondFormat.aggregation() } == true ||
+            (firstFormat.aggregation() != BenchmarkDefinition.MAX && (firstMeasurement == null || secondMeasurement == null)) ||
+            (firstMeasurement != null && secondMeasurement != null &&
+                (firstMeasurement.timingMode != secondMeasurement.timingMode || firstMeasurement.gpuName != secondMeasurement.gpuName ||
+                    firstMeasurement.toolchain != secondMeasurement.toolchain || firstMeasurement.synthetic != secondMeasurement.synthetic))) {
+            throw BadRequestException("Нельзя сравнивать разные метрики или условия измерения")
+        }
         if (first.judgeHash != second.judgeHash || first.environmentMarkdown != second.environmentMarkdown ||
             jsonMapper.readValue(firstVersion.judgeSpec, ProblemSpec::class.java) != jsonMapper.readValue(secondVersion.judgeSpec, ProblemSpec::class.java)) {
             throw BadRequestException("Посылки должны быть проверены на одинаковых тестах и в одинаковом окружении")
@@ -57,6 +71,8 @@ class ComparisonService(
                 explanation = description,
                 firstCode = first.code,
                 secondCode = second.code,
+                benchmark = firstFormat.benchmark,
+                benchmarkSynthetic = firstMeasurement?.synthetic ?: secondMeasurement?.synthetic,
             ),
         )
         val id = "comparison-${UUID.randomUUID()}"

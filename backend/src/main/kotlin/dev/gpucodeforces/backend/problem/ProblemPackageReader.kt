@@ -79,9 +79,12 @@ class ProblemPackageReader(jsonMapper: JsonMapper) {
             // The generated starter counts too: a better template has to reach problems already in the bank.
             contentHash = if (formatFile == null) sha256(statementFile, specFile, generator, starter)
                 else sha256(statementFile, specFile, generator, starter, formatFile, format.firstCode.orEmpty(), format.secondCode.orEmpty()),
-            judgeHash = if (format.format == ProblemFormatData.GUESS)
-                sha256(specFile, generator, formatFile!!, format.firstCode!!, format.secondCode!!)
-                else sha256(specFile, generator),
+            judgeHash = when {
+                format.format == ProblemFormatData.GUESS -> sha256(specFile, generator, formatFile!!, format.firstCode!!, format.secondCode!!)
+                format.format == ProblemFormatData.OPTIMIZATION && format.benchmark != null ->
+                    sha256(specFile, generator, specMapper.writeValueAsString(format.benchmark))
+                else -> sha256(specFile, generator)
+            },
             format = format,
         )
     }
@@ -95,6 +98,14 @@ class ProblemPackageReader(jsonMapper: JsonMapper) {
         }
         if (format.format !in ProblemFormatData.FORMATS) fail("неизвестный format в $FORMAT_FILE")
         if (format.firstCode != null || format.secondCode != null) fail("варианты кода задаются файлами first.cu и second.cu")
+        if (format.benchmarkSynthetic != null) fail("источник измерений задаёт платформа")
+        format.benchmark?.let { benchmark ->
+            if (benchmark.inputDescription.isBlank() || benchmark.inputDescription.length > 4000) fail("benchmark.inputDescription должен быть непустым, до 4000 символов")
+            if (benchmark.aggregation !in BenchmarkDefinition.AGGREGATIONS) fail("неизвестный benchmark.aggregation")
+            if (format.format == ProblemFormatData.STANDARD && benchmark.aggregation != BenchmarkDefinition.MAX) {
+                fail("обычные задачи используют benchmark.aggregation=max")
+            }
+        }
         return when (format.format) {
             ProblemFormatData.OPTIMIZATION -> {
                 if (format.baselineTimeMs == null || format.baselineTimeMs <= BigDecimal.ZERO) fail("baselineTimeMs должен быть больше нуля")

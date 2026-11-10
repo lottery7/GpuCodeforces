@@ -15,6 +15,15 @@ import dev.gpucodeforces.backend.api.model.RunAdminScriptRequest
 import dev.gpucodeforces.backend.api.model.Submission
 import dev.gpucodeforces.backend.api.model.SubmitSolutionRequest
 import dev.gpucodeforces.backend.api.model.User
+import dev.gpucodeforces.backend.problem.BenchmarkDefinition
+import dev.gpucodeforces.backend.problem.ProblemCatalog
+import dev.gpucodeforces.backend.problem.ProblemFormatData
+import dev.gpucodeforces.backend.problem.ProblemRepository
+import dev.gpucodeforces.backend.problem.ProblemVersion
+import dev.gpucodeforces.backend.problem.ProblemVersionRepository
+import dev.gpucodeforces.backend.submission.MeasurementData
+import dev.gpucodeforces.backend.submission.SubmissionRepository
+import dev.gpucodeforces.judge.api.GpuInfo
 import dev.gpucodeforces.judge.api.JudgeEvent
 import dev.gpucodeforces.judge.api.JudgeResult
 import dev.gpucodeforces.judge.api.Progress
@@ -38,6 +47,7 @@ import org.springframework.http.MediaType
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 import org.springframework.test.web.servlet.client.RestTestClient
+import org.springframework.transaction.support.TransactionTemplate
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.postgresql.PostgreSQLContainer
@@ -53,6 +63,8 @@ import java.time.temporal.ChronoUnit
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.UUID
+import dev.gpucodeforces.backend.problem.Problem as StoredProblem
 
 /** The whole submission path: REST -> judge gateway (stub) -> events through RabbitMQ -> results everywhere. */
 @Tag("integration")
@@ -67,6 +79,21 @@ class SubmissionIntegrationTest {
 
     @Autowired
     lateinit var jsonMapper: JsonMapper
+
+    @Autowired
+    lateinit var problemCatalog: ProblemCatalog
+
+    @Autowired
+    lateinit var problemRepository: ProblemRepository
+
+    @Autowired
+    lateinit var versionRepository: ProblemVersionRepository
+
+    @Autowired
+    lateinit var submissionRepository: SubmissionRepository
+
+    @Autowired
+    lateinit var transactionTemplate: TransactionTemplate
 
     private val client by lazy { RestTestClient.bindToServer().baseUrl("http://localhost:$port/api").build() }
 
@@ -239,6 +266,63 @@ class SubmissionIntegrationTest {
         assertThat(console.result).isEqualTo("2")
         assertThat(console.output).contains("ProblemSyncService")
         assertThat(console.error).isNull()
+    }
+
+    @Test
+    fun `optimization persists geometric measurements and reports invalid data as a recheckable error`() {
+        val (_, cookie) = register("metrics_user")
+        val source = problemCatalog.currentVersion("vector_add")!!
+        val id = "geometric_vector_add"
+        transactionTemplate.executeWithoutResult {
+            val problem = problemRepository.save(StoredProblem(id))
+            val version = versionRepository.save(
+                ProblemVersion(
+                    UUID.randomUUID(), id, "G", source.title, source.difficulty, source.tags, source.authors, false,
+                    source.statementMarkdown, source.starterCode,
+                    jsonMapper.writeValueAsString(problemCatalog.spec(source).copy(id = id)),
+                    "geometric-content", "geometric-judge", null, format = "optimization",
+                    formatData = jsonMapper.writeValueAsString(
+                        ProblemFormatData(
+                            format = "optimization", baselineTimeMs = BigDecimal("4"),
+                            benchmark = BenchmarkDefinition("Два теста сложения векторов", "geometric_mean"),
+                        ),
+                    ),
+                ),
+            )
+            problem.currentVersionId = version.id
+        }
+        fun send() = client.post().uri("/submissions").contentType(MediaType.APPLICATION_JSON).cookie("session", cookie)
+            .body(SubmitSolutionRequest(id, "void solve() {}"))
+            .exchange().expectStatus().isAccepted.expectBody(Submission::class.java).returnResult().responseBody!!
+        val measured = finished(Verdict.ACCEPTED, 2, time = 4.0).copy(
+            tests = listOf(TestResult(1, "first", true, Verdict.ACCEPTED, 1.0, 1.0, 1), TestResult(2, "second", false, Verdict.ACCEPTED, 4.0, 4.0, 3)),
+            gpu = GpuInfo("rtx3060", "Actual device", 0, "executor-1"), toolchain = "nvcc test",
+        )
+        val first = send()
+        val firstRequest = nextGatewayRequest()
+        publish(event(firstRequest, 1, JUDGE_FINISHED, result = measured))
+        val accepted = awaitStatus(first.id, "accepted", cookie)
+        assertThat(accepted.timeMs).isEqualByComparingTo("2.0")
+        assertThat(accepted.measurement!!.aggregation.value).isEqualTo("geometric_mean")
+        assertThat(accepted.measurement!!.gpuName).isEqualTo("Actual device")
+        assertThat(accepted.measurement!!.testCount).isEqualTo(2)
+        val stored = jsonMapper.readValue(submissionRepository.findById(UUID.fromString(first.id)).orElseThrow().measurement!!, MeasurementData::class.java)
+        assertThat(stored.tests.map { it.timeMs.toPlainString() }).containsExactly("1.0", "4.0")
+        assertThat(stored.tests.map { it.runs }).containsExactly(1, 3)
+        assertThat(stored.toolchain).isEqualTo("nvcc test")
+        assertThat(jsonMapper.writeValueAsString(fetch(first.id))).doesNotContain("toolchain", "\"tests\"", "nvcc test")
+
+        val invalid = send()
+        val invalidRequest = nextGatewayRequest()
+        publish(event(invalidRequest, 1, JUDGE_FINISHED, result = measured.copy(tests = measured.tests.map { it.copy(timeMs = null) })))
+        val failed = awaitStatus(invalid.id, "measurement_error", cookie)
+        assertThat(failed.timeMs).isNull()
+        assertThat(failed.measurement).isNull()
+        assertThat(failed.diagnostic).contains("замер")
+        client.post().uri("/submissions/${invalid.id}/recheck").cookie("session", cookie).exchange().expectStatus().isAccepted
+        val recheckRequest = nextGatewayRequest()
+        publish(event(recheckRequest, 1, JUDGE_FINISHED, result = measured))
+        assertThat(awaitStatus(invalid.id, "accepted", cookie).timeMs).isEqualByComparingTo("2.0")
     }
 
     companion object {

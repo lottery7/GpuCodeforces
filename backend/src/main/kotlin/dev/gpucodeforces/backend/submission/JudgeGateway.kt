@@ -24,7 +24,14 @@ data class JudgeProperties(
     val stuckAfter: Duration = Duration.ofMinutes(10),
     /** Unfinished submissions one user may have at a time. */
     val maxPendingPerUser: Int = 5,
-)
+    val executionMode: String = "gpu",
+) {
+    init {
+        require(executionMode in setOf("gpu", "mock")) { "platform.judge.execution-mode must be gpu or mock" }
+    }
+
+    val synthetic: Boolean get() = executionMode == "mock"
+}
 
 sealed interface SendOutcome {
     data class Accepted(val jobId: String) : SendOutcome

@@ -8,6 +8,8 @@ import org.springframework.data.jpa.repository.Query
 import java.util.UUID
 
 interface UserRepository : JpaRepository<User, UUID> {
+    fun findByHandleIgnoreCase(handle: String): User?
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT u FROM User u WHERE u.id = :id")
     fun findForUpdate(id: UUID): User?

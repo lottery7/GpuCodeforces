@@ -11,6 +11,7 @@ import Submission from '../src/pages/Submission';
 import Contest from '../src/pages/Contest';
 import ContestEditor from '../src/pages/ContestEditor';
 import { SubmissionTable } from '../src/pages/Submissions';
+import RuntimeNotice from '../src/components/RuntimeNotice';
 
 const session = vi.hoisted(() => ({ user: null as User | null }));
 vi.mock('../src/auth', () => ({ useSession: () => ({ user: session.user, isLoading: false, error: null }) }));
@@ -24,7 +25,7 @@ const duel: ContestRecord = { id: 'duel', title: 'CUDA Duel', format: 'duel', ch
 
 function open(path: string) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } });
-  render(<QueryClientProvider client={client}><MemoryRouter initialEntries={[path]}><Routes>
+  render(<QueryClientProvider client={client}><RuntimeNotice /><MemoryRouter initialEntries={[path]}><Routes>
     <Route path="/problem/:id" element={<Problem />} /><Route path="/problems" element={<Problems />} />
     <Route path="/submission/:id" element={<Submission />} /><Route path="/contest/:id" element={<Contest />} />
     <Route path="/contests/new" element={<ContestEditor />} />
@@ -36,6 +37,7 @@ beforeEach(() => {
   session.user = owner;
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() });
   vi.spyOn(api, 'problemLeaders').mockResolvedValue([]);
+  vi.spyOn(api, 'getRuntime').mockResolvedValue({ executionMode: 'gpu', gpuName: 'NVIDIA A100' });
 });
 
 describe('Форматы задач', () => {
@@ -50,11 +52,11 @@ describe('Форматы задач', () => {
     expect(screen.queryByRole('button', { name: 'Проверить пример' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Лидеры' })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('radio', { name: 'Код 1 быстрее' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Ответить' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Проверить выбор' }));
     expect(submit).toHaveBeenCalledWith(task.id, 'practice', { choice: 'first' });
-    expect(await screen.findByText('Верно!')).toBeVisible();
+    expect(await screen.findByText('Верно')).toBeVisible();
     expect(screen.getByText(answer.guessResult!.explanation)).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Ответить' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Проверить выбор' })).not.toBeInTheDocument();
     expect(screen.getByRole('radio', { name: 'Код 2 быстрее' })).toBeDisabled();
     expect(coding).not.toHaveBeenCalled(); expect(example).not.toHaveBeenCalled();
   });
@@ -63,20 +65,20 @@ describe('Форматы задач', () => {
     const get = vi.spyOn(api, 'getProblem').mockResolvedValue({ ...task, lastSubmissionId: 'old-version', guessSubmissionId: null });
     const previous = vi.spyOn(api, 'getSubmission').mockResolvedValue(answer);
     const client = open('/problem/vector');
-    expect(await screen.findByRole('button', { name: 'Ответить' })).toBeDisabled();
+    expect(await screen.findByRole('button', { name: 'Проверить выбор' })).toBeDisabled();
     await userEvent.click(screen.getByRole('radio', { name: 'Код 2 быстрее' }));
-    expect(screen.getByRole('button', { name: 'Ответить' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Проверить выбор' })).toBeEnabled();
     expect(previous).not.toHaveBeenCalled();
     get.mockResolvedValue({ ...task, guessSubmissionId: answer.id });
     await client.invalidateQueries({ queryKey: ['problem'] });
-    expect(await screen.findByText('Верно!')).toBeVisible();
+    expect(await screen.findByText('Верно')).toBeVisible();
     expect(previous).toHaveBeenCalledWith(answer.id, expect.any(AbortSignal));
     expect(screen.getByRole('radio', { name: 'Код 1 быстрее' })).toBeChecked();
-    expect(screen.queryByRole('button', { name: 'Ответить' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Проверить выбор' })).not.toBeInTheDocument();
     get.mockResolvedValue({ ...task, versionId: 'new-version', guessSubmissionId: null });
     await client.invalidateQueries({ queryKey: ['problem'] });
-    expect(await screen.findByRole('button', { name: 'Ответить' })).toBeVisible();
-    expect(screen.queryByText('Верно!')).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Проверить выбор' })).toBeVisible();
+    expect(screen.queryByText('Верно')).not.toBeInTheDocument();
   });
 
   it('показывает ошибку ответа и позволяет повторить отправку', async () => {
@@ -84,10 +86,10 @@ describe('Форматы задач', () => {
     const submit = vi.spyOn(api, 'submitGuess').mockRejectedValueOnce(new Error('Связь потеряна.')).mockResolvedValue(answer);
     open('/problem/vector');
     await userEvent.click(await screen.findByRole('radio', { name: 'Код 1 быстрее' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Ответить' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Проверить выбор' }));
     expect(await screen.findByText('Связь потеряна.')).toBeVisible();
-    await userEvent.click(screen.getByRole('button', { name: 'Ответить' }));
-    expect(await screen.findByText('Верно!')).toBeVisible(); expect(submit).toHaveBeenCalledTimes(2);
+    await userEvent.click(screen.getByRole('button', { name: 'Проверить выбор' }));
+    expect(await screen.findByText('Верно')).toBeVisible(); expect(submit).toHaveBeenCalledTimes(2);
   });
 
   it('восстанавливает данный код оптимизации и показывает исходный замер', async () => {
@@ -96,7 +98,7 @@ describe('Форматы задач', () => {
     const editor = await screen.findByLabelText('Код решения на C++ и CUDA');
     expect(editor).toHaveValue('void solve() { slow(); }');
     expect(screen.getByText('1.250')).toBeVisible();
-    expect(screen.getByText(/Ускорение: 2.000x./)).toBeVisible();
+    expect(screen.getByText('2.000x')).toBeVisible();
     fireEvent.change(editor, { target: { value: 'void solve() { fast(); }' } });
     await userEvent.click(screen.getByRole('button', { name: 'Восстановить исходный код' }));
     expect(editor).toHaveValue('void solve() { slow(); }');
@@ -120,7 +122,7 @@ describe('Форматы задач', () => {
     expect(screen.queryByText('Таблица лидеров')).not.toBeInTheDocument();
     expect(screen.queryByText(/Время GPU:/)).not.toBeInTheDocument();
     expect(screen.queryByText(/другой конфигурации/)).not.toBeInTheDocument();
-    expect(Boolean(screen.queryByText('Верно!'))).toBe(own);
+    expect(Boolean(screen.queryByText('Верно'))).toBe(own);
   });
 
   it('не помечает правильный ответ в истории старым профилем', () => {
@@ -179,39 +181,65 @@ describe('Дуэль', () => {
     expect(await within(board).findByText('0.050')).toBeVisible();
   });
 
-  it('создает дуэль с одним соперником и одной общей задачей', async () => {
-    vi.spyOn(api, 'allProblems').mockResolvedValue([{ ...task, format: 'standard' }, { ...task, id: 'second', code: '200', title: 'Другая', format: 'standard' }]);
-    vi.spyOn(api, 'listUsers').mockResolvedValue({ items: [opponent], total: 1 });
-    vi.spyOn(api, 'getProfile').mockResolvedValue({ user: opponent, solvedCount: 0, contests: [] });
-    vi.spyOn(api, 'getContest').mockResolvedValue(duel);
-    vi.spyOn(api, 'contestStandings').mockResolvedValue([]);
-    const create = vi.spyOn(api, 'createContest').mockResolvedValue(duel);
-    open('/contests/new?format=duel');
-    await userEvent.type(await screen.findByRole('textbox', { name: 'Название' }), 'Дуэль');
-    await userEvent.type(screen.getByRole('searchbox', { name: 'Найти соперника по нику' }), opponent.handle);
-    await userEvent.click(await screen.findByRole('button', { name: `Добавить ${opponent.handle}` }));
-    await userEvent.click(screen.getByRole('radio', { name: /100. Сложение/ }));
-    await userEvent.click(screen.getByRole('radio', { name: /200. Другая/ }));
-    expect(screen.getByRole('radio', { name: /100. Сложение/ })).not.toBeChecked();
-    await userEvent.click(screen.getByRole('button', { name: 'Создать дуэль' }));
-    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ format: 'duel', authorIds: [owner.id], opponentId: opponent.id, problemIds: ['second'] })));
-  });
 });
 
-describe('Сравнение своих решений', () => {
-  it('публикует выбранные посылки с предупреждением и объяснением', async () => {
+describe('Экран решения', () => {
+  it('не добавляет лишние действия под редактором', async () => {
     vi.spyOn(api, 'getProblem').mockResolvedValue({ ...task, format: 'standard' });
-    vi.spyOn(api, 'listContests').mockResolvedValue([]);
-    vi.spyOn(api, 'listSubmissions').mockResolvedValue({ items: [{ ...answer, id: 'one', format: 'standard', timeMs: 0.1 }, { ...answer, id: 'two', format: 'standard', timeMs: 0.2 }], total: 2 });
-    const create = vi.spyOn(api, 'createComparison').mockResolvedValue(task);
     open('/problem/vector');
-    await userEvent.click(await screen.findByText('Сравнить мои решения'));
-    expect(screen.getByText(/Оба выбранных исходных кода будут опубликованы/)).toBeVisible();
-    await userEvent.selectOptions(await screen.findByRole('combobox', { name: 'Код 1: посылка' }), 'one');
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Код 2: посылка' }), 'two');
-    expect(screen.getByRole('button', { name: 'Опубликовать сравнение' })).toBeDisabled();
-    await userEvent.type(screen.getByRole('textbox', { name: 'Объяснение' }), ' Последовательное чтение быстрее. ');
-    await userEvent.click(screen.getByRole('button', { name: 'Опубликовать сравнение' }));
-    expect(create).toHaveBeenCalledWith(task.id, { firstSubmissionId: 'one', secondSubmissionId: 'two', explanation: 'Последовательное чтение быстрее.' });
+    await screen.findByLabelText('Код решения на C++ и CUDA');
+    expect(screen.queryByText('Сравнить мои решения')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'К условию' })).not.toBeInTheDocument();
+  });
+
+  it('сохраняет правки при просмотре исходного решения', async () => {
+    vi.spyOn(api, 'getProblem').mockResolvedValue({ ...task, format: 'optimization', starterCode: 'void solve() { original(); }' });
+    open('/problem/vector');
+    const editor = await screen.findByLabelText('Код решения на C++ и CUDA');
+    fireEvent.change(editor, { target: { value: 'void solve() { optimized(); }' } });
+    await userEvent.click(screen.getByRole('tab', { name: 'Исходное решение' }));
+    expect(screen.getByRole('textbox', { name: 'Исходное решение' })).toHaveValue('void solve() { original(); }');
+    expect(screen.getByRole('textbox', { name: 'Исходное решение' })).toHaveAttribute('readonly');
+    expect(screen.queryByRole('button', { name: 'Отправить' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('tab', { name: 'Ваше решение' }));
+    expect(screen.getByLabelText('Код решения на C++ и CUDA')).toHaveValue('void solve() { optimized(); }');
+  });
+
+  it('показывает условия сравнения без служебной таблицы окружения', async () => {
+    vi.spyOn(api, 'getProblem').mockResolvedValue({ ...task, environmentMarkdown: 'Mock GPU sm_86 nvcc', benchmark: { inputDescription: 'Три размера векторов', aggregation: 'geometric_mean', timingMode: 'wall', warmupRuns: 1, maxRuns: 3, gpuName: 'Mock GPU', synthetic: true } });
+    open('/problem/vector');
+    expect(await screen.findByText('Три размера векторов')).toBeVisible();
+    expect(screen.getByText('Геометрическое среднее по тестам')).toBeVisible();
+    expect(screen.queryByText(/Mock GPU/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Среда и замер')).not.toBeInTheDocument();
+  });
+
+  it.each(['/problem/vector', '/submission/42'])('помечает сохраненные тестовые результаты при запуске с GPU: %s', async path => {
+    vi.spyOn(api, 'getProblem').mockResolvedValue({ ...task, benchmark: { inputDescription: 'Три размера векторов', aggregation: 'geometric_mean', timingMode: 'wall', warmupRuns: 1, maxRuns: 3, gpuName: null, synthetic: true } });
+    vi.spyOn(api, 'getSubmission').mockResolvedValue({ ...answer, format: 'standard', timeMs: 0.1, comparable: true, measurement: { aggregation: 'max', timingMode: 'wall', gpuName: null, synthetic: true, testCount: 3 } });
+    open(path);
+    expect(await screen.findByText('Тестовые результаты')).toBeVisible();
+    expect(screen.queryByText(/Локальный стенд:/)).not.toBeInTheDocument();
+  });
+
+  it('не дублирует общую пометку mock для тестовых результатов', async () => {
+    vi.mocked(api.getRuntime).mockResolvedValue({ executionMode: 'mock', gpuName: null });
+    vi.spyOn(api, 'getProblem').mockResolvedValue({ ...task, benchmark: { inputDescription: 'Три размера векторов', aggregation: 'geometric_mean', timingMode: 'wall', warmupRuns: 1, maxRuns: 3, gpuName: null, synthetic: true } });
+    open('/problem/vector');
+    expect(await screen.findByText(/Локальный стенд:/)).toBeVisible();
+    await screen.findByText('Три размера векторов');
+    expect(screen.queryByText('Тестовые результаты')).not.toBeInTheDocument();
+  });
+
+  it('показывает разбор неверного выбора на месте без повторной ссылки', async () => {
+    vi.spyOn(api, 'getProblem').mockResolvedValue(task);
+    vi.spyOn(api, 'submitGuess').mockResolvedValue({ ...answer, status: 'wrong_answer', guessResult: { ...answer.guessResult!, choice: 'equal' } });
+    open('/problem/vector');
+    await userEvent.click(await screen.findByRole('radio', { name: 'Одинаково' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Проверить выбор' }));
+    expect(await screen.findByText('Не угадали')).toBeVisible();
+    expect(screen.getByText('Вы выбрали: одинаково.')).toBeVisible();
+    expect(screen.queryByRole('link', { name: 'Посмотреть ответ' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Проверить выбор' })).not.toBeInTheDocument();
   });
 });

@@ -52,15 +52,6 @@ class ContestService(
     @Transactional
     fun create(input: ContestInputApi, creator: User): Contest {
         validate(input)
-        val format = input.format?.value ?: "standard"
-        if (format == "duel" && input.authorIds != setOf(creator.id.toString())) {
-            throw BadRequestException("Единственный автор дуэли - её инициатор")
-        }
-        val opponent = if (format == "duel") {
-            val id = input.opponentId?.toUuidOrBadRequest("Соперник не найден") ?: throw BadRequestException("Выберите соперника")
-            if (id == creator.id) throw BadRequestException("Нельзя вызвать на дуэль себя")
-            userRepository.findById(id).orElseThrow { BadRequestException("Соперник не найден") }
-        } else null
         val contest = contestRepository.save(
             Contest(
                 id = UUID.randomUUID(),
@@ -69,13 +60,9 @@ class ContestService(
                 endAt = input.endAt.toInstant(),
                 gpu = gpuProperties.name,
                 authors = resolveAuthors(input.authorIds).toMutableSet(),
-                format = format,
-                challengerId = if (format == "duel") creator.id else null,
-                opponentId = opponent?.id,
             ),
         )
         saveProblems(contest.id, input.problemIds)
-        if (format == "duel") contestRegistrationRepository.save(ContestRegistration(contest.id, creator.id))
         log.info("Contest {} created by {}: {} - {}, problems {}", contest.id, creator.handle, contest.startAt, contest.endAt, input.problemIds)
         return contest
     }
@@ -92,6 +79,7 @@ class ContestService(
     @Transactional
     fun update(id: String, input: ContestInputApi, currentUser: User): Contest {
         val contest = get(id)
+        if (contest.format == "duel") throw ForbiddenException("Дуэль нельзя редактировать")
         if (contest.authors.none { it.id == currentUser.id }) {
             throw ForbiddenException("Изменять контест могут только его авторы")
         }
@@ -99,12 +87,6 @@ class ContestService(
             throw ForbiddenException("Контест нельзя изменить после начала")
         }
         validate(input)
-        if ((input.format?.value ?: "standard") != contest.format || input.opponentId != contest.opponentId?.toString()) {
-            throw BadRequestException("Формат и участников дуэли нельзя изменить")
-        }
-        if (contest.format == "duel" && input.authorIds != setOf(contest.challengerId.toString())) {
-            throw BadRequestException("Единственный автор дуэли - её инициатор")
-        }
         contest.title = input.title
         contest.startAt = input.startAt.toInstant()
         contest.endAt = input.endAt.toInstant()
@@ -173,9 +155,7 @@ class ContestService(
 
     private fun validate(input: ContestInputApi) {
         val format = input.format?.value ?: "standard"
-        if (format !in setOf("standard", "duel")) throw BadRequestException("Неизвестный формат контеста")
-        if (format == "duel" && input.problemIds.size != 1) throw BadRequestException("Для дуэли нужна ровно одна задача")
-        if (format == "standard" && input.opponentId != null) throw BadRequestException("Соперник задаётся только для дуэли")
+        if (format != "standard" || input.opponentId != null) throw BadRequestException("Для дуэли используйте поиск соперника")
         val now = Instant.now()
         if (!input.startAt.toInstant().isAfter(now)) throw BadRequestException("Начало контеста должно быть в будущем")
         if (!input.endAt.toInstant().isAfter(input.startAt.toInstant())) {

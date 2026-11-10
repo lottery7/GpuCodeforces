@@ -3,7 +3,7 @@ info:
   title: GPU Codeforces Frontend API
   version: 0.1.0
   description: |
-    Предлагаемый контракт MVP. Все даты в UTC, время GPU в миллисекундах.
+    Предлагаемый контракт MVP. Все даты в UTC, время выполнения в миллисекундах; метрика указана в benchmark.
     Только публичные задачи; подготовка задач и API воркера находятся вне этого контракта.
     Сессия в HttpOnly cookie с Secure и SameSite=Lax. Запросы с телом используют
     application/json; для изменяющих запросов сервер проверяет Origin. Фронт и API на одном origin.
@@ -16,6 +16,129 @@ servers:
   - url: /api
 security: [{}, {session: []}]
 paths:
+  /runtime:
+    get:
+      operationId: getRuntime
+      responses:
+        '200':
+          description: Режим проверки решений.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RuntimeInfo'}
+        default: {$ref: '#/components/responses/Error'}
+  /duels/topics:
+    get:
+      operationId: listDuelTopics
+      responses:
+        '200':
+          description: Темы опубликованных задач с отправкой кода.
+          content:
+            application/json:
+              schema: {type: array, items: {type: string}}
+        default: {$ref: '#/components/responses/Error'}
+  /duels/current:
+    get:
+      operationId: getCurrentDuel
+      security: [{session: []}]
+      responses:
+        '200':
+          description: Свой поиск, исходящее приглашение или начавшаяся дуэль.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DuelRequest'}
+        '204': {description: Активного запроса или дуэли нет.}
+        default: {$ref: '#/components/responses/Error'}
+  /duels:
+    post:
+      operationId: createDuel
+      security: [{session: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateDuelRequest'}
+      responses:
+        '201':
+          description: Запрос создан; при подборе соперника дуэль уже началась.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DuelRequest'}
+        default: {$ref: '#/components/responses/Error'}
+  /duels/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      operationId: getDuel
+      security: [{session: []}]
+      responses:
+        '200':
+          description: Текущее состояние; доступно только участникам запроса.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DuelRequest'}
+        default: {$ref: '#/components/responses/Error'}
+  /duels/{id}/accept:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      operationId: acceptDuel
+      security: [{session: []}]
+      responses:
+        '200':
+          description: Текущее состояние; доступно только участникам запроса.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DuelRequest'}
+        default: {$ref: '#/components/responses/Error'}
+  /duels/{id}/decline:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      operationId: declineDuel
+      security: [{session: []}]
+      responses:
+        '200':
+          description: Текущее состояние; доступно только участникам запроса.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DuelRequest'}
+        default: {$ref: '#/components/responses/Error'}
+  /duels/{id}/cancel:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      operationId: cancelDuel
+      security: [{session: []}]
+      responses:
+        '200':
+          description: Текущее состояние; доступно только участникам запроса.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DuelRequest'}
+        default: {$ref: '#/components/responses/Error'}
+  /notifications:
+    get:
+      operationId: listNotifications
+      security: [{session: []}]
+      parameters:
+        - {$ref: '#/components/parameters/Offset'}
+        - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: Новые первыми; счетчик всех непрочитанных уведомлений.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/NotificationPage'}
+        default: {$ref: '#/components/responses/Error'}
+  /notifications/{id}/read:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    put:
+      operationId: readNotification
+      security: [{session: []}]
+      responses:
+        '204': {description: Уведомление прочитано.}
+        default: {$ref: '#/components/responses/Error'}
   /session:
     get:
       operationId: getCurrentUser
@@ -178,6 +301,7 @@ paths:
                     properties:
                       statementMarkdown: {type: string, description: 'Условие с сигнатурой, примерами, ограничениями входа и допусками.'}
                       starterCode: {type: string}
+                      benchmark: {$ref: '#/components/schemas/Benchmark'}
                       versionId: {type: string, description: ID неизменяемой версии задачи.}
                       firstCode: {type: string, nullable: true, description: Первый вариант для угадывания; без времен и ответа.}
                       secondCode: {type: string, nullable: true, description: Второй вариант для угадывания; без времен и ответа.}
@@ -405,7 +529,7 @@ paths:
             schema: {$ref: '#/components/schemas/ContestInput'}
       responses:
         '201':
-          description: Контест создан; авторство не регистрирует для участия. В дуэли инициатор зарегистрирован сразу.
+          description: Контест создан; авторство не регистрирует для участия. Дуэли создаются через /duels.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Contest'}
@@ -426,7 +550,7 @@ paths:
     put:
       operationId: updateContest
       summary: Изменить контест до начала
-      description: Только текущим авторам. Список authorIds заменяется целиком; создателя можно убрать, если остается другой автор. Формат и участники дуэли не меняются; ее автором остается инициатор.
+      description: Только текущим авторам обычного контеста. Список authorIds заменяется целиком; создателя можно убрать, если остается другой автор. Дуэли через этот маршрут не редактируются.
       security: [{session: []}]
       requestBody:
         required: true
@@ -557,6 +681,92 @@ components:
             properties:
               message: {type: string}
   schemas:
+    DuelMode:
+      type: string
+      enum: [random, invite]
+    DuelStatus:
+      type: string
+      enum: [queued, invited, matched, declined, cancelled, expired]
+    CreateDuelRequest:
+      type: object
+      required: [mode, topics]
+      properties:
+        mode: {$ref: '#/components/schemas/DuelMode'}
+        opponentHandle: {type: string, minLength: 1, maxLength: 32}
+        topics: {type: array, uniqueItems: true, maxItems: 20, items: {type: string}}
+    DuelRequest:
+      type: object
+      required: [id, mode, status, creator, opponent, topics, createdAt, expiresAt, contestId]
+      properties:
+        id: {type: string}
+        mode: {$ref: '#/components/schemas/DuelMode'}
+        status: {$ref: '#/components/schemas/DuelStatus'}
+        creator: {$ref: '#/components/schemas/User'}
+        opponent:
+          allOf:
+            - {$ref: '#/components/schemas/User'}
+          nullable: true
+        topics: {type: array, items: {type: string}}
+        createdAt: {type: string, format: date-time}
+        expiresAt: {type: string, format: date-time}
+        contestId: {type: string, nullable: true}
+    NotificationType:
+      type: string
+      enum: [duel_invitation, duel_started, duel_declined, duel_cancelled]
+    Notification:
+      type: object
+      required: [id, type, message, duelRequestId, duelStatus, contestId, createdAt, readAt]
+      properties:
+        id: {type: string}
+        type: {$ref: '#/components/schemas/NotificationType'}
+        message: {type: string}
+        duelRequestId: {type: string}
+        duelStatus: {$ref: '#/components/schemas/DuelStatus'}
+        contestId: {type: string, nullable: true}
+        createdAt: {type: string, format: date-time}
+        readAt: {type: string, format: date-time, nullable: true}
+    NotificationPage:
+      type: object
+      required: [items, total, unreadCount]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Notification'}}
+        total: {type: integer}
+        unreadCount: {type: integer}
+    ExecutionMode:
+      type: string
+      enum: [gpu, mock]
+    RuntimeInfo:
+      type: object
+      required: [executionMode, gpuName]
+      properties:
+        executionMode: {$ref: '#/components/schemas/ExecutionMode'}
+        gpuName: {type: string, nullable: true}
+    BenchmarkAggregation:
+      type: string
+      enum: [max, geometric_mean]
+    MeasurementTiming:
+      type: string
+      enum: [wall, gpu_kernels]
+    Benchmark:
+      type: object
+      required: [inputDescription, aggregation, timingMode, warmupRuns, maxRuns, gpuName, synthetic]
+      properties:
+        inputDescription: {type: string}
+        aggregation: {$ref: '#/components/schemas/BenchmarkAggregation'}
+        timingMode: {$ref: '#/components/schemas/MeasurementTiming'}
+        warmupRuns: {type: integer}
+        maxRuns: {type: integer}
+        gpuName: {type: string, nullable: true}
+        synthetic: {type: boolean}
+    MeasurementSummary:
+      type: object
+      required: [aggregation, timingMode, gpuName, synthetic, testCount]
+      properties:
+        aggregation: {$ref: '#/components/schemas/BenchmarkAggregation'}
+        timingMode: {$ref: '#/components/schemas/MeasurementTiming'}
+        gpuName: {type: string, nullable: true}
+        synthetic: {type: boolean}
+        testCount: {type: integer}
     User:
       type: object
       required: [id, handle, rating, rank, ratingDelta, ratingContestId]
@@ -605,6 +815,7 @@ components:
         totalTests: {type: integer, nullable: true, description: В детали посылки; null до подготовки тестов.}
         previousBestTimeMs: {type: number, nullable: true, description: В детали посылки; личный рекорд в том же контексте и конфигурации до этой отправки.}
         environmentMarkdown: {type: string, description: В детали посылки; сохраненное оборудование и методика замера.}
+        measurement: {$ref: '#/components/schemas/MeasurementSummary'}
         code: {type: string, description: 'Только автору в GET /submissions/{id}.'}
         diagnostic: {type: string, description: 'Только автору в GET /submissions/{id}.'}
         guessResult:
@@ -642,12 +853,12 @@ components:
         rulesMarkdown: {type: string, description: 'В детали контеста; правила подсчета и список задач. До начала обычным посетителям только общие правила без названий задач.'}
     ContestInput:
       type: object
-      description: startAt в будущем, endAt позже startAt. Только публичные задачи; их порядок задает problemIds.
+      description: Обычный контест; startAt в будущем, endAt позже startAt. Только публичные задачи; их порядок задает problemIds. Для дуэли используйте POST /duels.
       required: [title, startAt, endAt, authorIds, problemIds]
       properties:
         title: {type: string, minLength: 1, maxLength: 100}
         format: {type: string, enum: [standard, duel], default: standard}
-        opponentId: {type: string, nullable: true, description: Для дуэли обязателен другой существующий пользователь.}
+        opponentId: {type: string, nullable: true, deprecated: true, description: Поле старого формата; дуэли создаются через /duels.}
         startAt: {type: string, format: date-time}
         endAt: {type: string, format: date-time}
         authorIds: {type: array, minItems: 1, uniqueItems: true, items: {type: string}}

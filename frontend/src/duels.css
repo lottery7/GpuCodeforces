@@ -1,0 +1,46 @@
+.header-notifications { margin-left: auto; }
+.header-notifications + .account { margin-left: 0; }
+.header-notifications + .account + .mobile-nav { margin-left: 0; }
+.notifications { position: relative; }
+.notification-toggle { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 7px 9px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--text); font-size: 12px; }
+.notification-toggle:hover, .notification-toggle[aria-expanded="true"] { background: var(--surface); border-color: var(--border); color: var(--text-strong); }
+.notification-count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; background: var(--primary); color: white; font-size: 11px; }
+.notifications-panel { position: absolute; top: calc(100% + 10px); right: 0; z-index: 100; width: min(420px, calc(100vw - 28px)); max-height: calc(100dvh - 90px); overflow: auto; padding: 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--chrome); box-shadow: 0 8px 28px #0006; }
+.notifications-panel:focus { outline: none; }
+.notifications-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.notifications-heading h2 { margin: 0; color: var(--text-strong); font-size: 16px; }
+.notification-list { display: grid; gap: 0; margin: 12px 0 0; padding: 0; list-style: none; }
+.notification-item { padding: 14px 0; border-top: 1px solid var(--border); }
+.notification-item > p:first-child { margin: 0 0 4px; }
+.notification-item.unread > p:first-child { color: var(--text-strong); }
+.notification-item > a { display: inline-block; margin-top: 10px; }
+.notification-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.notification-actions .btn { min-height: 34px; padding: 5px 10px; }
+.notification-more { width: 100%; margin-top: 12px; }
+.runtime-notice { margin-top: 0; font-size: 12px; }
+.duels-page { max-width: 820px; margin: 0 auto; }
+.duel-search-form { display: grid; gap: 22px; padding: 24px; }
+.duel-search-form > .btn { justify-self: start; }
+.duel-mode, .duel-topics { min-width: 0; margin: 0; padding: 0; border: 0; }
+.duel-mode legend, .duel-topics legend { margin-bottom: 10px; padding: 0; color: var(--text-strong); font-weight: 600; }
+.duel-mode { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.duel-mode-option { display: flex; align-items: center; gap: 10px; min-height: 58px; padding: 14px; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
+.duel-mode-option:has(input:checked) { border-color: var(--accent-border); background: var(--selection); color: var(--text-strong); }
+.duel-topic-options { display: flex; flex-wrap: wrap; gap: 8px; }
+.duel-topic { display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
+.duel-topic.selected { border-color: var(--accent-border); background: var(--selection); }
+.duel-waiting { display: grid; justify-items: center; padding: 36px 24px; text-align: center; }
+.duel-waiting h2 { margin: 16px 0 4px; color: var(--text-strong); font-size: 20px; }
+.duel-waiting > p { max-width: 540px; margin: 8px 0; }
+.duel-request-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 20px; }
+.duel-wait-indicator { width: 30px; height: 30px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: duel-search-spin 1s linear infinite; }
+.duel-finished-indicator { width: 14px; height: 14px; border-radius: 50%; background: var(--muted); }
+@keyframes duel-search-spin { to { transform: rotate(360deg); } }
+@media (max-width: 720px) {
+  .notification-toggle-label { display: none; }
+  .notifications-panel { position: fixed; top: 60px; left: 12px; right: 12px; width: auto; }
+  .duel-search-form { padding: 18px; }
+  .duel-mode { grid-template-columns: 1fr; }
+  .duel-search-form > .btn { justify-self: stretch; }
+}
+@media (prefers-reduced-motion: reduce) { .duel-wait-indicator { animation: none; } }

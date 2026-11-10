@@ -168,22 +168,14 @@ class ContestServiceTest {
     }
 
     @Test
-    fun `duel creation registers the challenger and keeps the invited opponent`() {
+    fun `generic contest creation rejects scheduled duels`() {
         val challenger = user("challenger")
         val opponent = user("opponent")
-        given(userRepository.findById(challenger.id)).willReturn(Optional.of(challenger))
-        given(userRepository.findById(opponent.id)).willReturn(Optional.of(opponent))
-        given(contestRepository.save(any(Contest::class.java))).willAnswer { it.arguments[0] }
-
-        val created = service.create(
+        assertThatThrownBy { service.create(
             input(setOf(challenger.id.toString())).format(ContestInputApi.FormatEnum.DUEL).opponentId(opponent.id.toString()),
             challenger,
-        )
-
-        assertThat(created.challengerId).isEqualTo(challenger.id)
-        assertThat(created.opponentId).isEqualTo(opponent.id)
-        assertThat(created.format).isEqualTo("duel")
-        verify(contestRegistrationRepository).save(ContestRegistration(created.id, challenger.id))
+        ) }.isInstanceOf(BadRequestException::class.java).hasMessageContaining("поиск соперника")
+        verify(contestRepository, never()).save(any(Contest::class.java))
     }
 
     @Test
@@ -200,39 +192,13 @@ class ContestServiceTest {
     }
 
     @Test
-    fun `a duel rejects multiple problems and self invitations`() {
-        val challenger = user()
-        val duel = input(setOf(challenger.id.toString()), problemIds = setOf("first", "second"))
-            .format(ContestInputApi.FormatEnum.DUEL).opponentId(UUID.randomUUID().toString())
-        assertThatThrownBy { service.create(duel, challenger) }.isInstanceOf(BadRequestException::class.java).hasMessageContaining("одна задача")
-
-        duel.problemIds(setOf("first")).opponentId(challenger.id.toString())
-        assertThatThrownBy { service.create(duel, challenger) }.isInstanceOf(BadRequestException::class.java).hasMessageContaining("себя")
-    }
-
-    @Test
-    fun `duel participants and format cannot be edited`() {
+    fun `existing duels cannot be edited through the contest API`() {
         val challenger = user()
         val opponent = user("opponent")
         val contest = contestFixture(authors = mutableSetOf(challenger), format = "duel", challengerId = challenger.id, opponentId = opponent.id)
         given(contestRepository.findById(contest.id)).willReturn(Optional.of(contest))
 
         assertThatThrownBy { service.update(contest.id.toString(), input(setOf(challenger.id.toString())), challenger) }
-            .isInstanceOf(BadRequestException::class.java).hasMessageContaining("нельзя изменить")
-    }
-
-    @Test
-    fun `a duel cannot grant another user author rights`() {
-        val challenger = user()
-        val opponent = user("opponent")
-        val input = input(setOf(challenger.id.toString(), opponent.id.toString()))
-            .format(ContestInputApi.FormatEnum.DUEL).opponentId(opponent.id.toString())
-        assertThatThrownBy { service.create(input, challenger) }
-            .isInstanceOf(BadRequestException::class.java).hasMessageContaining("Единственный автор")
-
-        val contest = contestFixture(authors = mutableSetOf(challenger), format = "duel", challengerId = challenger.id, opponentId = opponent.id)
-        given(contestRepository.findById(contest.id)).willReturn(Optional.of(contest))
-        assertThatThrownBy { service.update(contest.id.toString(), input, challenger) }
-            .isInstanceOf(BadRequestException::class.java).hasMessageContaining("Единственный автор")
+            .isInstanceOf(ForbiddenException::class.java).hasMessageContaining("нельзя редактировать")
     }
 }

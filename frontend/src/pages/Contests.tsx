@@ -49,7 +49,7 @@ export default function Contests() {
   ];
 
   return <>
-    <PageHeader title="Соревнования" actions={<><Link className="btn secondary" to={user ? '/contests/new?format=duel' : '/login?returnTo=%2Fcontests%2Fnew%3Fformat%3Dduel'}>Создать дуэль</Link><Link className="btn primary" to={user ? '/contests/new' : '/login?returnTo=%2Fcontests%2Fnew'}>Создать контест</Link></>} />
+    <PageHeader title="Соревнования" actions={<><Link className="btn secondary" to={user ? '/duels/new' : '/login?returnTo=%2Fduels%2Fnew'}>Создать дуэль</Link><Link className="btn primary" to={user ? '/contests/new' : '/login?returnTo=%2Fcontests%2Fnew'}>Создать контест</Link></>} />
     <Tabs items={entries} selected={selected} />
     {selected === 'mine' && !user && !isLoading ? <LoginRequired returnTo={returnTo}>Здесь будут контесты, в которых вы указаны автором.</LoginRequired> : <>
       <div className="toolbar">

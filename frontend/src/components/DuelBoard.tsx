@@ -32,9 +32,9 @@ export default function DuelBoard({ contest, commonProblem, finished }: { contes
       const row = rows.data?.find(item => item.user.id === id);
       const person = row?.user ?? people[index];
       const time = gpu.data?.find(leader => leader.user.id === id)?.timeMs;
-      return <div key={id ?? index}><strong>{person ? <UserLink user={person} /> : index === 0 ? 'Инициатор' : 'Соперник'}</strong><p>{row?.solved ? <>Решена за {solveTime(row.totalSeconds)}</> : 'Нет принятого решения'}</p>{time != null && <p>Лучшее время GPU: <TimeValue value={time} /> мс</p>}</div>;
+      return <div key={id ?? index}><strong>{person ? <UserLink user={person} /> : index === 0 ? 'Инициатор' : 'Соперник'}</strong><p>{row?.solved ? <>Решена за {solveTime(row.totalSeconds)}</> : 'Нет принятого решения'}</p>{time != null && <p>Лучшее время решения: <TimeValue value={time} /> мс</p>}</div>;
     })}</div>
     {finished && rows.data && <p role="status">{draw ? 'Ничья.' : <>Победитель: <UserLink user={winner.user} />.</>}</p>}
-    <p className="small muted">Место определяется решением задачи и временем первой принятой посылки. Время GPU показано отдельно.{!finished && ' Результаты обновляются каждые 5 секунд.'}</p>
+    <p className="small muted">Место определяется решением задачи и временем первой принятой посылки. Время решения показано отдельно.{!finished && ' Результаты обновляются каждые 5 секунд.'}</p>
   </section>;
 }

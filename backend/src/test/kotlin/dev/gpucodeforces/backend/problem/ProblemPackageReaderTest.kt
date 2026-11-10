@@ -143,4 +143,29 @@ class ProblemPackageReaderTest {
         directory.resolve("format.json").writeText(metadata.replace("Пояснение", ""))
         assertThatThrownBy { reader.read(directory) }.hasMessageContaining("explanation")
     }
+
+    @Test
+    fun `optimization measurements are scoped by their benchmark while legacy maximum stays compatible`() {
+        val directory = copyOf("vector_add")
+        val legacyHash = reader.read(directory).judgeHash
+        directory.resolve("starter.cu").writeText("void solve() {}")
+        @Language("JSON")
+        val metadata = """{"format":"optimization","baselineTimeMs":2.5,"benchmark":{"inputDescription":"N = 1 и 4","aggregation":"geometric_mean"}}"""
+        directory.resolve("format.json").writeText(metadata)
+        val geometric = reader.read(directory)
+        assertThat(geometric.format.aggregation()).isEqualTo("geometric_mean")
+        assertThat(geometric.judgeHash).isNotEqualTo(legacyHash)
+
+        directory.resolve("format.json").writeText(metadata.replace("geometric_mean", "max"))
+        assertThat(reader.read(directory).judgeHash).isNotEqualTo(geometric.judgeHash)
+        directory.resolve("format.json").writeText(metadata.replace("N = 1 и 4", "N = 8"))
+        assertThat(reader.read(directory).judgeHash).isNotEqualTo(geometric.judgeHash)
+        directory.resolve("format.json").writeText("""{"format":"optimization","baselineTimeMs":2.5}""")
+        assertThat(reader.read(directory).judgeHash).isEqualTo(legacyHash)
+
+        directory.resolve("format.json").writeText(metadata.replace("N = 1 и 4", " "))
+        assertThatThrownBy { reader.read(directory) }.hasMessageContaining("inputDescription")
+        directory.resolve("format.json").writeText(metadata.replace("geometric_mean", "average"))
+        assertThatThrownBy { reader.read(directory) }.hasMessageContaining("aggregation")
+    }
 }

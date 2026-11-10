@@ -18,3 +18,7 @@ export type SubmitInput = operations['submitSolution']['requestBody']['content']
 export type GuessInput = operations['submitGuess']['requestBody']['content']['application/json'];
 export type GuessResult = NonNullable<Submission['guessResult']>;
 export type ComparisonInput = operations['createComparison']['requestBody']['content']['application/json'];
+export type DuelRequest = components['schemas']['DuelRequest'];
+export type DuelInput = operations['createDuel']['requestBody']['content']['application/json'];
+export type AppNotification = components['schemas']['Notification'];
+export type NotificationQuery = NonNullable<operations['listNotifications']['parameters']['query']>;

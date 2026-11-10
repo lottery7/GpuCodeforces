@@ -277,18 +277,64 @@ describe('Fixture HTTP API', () => {
     expect((await request('/submissions', { method: 'POST', body: { problemId: 'guess-vector', code: 'void solve() {}' }, cookie: owner })).status).toBe(400);
   });
 
-  it('creates a duel for two people and one task', async () => {
+  it('matches compatible random searches and chooses one common task after matching', async () => {
     const owner = await login('alex_cuda');
     const opponent = await login('new_cuda');
     const outsider = await login('author_cuda');
-    const start = Date.now() + 3600000;
-    const input = { title: 'Duel', format: 'duel', opponentId: 'new_cuda', authorIds: ['alex_cuda'], problemIds: ['vector-addition'], startAt: new Date(start).toISOString(), endAt: new Date(start + 3600000).toISOString() };
-    const created = await request('/contests', { method: 'POST', body: input, cookie: owner });
-    expect(created.status).toBe(201);
-    expect(created.body).toMatchObject({ format: 'duel', challengerId: 'alex_cuda', opponentId: 'new_cuda', registered: true });
-    expect((await request(`/contests/${created.body.id}/registration`, { method: 'PUT', cookie: outsider })).status).toBe(403);
-    expect((await request(`/contests/${created.body.id}/registration`, { method: 'PUT', cookie: opponent })).status).toBe(204);
-    expect((await request('/contests', { method: 'POST', body: { ...input, problemIds: ['vector-addition', 'reduction'] }, cookie: owner })).status).toBe(400);
+    const queued = await request('/duels', { method: 'POST', body: { mode: 'random', topics: ['Память'] }, cookie: owner });
+    expect(queued.status).toBe(201);
+    expect(queued.body).toMatchObject({ status: 'queued', contestId: null });
+    expect(queued.body).not.toHaveProperty('problemId');
+    const matched = await request('/duels', { method: 'POST', body: { mode: 'random', topics: ['Матрицы'] }, cookie: opponent });
+    expect(matched.status).toBe(201);
+    expect(matched.body.status).toBe('matched');
+    const current = (await request('/duels/current', { cookie: owner })).body;
+    expect(current.contestId).toBe(matched.body.contestId);
+    const room = (await request(`/contests/${current.contestId}`, { cookie: owner })).body;
+    expect(room).toMatchObject({ format: 'duel', registered: true, problemCount: 1 });
+    expect((await request(`/contests/${room.id}`, { cookie: opponent })).body.registered).toBe(true);
+    const task = (await request(`/problems/${room.problemIds[0]}?context=${room.id}`, { cookie: owner })).body;
+    expect(task.tags).toContain('Матрицы'); expect(task.tags).toContain('Память');
+    expect((await request(`/contests/${room.id}/registration`, { method: 'PUT', cookie: outsider })).status).toBe(403);
+    expect((await request(`/duels/${queued.body.id}`, { cookie: outsider })).status).toBe(403);
+  });
+
+  it('delivers a private persisted invitation and starts a duel only after acceptance', async () => {
+    const owner = await login('alex_cuda');
+    const opponent = await login('new_cuda');
+    const outsider = await login('author_cuda');
+    const created = await request('/duels', { method: 'POST', body: { mode: 'invite', opponentHandle: 'new_cuda', topics: ['Массивы'] }, cookie: owner });
+    expect(created.body).toMatchObject({ status: 'invited', contestId: null });
+    expect((await request('/duels/current', { cookie: opponent })).status).toBe(204);
+    const notes = (await request('/notifications', { cookie: opponent })).body;
+    expect(notes.unreadCount).toBe(1);
+    expect(notes.items[0]).toMatchObject({ type: 'duel_invitation', duelRequestId: created.body.id, duelStatus: 'invited' });
+    expect((await request('/notifications', { cookie: outsider })).body.items).toEqual([]);
+    expect((await request(`/notifications/${notes.items[0].id}/read`, { method: 'PUT', cookie: outsider })).status).toBe(404);
+    expect((await request(`/notifications/${notes.items[0].id}/read`, { method: 'PUT', cookie: opponent })).status).toBe(204);
+    expect((await request('/notifications', { cookie: opponent })).body.unreadCount).toBe(0);
+    expect((await request(`/duels/${created.body.id}/accept`, { method: 'POST', cookie: owner })).status).toBe(403);
+    const accepted = await request(`/duels/${created.body.id}/accept`, { method: 'POST', cookie: opponent });
+    expect(accepted.body.status).toBe('matched');
+    expect((await request('/duels/current', { cookie: owner })).body.contestId).toBe(accepted.body.contestId);
+    expect((await request('/notifications', { cookie: owner })).body.items[0]).toMatchObject({ type: 'duel_started', contestId: accepted.body.contestId });
+  });
+
+  it('persists declined and cancelled invitations and prevents accepting stale invitations', async () => {
+    const owner = await login('alex_cuda');
+    const opponent = await login('new_cuda');
+    const body = { mode: 'invite', opponentHandle: 'new_cuda', topics: [] };
+    const first = (await request('/duels', { method: 'POST', body, cookie: owner })).body;
+    expect((await request(`/duels/${first.id}/decline`, { method: 'POST', cookie: opponent })).body.status).toBe('declined');
+    expect((await request('/duels/current', { cookie: owner })).status).toBe(204);
+    expect((await request('/notifications', { cookie: owner })).body.items[0]).toMatchObject({ type: 'duel_declined', duelStatus: 'declined' });
+    const second = (await request('/duels', { method: 'POST', body, cookie: owner })).body;
+    expect((await request(`/duels/${second.id}/cancel`, { method: 'POST', cookie: owner })).body.status).toBe('cancelled');
+    expect((await request(`/duels/${second.id}/accept`, { method: 'POST', cookie: opponent })).status).toBe(400);
+    const notifications = (await request('/notifications', { cookie: opponent })).body.items;
+    expect(notifications.find(item => item.type === 'duel_invitation' && item.duelRequestId === second.id).duelStatus).toBe('cancelled');
+    expect(notifications[0].type).toBe('duel_cancelled');
+    expect((await request('/runtime')).body).toEqual({ executionMode: 'mock', gpuName: null });
   });
 
   it('publishes a comparison from two own accepted submissions without publishing measurements', async () => {

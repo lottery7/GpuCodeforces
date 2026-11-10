@@ -19,6 +19,7 @@ import dev.gpucodeforces.backend.submission.SubmissionStats
 import dev.gpucodeforces.backend.submission.GuessService
 import dev.gpucodeforces.backend.submission.SubmissionViews
 import dev.gpucodeforces.backend.submission.SubmissionRepository
+import dev.gpucodeforces.backend.submission.JudgeProperties
 import dev.gpucodeforces.backend.user.UserRepository
 import dev.gpucodeforces.backend.user.UserService
 import dev.gpucodeforces.backend.user.toApiModel
@@ -41,6 +42,7 @@ class ProblemsController(
     private val submissionViews: SubmissionViews,
     private val comparisonService: ComparisonService,
     private val submissionRepository: SubmissionRepository,
+    private val judgeProperties: JudgeProperties,
 ) : ProblemsApi {
     override fun listProblems(
         context: String,
@@ -92,13 +94,14 @@ class ProblemsController(
                 BigDecimal.valueOf(spec.limits.timeLimitMs).movePointLeft(3),
                 // The page shows it as GPU memory; without a GPU limit the solution is bounded by its RAM limit.
                 (spec.limits.gpuMemoryLimitMb ?: spec.limits.memoryLimitMb).toInt(),
-                environmentMarkdown(spec, gpuName),
+                environmentMarkdown(spec, gpuName.takeUnless { judgeProperties.synthetic }),
             ).format(GetProblem200Response.FormatEnum.fromValue(version.format))
                 .versionId(version.id.toString())
                 .baselineTimeMs(format.baselineTimeMs)
                 .firstCode(format.firstCode)
                 .secondCode(format.secondCode)
-                .guessSubmissionId(guessSubmissionId),
+                .guessSubmissionId(guessSubmissionId)
+                .benchmark(benchmark(spec, format, gpuName, judgeProperties.synthetic)),
         )
     }
 

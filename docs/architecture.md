@@ -39,11 +39,37 @@ flowchart TB
 Служебные обмены RabbitMQ: `judge.heartbeats` (executor → gateway, мониторинг живых исполнителей),
 `judge.control` (отмена посылки), `judge.jobs.dead` (задание упало 5 раз — gateway публикует `INTERNAL_ERROR`).
 
+## Дуэли
+
+Поиск соперника и приглашения хранятся отдельно от начавшейся комнаты. Общая блокировка PostgreSQL
+сериализует подбор, принятие и отмену. Уведомления доступны только своему пользователю.
+
+```mermaid
+sequenceDiagram
+  participant A as Инициатор
+  participant B as backend
+  participant DB as PostgreSQL
+  participant C as Соперник
+  A->>B: POST /api/duels (темы и способ поиска)
+  B->>DB: Записать поиск или приглашение
+  alt Случайный соперник
+    C->>B: POST /api/duels (случайный поиск)
+    B->>DB: Найти совместимый поиск под блокировкой
+  else Приглашение по нику
+    C->>B: GET /api/notifications
+    C->>B: POST /api/duels/{id}/accept
+  end
+  B->>DB: Выбрать задачу, создать комнату и две регистрации
+  B->>DB: Уведомления о начале обоим участникам
+  B-->>A: matched и contestId
+  B-->>C: matched и contestId
+```
+
 ## Путь посылки
 
 Обычные задачи и оптимизация используют путь через judge. Угадывание проверяется в backend
 по сохраненной версии пакета и создает завершенную посылку без замера GPU.
-Дуэль использует тот же контест, но регистрация доступна только двум выбранным участникам.
+Начавшаяся дуэль использует тот же контест; оба участника уже зарегистрированы при подборе.
 Правила форматов: [backend/formats.md](backend/formats.md).
 
 ```mermaid
@@ -153,6 +179,19 @@ classDiagram
     Int position
   }
   class ContestRegistration
+  class DuelRequest {
+    UUID id
+    String mode
+    String status
+    String[] topics
+    Instant expiresAt
+  }
+  class ActiveDuel
+  class Notification {
+    String type
+    Instant createdAt
+    Instant readAt
+  }
   class RatingHistory {
     Int rank
     Int ratingDelta
@@ -184,6 +223,7 @@ classDiagram
     String guessChoice
     SubmissionStatus status
     BigDecimal timeMs
+    JSON measurement
     Int passedTests
     Int totalTests
     String judgeHash
@@ -194,6 +234,13 @@ classDiagram
     Int recheckCount
   }
   Session "*" --> "1" User
+  DuelRequest "*" --> "1" User : creator
+  DuelRequest "*" --> "0..1" User : opponent
+  DuelRequest "*" --> "0..1" Contest
+  ActiveDuel "0..1" --> "1" User
+  ActiveDuel "*" --> "0..1" DuelRequest
+  Notification "*" --> "1" User
+  Notification "*" --> "1" DuelRequest
   Contest "*" --> "*" User : authors
   ContestRegistration "*" --> "1" Contest
   ContestRegistration "*" --> "1" User
@@ -241,6 +288,14 @@ classDiagram
     class ContestsController
     class ContestService
   }
+  namespace duel {
+    class DuelsController
+    class DuelService
+  }
+  namespace notification {
+    class NotificationsController
+    class NotificationService
+  }
   namespace submission {
     class GuessService
     class SubmissionsController
@@ -275,6 +330,9 @@ classDiagram
     class GroovyConsole
   }
   SessionController ..> SessionIssuer
+  DuelsController ..> DuelService
+  NotificationsController ..> NotificationService
+  DuelService ..> ProblemCatalog
   UsersController ..> UserService
   UsersController ..> ProfileService
   UsersController ..> SessionIssuer

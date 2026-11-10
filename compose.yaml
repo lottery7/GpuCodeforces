@@ -138,6 +138,7 @@ services:
       RABBITMQ_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
       JUDGE_GATEWAY_URL: http://judge-gateway:8090
+      JUDGE_MODE: ${JUDGE_MODE:-gpu}
       GPU_PROFILE: ${JUDGE_GPU_PROFILE:-rtx3060}
       GPU_NAME: ${JUDGE_GPU_NAME:-NVIDIA GeForce RTX 3060}
       # the problem bank follows the problem repository (cloned into the volume, pulled every minute)

@@ -4,6 +4,10 @@
 Оптимизация передается судье как обычная CUDA посылка. Угадывание проверяет backend без обращения
 к судье; `format.json`, `first.cu` и `second.cu` не входят в контракт `ProblemSpec`.
 
+Gateway и executor продолжают возвращать времена тестов и `maxTimeMs`. Backend может использовать
+`benchmark.aggregation` пакета оптимизации, чтобы вычислить геометрическое среднее по принятым
+тестам. Это не меняет протокол измерения отдельного теста; подробности в документе форматов выше.
+
 Задача — это JSON `ProblemSpec` (см. `judge-api/.../ProblemSpec.kt`), который бэкенд передаёт в каждой посылке, плюс исходник генератора на Python. Списка тестов в JSON нет: тесты объявляет генератор (`tests()`). Пример: `judge/problems/examples/vector_add/` (`problem.json` + `problem.py`; `judge/tools/judge_cli.py` склеивает их в один `ProblemSpec`).
 
 ## ProblemSpec

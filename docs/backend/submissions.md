@@ -22,7 +22,7 @@
 | `QUEUED` | `queued` |
 | `COMPILING`, `PREPARING` | `compiling` |
 | `TESTING` (с `progress`) | `checking`, `passedTests`/`totalTests` |
-| `ACCEPTED` | `accepted`, время — `maxTimeMs` |
+| `ACCEPTED` | `accepted`, время по метрике задачи: максимум или геометрическое среднее |
 | `WRONG_ANSWER` / `TIME_LIMIT_EXCEEDED` / `MEMORY_LIMIT_EXCEEDED` / `RUNTIME_ERROR` | `wrong_answer` / `time_limit` / `memory_limit` / `runtime_error` |
 | `COMPILATION_ERROR`, `POLICY_VIOLATION` | `compile_error` |
 | `INTERNAL_ERROR`, `CANCELLED` | `system_error` |
@@ -45,6 +45,11 @@
 
 Принятое время сравнимо только в одной конфигурации проверки: тот же `judge_hash` версии задачи
 (содержимое `problem.json` + `problem.py`) и та же GPU. Практика и каждый контест считаются отдельно.
+
+Для задач с benchmark в конфигурацию также входит определение метрики и набора входов.
+Фактические замеры каждого теста сохраняются в `Submission.measurement`; клиент получает только
+сводку метрики, режима, числа тестов и оборудования. `wall` означает весь вызов решения,
+а не только время ядер. Схемы и формулы: [formats.md](formats.md).
 
 - Банк задач: `solved`, `last*`, `best*` — для пользователя и контекста; `solvedCount` — по всем
   контекстам; `recordTimeMs` — лучшее сравнимое время контекста.
