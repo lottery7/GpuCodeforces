@@ -25,11 +25,12 @@ class BackendApplicationIntegrationTest {
             String::class.java,
         )
         assertThat(schema).isEqualTo("gpucodeforces")
-        val migrations = jdbc.queryForObject(
-            "SELECT count(*) FROM flyway_schema_history WHERE success = true",
-            Long::class.java,
-        )
-        assertThat(migrations).isEqualTo(1L)
+        // Exact migration count would churn with every new migration any module adds; just confirm
+        // Flyway actually ran something and none of it failed.
+        val appliedCount = jdbc.queryForObject("SELECT count(*) FROM flyway_schema_history", Long::class.java)
+        val failedCount = jdbc.queryForObject("SELECT count(*) FROM flyway_schema_history WHERE success = false", Long::class.java)
+        assertThat(appliedCount).isGreaterThan(0L)
+        assertThat(failedCount).isEqualTo(0L)
     }
 
     companion object {
