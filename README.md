@@ -9,6 +9,7 @@ Multi-module Kotlin/Gradle project with a React frontend:
 | `frontend` | React application (npm, not part of the Gradle build), see [frontend/README.md](frontend/README.md) |
 
 Add future Gradle modules with `include(":module-name")` in `settings.gradle.kts`.
+UML diagrams of the architecture (in Russian) are in [docs/architecture.md](docs/architecture.md).
 
 ## Requirements
 
