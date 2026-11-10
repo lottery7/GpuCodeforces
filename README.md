@@ -62,6 +62,11 @@ Integration tests use a separate disposable database with random ports, independ
 of Docker Compose. Docker must be available; these tests fail rather than silently
 skip when it is unavailable. The executable jar is under `backend/build/libs/`.
 
+CI runs both backend test tasks ([backend.yml](.github/workflows/backend.yml)). `master` is protected:
+a pull request merges only after the `backend`, `frontend`, `tests` (judge) and `generated-java`
+(OpenAPI) checks pass. The required checks are listed by job name in the branch protection of the
+repository, so add a new CI job there too.
+
 ## Running the whole system
 
 ```sh
