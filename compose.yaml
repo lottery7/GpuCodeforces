@@ -15,5 +15,116 @@ services:
       timeout: 5s
       retries: 10
 
+  # Testing system (judge/README.md). Behind profiles so `docker compose up -d --wait` still starts only PostgreSQL:
+  #   docker compose --profile judge up -d --wait   # RabbitMQ + judge gateway
+  #   docker compose --profile gpu up -d --wait     # + judge executor (NVIDIA GPU + nvidia-container-toolkit)
+  #   docker compose --profile mock up -d --wait    # + mock executor: no GPU, verdicts from `judge-mock` comments
+  # Executors on other machines (one per GPU type) use judge/deploy/compose.executor.yaml and connect to this broker:
+  # set RABBITMQ_BIND=0.0.0.0, real RABBITMQ_USER/RABBITMQ_PASSWORD, and list every type in JUDGE_GPU_PROFILES.
+  rabbitmq:
+    profiles: [judge, gpu, mock]
+    image: rabbitmq:4.1.8-management@sha256:e1763bfb4a15f9646f9bad2fbae857f4499614577d1165450331189efdb6ea3b
+    hostname: rabbitmq
+    environment:
+      # local development defaults; applied only when the broker's data volume is first created
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+      # A job is acked only when it is finished, and the broker takes a job back from a consumer that holds it
+      # longer than this (30 min by default) - while the executor is still judging it. 4 h is above any job.
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit consumer_timeout 14400000"
+    ports:
+      - "${RABBITMQ_BIND:-127.0.0.1}:5672:5672"
+      - "127.0.0.1:15672:15672" # management UI
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+
+  judge-gateway:
+    profiles: [judge, gpu, mock]
+    build:
+      context: .
+      dockerfile: judge/deploy/gateway.Dockerfile
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      # every GPU type submissions may ask for (comma-separated); each needs an executor with that JUDGE_GPU_PROFILE
+      JUDGE_GPU_PROFILES: ${JUDGE_GPU_PROFILES:-rtx3060}
+      JUDGE_DEFAULT_GPU_PROFILE: ${JUDGE_DEFAULT_GPU_PROFILE:-rtx3060}
+      SPRING_PROFILES_ACTIVE: ${JUDGE_LOG_PROFILE:-default}
+    ports:
+      - "127.0.0.1:8090:8090" # API + /swagger-ui.html
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  judge-executor:
+    profiles: [gpu]
+    build:
+      context: .
+      dockerfile: judge/deploy/executor.Dockerfile
+    # nsjail needs CAP_SYS_ADMIN (namespaces, mounts) and a /proc it can mount over; nothing else of `privileged`.
+    # Docker's own seccomp and AppArmor profiles forbid exactly those calls, so they are off for this container:
+    # the boundary for untrusted code is nsjail with its seccomp policy. Clock locking (nvidia-smi -lgc) no longer
+    # works from inside; lock clocks on the host.
+    cap_add: [SYS_ADMIN]
+    security_opt: [seccomp=unconfined, apparmor=unconfined, systempaths=unconfined]
+    # a stopping executor finishes the jobs it has taken (judge.executor.shutdown-timeout is 5 min)
+    stop_grace_period: 6m
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      # the GPU type of this machine; the executor checks it against the card and takes only its submissions
+      JUDGE_GPU_PROFILE: ${JUDGE_GPU_PROFILE:-rtx3060}
+      JUDGE_GPU_ARCH: ${JUDGE_GPU_ARCH:-sm_86}
+      JUDGE_GPU_NAME: ${JUDGE_GPU_NAME:-NVIDIA GeForce RTX 3060}
+      JUDGE_EXECUTOR_ID: ${JUDGE_EXECUTOR_ID:-gpu-node-1}
+      JUDGE_LOCK_CLOCKS: ${JUDGE_LOCK_CLOCKS:-}
+      JUDGE_WORK_DIR: /run/judge/work
+      SPRING_PROFILES_ACTIVE: ${JUDGE_LOG_PROFILE:-default}
+    tmpfs:
+      # run directories (solution binary and outputs); not /dev/shm, which Docker mounts noexec
+      - /run/judge:exec,size=8g
+    volumes:
+      - judge-data:/var/lib/judge # compiled objects and generated tests survive restarts
+    ports:
+      - "127.0.0.1:8081:8081" # actuator: /actuator/health, /actuator/prometheus
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, compute, utility]
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  # Integration tests without a GPU: takes the submissions of its GPU profile like a real executor and answers with
+  # the verdict asked for in the source (`// judge-mock: verdict=WRONG_ANSWER test=2`), ACCEPTED by default.
+  # Do not run it next to a real executor of the same profile: the two would share the queue.
+  judge-executor-mock:
+    profiles: [mock]
+    build:
+      context: .
+      dockerfile: judge/deploy/mock-executor.Dockerfile
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      JUDGE_GPU_PROFILE: ${JUDGE_GPU_PROFILE:-rtx3060}
+      JUDGE_EXECUTOR_ID: ${JUDGE_MOCK_EXECUTOR_ID:-mock-executor-1}
+      SPRING_PROFILES_ACTIVE: mock
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
 volumes:
   postgres-data:
+  rabbitmq-data:
+  judge-data:

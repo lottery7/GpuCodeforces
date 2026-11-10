@@ -1,0 +1,19 @@
+{
+  "id": "matmul-host",
+  "version": "1",
+  "signature": {
+    "function": "solve",
+    "params": [
+      {"name": "A", "type": "FLOAT32", "role": "INPUT", "memory": "HOST", "size": "M*K"},
+      {"name": "B", "type": "FLOAT32", "role": "INPUT", "memory": "HOST", "size": "K*N"},
+      {"name": "C", "type": "FLOAT32", "role": "OUTPUT", "memory": "HOST", "size": "M*N"},
+      {"name": "M", "type": "INT32", "role": "SCALAR"},
+      {"name": "N", "type": "INT32", "role": "SCALAR"},
+      {"name": "K", "type": "INT32", "role": "SCALAR"}
+    ]
+  },
+  "checker": {"mode": "TOLERANCE", "rtol": 1e-3, "atol": 1e-3},
+  "limits": {"timeLimitMs": 50, "wallTimeLimitMs": 3000, "memoryLimitMb": 512},
+  "timing": {"warmupRuns": 1, "maxRuns": 3},
+  "policy": {"forbidSass": ["HMMA"]}
+}

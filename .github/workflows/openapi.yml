@@ -20,4 +20,6 @@ jobs:
           distribution: temurin
           java-version: '26'
           cache: gradle
-      - run: ./gradlew --no-daemon :backend:verifyOpenApiGenerated --rerun-tasks --no-build-cache
+      - run: >-
+          ./gradlew --no-daemon :backend:verifyOpenApiGenerated :judge-gateway:verifyOpenApiGenerated
+          --rerun-tasks --no-build-cache

@@ -1,35 +1,22 @@
 # GpuCodeforces
 
-Платформа соревнований по CUDA: React-клиент и backend на Kotlin/Spring Boot,
-с хранением данных в PostgreSQL через JDBC и миграциями Flyway.
+Multi-module Kotlin/Gradle project with a React frontend:
 
-Реализованы все 20 операций клиентского API: аккаунты и сессии, задачи,
-посылки, соревнования, регистрация, таблицы результатов и рейтинг.
-Задачи импортируются из `master` репозиториев, доступных GitHub App.
-Корневой `index.json` перечисляет несколько задач и пути к их манифестам.
-Сохраняются неизменяемые версии условий, генераторов и эталонов.
-Соревнования и посылки ссылаются на конкретные версии задач.
+| Part | Description |
+|---|---|
+| `backend` | Spring Boot application |
+| `judge-api`, `judge-gateway`, `judge-executor` (in `judge/`) | Testing system, see [Testing system](#testing-system) |
+| `frontend` | React application (npm, not part of the Gradle build), see [frontend/README.md](frontend/README.md) |
 
-Очередь посылок и буфер результатов хранятся в БД. Backend назначает задания
-внешним тестировщикам, ограничивает число одновременных посылок, обрабатывает
-результаты отдельных тестов в фоне, переназначает работу после таймаута
-и подтверждает живость тестировщиков по ответам о посылках и обратному pong.
-Сами тестировщики в проект не входят. Демонстрационный сервер frontend
-остаётся отдельным инструментом и прикладным backend не используется.
-
-На `/admin` доступны Groovy-консоль с контекстом приложения `ctx` и настройки
-без перезапуска. Админские права хранятся в БД; первого администратора назначают
-одноразовым секретом `ADMIN_BOOTSTRAP_TOKEN`. Порядок настройки описан в документации backend.
-
-**Настройка GitHub App, формат репозитория задачи, ограничения ресурсов,
-настройка тестировщиков и текущие ограничения:** [backend](docs/backend/README.md).
-**Сетевой протокол тестировщиков:** [judge-protocol.md](docs/backend/judge-protocol.md).
+Add future Gradle modules with `include(":module-name")` in `settings.gradle.kts`.
 
 ## Requirements
 
 - JDK 26 (also select it as the Gradle JVM in IntelliJ IDEA 2026.2).
 - Docker with a running daemon for PostgreSQL and integration tests.
 - Gradle is provided by the wrapper; no global installation is needed.
+- `python3` for the `judge-executor` tests.
+- For the GPU executor only: Linux or WSL2, NVIDIA driver 570+ and `nvidia-container-toolkit`.
 
 Versions: Kotlin 2.4.21, Gradle 9.7.0, Spring Boot 4.1.2.
 Spring Boot's BOM manages the backend libraries, including Hibernate,
@@ -39,7 +26,7 @@ Flyway, Jackson, PostgreSQL JDBC, JUnit, and Testcontainers.
 
 ```sh
 docker compose up -d --wait
-SECURE_COOKIES=false ./gradlew :backend:bootRun
+./gradlew :backend:bootRun
 ```
 
 The application listens on port 8080. Health: <http://localhost:8080/actuator/health>.
@@ -48,20 +35,79 @@ PostgreSQL instance. The default credentials are for local development.
 Flyway manages migrations in `backend/src/main/resources/db/migration`;
 Hibernate validates the schema rather than modifying it.
 
-PostgreSQL integration tests automatically check application query plans for unexpected
-full scans. Intentional scans have explicit policies and justifications:
-[query plan checks](docs/backend/query-plans.md).
+The problem bank is imported from `PROBLEMS_DIRECTORY` (or a clone of `PROBLEMS_GIT_URL`);
+without it the bank is empty. The package format is described (in Russian) in
+[docs/backend/problem-package.md](docs/backend/problem-package.md). The judge examples are valid packages:
+
+```sh
+PROBLEMS_DIRECTORY=../judge/problems/examples ./gradlew :backend:bootRun
+```
+
+Submissions go to the judge gateway (`JUDGE_GATEWAY_URL`, default <http://localhost:8090>) and
+verdicts come back through RabbitMQ (`RABBITMQ_HOST`), so start the judge profile as well, see
+[Testing system](#testing-system). How submissions are queued and judged, how results are compared,
+and the administrator Groovy console (`ADMIN_HANDLES`, page `/admin`) are described (in Russian) in
+[docs/backend/submissions.md](docs/backend/submissions.md).
 
 ```sh
 ./gradlew test
 ./gradlew :backend:integrationTest # Starts and removes its own PostgreSQL container
-./gradlew build                   # Builds the application and runs all tests
+./gradlew build                   # Builds backend and judge services and runs all tests
 docker compose down              # Stops the development database, retaining data
 ```
 
 Integration tests use a separate disposable database with random ports, independent
 of Docker Compose. Docker must be available; these tests fail rather than silently
 skip when it is unavailable. The executable jar is under `backend/build/libs/`.
+
+## Testing system
+
+The judge accepts `.cu` submissions, compiles them, runs them on a GPU in an nsjail
+sandbox and reports verdicts asynchronously through RabbitMQ. Architecture, problem
+format, sandbox, verdicts and the backend contract are described (in Russian) in
+[judge/README.md](judge/README.md) and [judge/docs/problem-format.md](judge/docs/problem-format.md).
+
+Its services are behind Compose profiles, so plain `docker compose up -d --wait`
+still starts only PostgreSQL:
+
+```sh
+docker compose --profile judge up -d --wait          # RabbitMQ + judge gateway
+docker compose --profile mock up -d --wait --build   # + mock executor, no GPU needed
+docker compose --profile gpu up -d --wait --build    # + real executor on an NVIDIA GPU
+```
+
+| Service | Address |
+|---|---|
+| Gateway API, Swagger UI | <http://localhost:8090>, `/swagger-ui.html` |
+| RabbitMQ management UI | <http://localhost:15672> |
+| Executor actuator (`gpu` profile) | <http://localhost:8081/actuator/health> |
+
+The mock executor answers with the verdict requested in a source comment, for example
+`// judge-mock: verdict=WRONG_ANSWER test=2`, and `ACCEPTED` otherwise. Do not run it
+next to a real executor of the same GPU profile. Executors on other machines use
+[judge/deploy/compose.executor.yaml](judge/deploy/compose.executor.yaml).
+
+Send a submission from the console (`--watch` needs `pip install pika`):
+
+```sh
+python3 judge/tools/judge_cli.py submit judge/problems/examples/vector_add \
+  judge/problems/examples/vector_add/solutions/accepted.cu --watch
+```
+
+The gateway API contract is [judge/docs/openapi.yaml](judge/docs/openapi.yaml). Its
+controllers implement interfaces generated from it the same way as the backend's (see
+below), with `:judge-gateway` tasks and the snapshot
+[judge/docs/openapi-java.sha256](judge/docs/openapi-java.sha256). Schemas that are also
+broker messages (`ProblemSpec`, `SubmissionRequest` and the rest) map to the `judge-api`
+classes instead of generated models; a gateway test checks that they agree with the spec.
+
+Judge tests need neither a GPU nor Docker. They are part of `./gradlew test`
+and run in CI ([judge.yml](.github/workflows/judge.yml)):
+
+```sh
+./gradlew :judge-api:test :judge-gateway:test :judge-executor:test
+(cd judge/pytools && python3 -m unittest discover -s tests -v)
+```
 
 ## Frontend API
 
@@ -76,8 +122,8 @@ checks. Password recovery, private problems and GPU selection remain outside the
 ```
 
 Java Spring interfaces and models are generated in `backend/build/generated/openapi`
-and included in compilation automatically. Application controllers implement the
-HTTP contract independently of generated Java interfaces. Generated sources are not committed.
+and included in compilation automatically. Implement the interfaces in backend
+controllers. Generated sources are not committed.
 
 CI regenerates Java and compares all file paths and SHA256 checksums with
 [openapi-java.sha256](docs/frontend/openapi-java.sha256):

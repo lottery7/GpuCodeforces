@@ -1,0 +1,56 @@
+package dev.gpucodeforces.backend.contest
+
+import dev.gpucodeforces.backend.api.ContestsApi
+import dev.gpucodeforces.backend.api.model.ContestInput
+import dev.gpucodeforces.backend.api.model.GetContestStandings200ResponseInner
+import dev.gpucodeforces.backend.auth.CurrentUser
+import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
+import org.springframework.web.bind.annotation.RestController
+import java.time.Instant
+import dev.gpucodeforces.backend.api.model.Contest as ContestApiModel
+
+@RestController
+class ContestsController(private val contestService: ContestService) : ContestsApi {
+    override fun listContests(q: String?, phase: String?, mine: Boolean): ResponseEntity<List<ContestApiModel>> {
+        val viewer = CurrentUser.resolve()
+        val now = Instant.now()
+        val contests = contestService.list(q, phase, mine, viewer).map { it.toSummary(viewer, now) }
+        return ResponseEntity.ok(contests)
+    }
+
+    // SecurityConfig requires authentication on this route, so a current user is always present here.
+    override fun createContest(contestInput: ContestInput): ResponseEntity<ContestApiModel> {
+        val creator = CurrentUser.resolve()!!
+        val contest = contestService.create(contestInput, creator)
+        return ResponseEntity.status(HttpStatus.CREATED).body(contest.toSummary(creator, Instant.now()))
+    }
+
+    override fun getContest(id: String): ResponseEntity<ContestApiModel> {
+        val viewer = CurrentUser.resolve()
+        val contest = contestService.get(id)
+        val problems = contestService.problemsOf(contest.id)
+        val rulesMarkdown = contestService.buildRulesMarkdown(contest, problems, viewer)
+        val registered = viewer != null && contestService.isRegistered(contest.id, viewer.id)
+        return ResponseEntity.ok(contest.toApiModel(problems, viewer, registered, Instant.now(), rulesMarkdown))
+    }
+
+    override fun updateContest(id: String, contestInput: ContestInput): ResponseEntity<ContestApiModel> {
+        val currentUser = CurrentUser.resolve()!!
+        val contest = contestService.update(id, contestInput, currentUser)
+        return ResponseEntity.ok(contest.toSummary(currentUser, Instant.now()))
+    }
+
+    override fun registerForContest(id: String): ResponseEntity<Void> {
+        contestService.register(id, CurrentUser.resolve()!!)
+        return ResponseEntity.noContent().build()
+    }
+
+    override fun getContestStandings(id: String): ResponseEntity<List<GetContestStandings200ResponseInner>> =
+        ResponseEntity.ok(contestService.standings(id))
+
+    private fun Contest.toSummary(viewer: dev.gpucodeforces.backend.user.User?, now: Instant): ContestApiModel {
+        val registered = viewer != null && contestService.isRegistered(id, viewer.id)
+        return toApiModel(contestService.problemsOf(id), viewer, registered, now)
+    }
+}

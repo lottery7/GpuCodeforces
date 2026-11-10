@@ -11,27 +11,28 @@ spring:
       ddl-auto: validate
   flyway:
     enabled: true
-  task:
-    scheduling:
-      pool:
-        size: 4
-
-server:
-  tomcat:
-    max-http-form-post-size: 256KB
-    max-swallow-size: 256KB
-    threads:
-      max: 100
-    connection-timeout: 5s
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
 
 platform:
-  public-origin: ${PUBLIC_ORIGIN:http://localhost:5173}
-  secure-cookies: ${SECURE_COOKIES:true}
+  judge:
+    gateway-url: ${JUDGE_GATEWAY_URL:http://localhost:8090}
   admin:
-    bootstrap-token: ${ADMIN_BOOTSTRAP_TOKEN:}
-  github:
-    app-id: ${GITHUB_APP_ID:}
-    private-key-file: ${GITHUB_APP_PRIVATE_KEY_FILE:}
+    # Comma-separated handles of administrators (Groovy console, problem import).
+    handles: ${ADMIN_HANDLES:}
+  gpu:
+    profile: ${GPU_PROFILE:rtx3060}
+    name: ${GPU_NAME:NVIDIA GeForce RTX 3060}
+  problems:
+    # Problem packages, one directory each (docs/backend/problem-package.md). Empty: the bank stays empty.
+    directory: ${PROBLEMS_DIRECTORY:}
+    # Optional: keep the directory as a clone of this repository.
+    git-url: ${PROBLEMS_GIT_URL:}
+    git-branch: ${PROBLEMS_GIT_BRANCH:master}
+    sync-interval: ${PROBLEMS_SYNC_INTERVAL:PT1M}
 
 management:
   endpoints:

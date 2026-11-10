@@ -1,0 +1,61 @@
+server:
+  port: ${PORT:8090}
+  shutdown: graceful
+  mime-mappings:
+    yaml: application/yaml
+
+spring:
+  application:
+    name: judge-gateway
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+    # waitForConfirmsOrDie on job publish: a 202 means the broker persisted the job
+    publisher-confirm-type: simple
+    listener:
+      simple:
+        default-requeue-rejected: false
+  jackson:
+    default-property-inclusion: non_null
+
+judge:
+  gateway:
+    gpu-profiles: ${JUDGE_GPU_PROFILES:rtx3060}
+    default-gpu-profile: ${JUDGE_DEFAULT_GPU_PROFILE:rtx3060}
+    heartbeat-timeout: 15s
+    dedup-ttl: 10m
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    # the hand-written contract (judge/docs/openapi.yaml), not the one springdoc derives from the controllers
+    url: /openapi.yaml
+
+logging:
+  level:
+    dev.gpucodeforces.judge: INFO
+  pattern:
+    correlation: "[%X{submissionId:-}] "
+  include-application-name: false
+---
+# JSON logs for log collectors: SPRING_PROFILES_ACTIVE=json
+spring:
+  config:
+    activate:
+      on-profile: json
+logging:
+  structured:
+    format:
+      console: logstash

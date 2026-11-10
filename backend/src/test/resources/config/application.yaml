@@ -1,0 +1,11 @@
+# Only SubmissionIntegrationTest starts RabbitMQ; elsewhere the judge event listener stays off.
+spring:
+  rabbitmq:
+    listener:
+      simple:
+        auto-startup: false
+
+# Test runs start in backend/: the judge's example packages are the problem bank of integration tests.
+platform:
+  problems:
+    directory: ../judge/problems/examples
