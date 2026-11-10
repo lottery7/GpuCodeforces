@@ -29,7 +29,7 @@ Flyway manages migrations in `backend/src/main/resources/db/migration`;
 Hibernate validates the schema rather than modifying it.
 
 ```sh
-./gradlew test                    # Tests without Docker; initially no unit tests
+./gradlew test
 ./gradlew :backend:integrationTest # Starts and removes its own PostgreSQL container
 ./gradlew build                   # Builds the application and runs all tests
 docker compose down              # Stops the development database, retaining data
@@ -38,3 +38,33 @@ docker compose down              # Stops the development database, retaining dat
 Integration tests use a separate disposable database with random ports, independent
 of Docker Compose. Docker must be available; these tests fail rather than silently
 skip when it is unavailable. The executable jar is under `backend/build/libs/`.
+
+## Frontend API
+
+The React application is in [frontend](frontend/README.md).
+
+The contract is [docs/frontend/openapi.yaml](docs/frontend/openapi.yaml).
+It covers the MVP screens and actions, including example checks and retrying failed
+checks. Password recovery, private problems and GPU selection remain outside the MVP.
+
+```sh
+./gradlew :backend:openApiValidate :backend:openApiGenerate
+```
+
+Java Spring interfaces and models are generated in `backend/build/generated/openapi`
+and included in compilation automatically. Implement the interfaces in backend
+controllers. Generated sources are not committed.
+
+CI regenerates Java and compares all file paths and SHA256 checksums with
+[openapi-java.sha256](docs/frontend/openapi-java.sha256):
+
+```sh
+./gradlew :backend:verifyOpenApiGenerated --rerun-tasks --no-build-cache
+```
+
+After an intentional contract or generator change, update the snapshot and commit
+it together with the change:
+
+```sh
+./gradlew :backend:updateOpenApiSnapshot
+```

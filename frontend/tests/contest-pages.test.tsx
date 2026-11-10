@@ -1,0 +1,106 @@
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter, Route, Routes } from 'react-router';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { api } from '../src/api/client';
+import type { Contest as ContestRecord, Problem, User } from '../src/api/types';
+import Contest from '../src/pages/Contest';
+import Contests from '../src/pages/Contests';
+
+const session = vi.hoisted(() => ({ user: null as User | null }));
+
+vi.mock('../src/auth', () => ({ useSession: () => ({ user: session.user, isLoading: false, error: null }) }));
+
+const author: User = { id: 'author', handle: 'contest_author', rating: null, rank: null, ratingDelta: null, ratingContestId: null };
+const participant: User = { ...author, id: 'participant', handle: 'new_cuda' };
+const problem: Problem = {
+  id: 'vector-add', code: '100', title: 'Сложение векторов', difficulty: 'easy', tags: ['Массивы'],
+  solved: false, solvedCount: 0, lastSubmissionId: null, lastStatus: null, bestSubmissionId: null,
+  bestTimeMs: null, recordTimeMs: null,
+};
+
+function contest(phase: 'upcoming' | 'live' | 'finished'): ContestRecord {
+  const now = Date.now();
+  return {
+    id: 'cuda-round', title: 'CUDA Round', startAt: new Date(now + (phase === 'upcoming' ? 3600000 : -7200000)).toISOString(),
+    endAt: new Date(now + (phase === 'finished' ? -3600000 : 7200000)).toISOString(), authors: [author],
+    problemIds: [problem.id], problemCount: 1, registered: false, gpu: 'NVIDIA A100',
+  };
+}
+
+function open(path: string) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } });
+  render(<QueryClientProvider client={client}><MemoryRouter initialEntries={[path]}><Routes>
+    <Route path="/contests" element={<Contests />} />
+    <Route path="/contest/:id" element={<Contest />} />
+  </Routes></MemoryRouter></QueryClientProvider>);
+}
+
+beforeEach(() => { session.user = participant; });
+
+describe('Список соревнований', () => {
+  it('сохраняет поиск при смене вкладок и применяет его к нужной фазе', async () => {
+    const list = vi.spyOn(api, 'listContests').mockResolvedValue([]);
+    open('/contests?tabs=live');
+    const input = screen.getByRole('searchbox', { name: 'Найти соревнование' });
+    fireEvent.change(input, { target: { value: 'CUDA' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith({ phase: 'live', q: 'CUDA' }, expect.any(AbortSignal)));
+
+    await userEvent.click(screen.getByRole('link', { name: 'Будущие' }));
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith({ phase: 'upcoming', q: 'CUDA' }, expect.any(AbortSignal)));
+    expect(input).toHaveValue('CUDA');
+
+    await userEvent.click(screen.getByRole('link', { name: 'Завершенные' }));
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith({ phase: 'finished', q: 'CUDA' }, expect.any(AbortSignal)));
+    expect(input).toHaveValue('CUDA');
+
+    await userEvent.click(screen.getByRole('link', { name: 'Мои' }));
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith({ mine: true, q: 'CUDA' }, expect.any(AbortSignal)));
+    expect(input).toHaveValue('CUDA');
+    expect(screen.getByRole('link', { name: 'Текущие' })).toHaveAttribute('href', '/contests?tabs=live&q=CUDA');
+  });
+});
+
+describe('Доступ к задачам до начала', () => {
+  it.each([
+    { role: 'обычный участник', user: participant, visible: false },
+    { role: 'автор', user: author, visible: true },
+  ])('$role получает задачи только при наличии доступа', async ({ user, visible }) => {
+    session.user = user;
+    vi.spyOn(api, 'getContest').mockResolvedValue(contest('upcoming'));
+    const tasks = vi.spyOn(api, 'allProblems').mockResolvedValue([problem]);
+    open('/contest/cuda-round');
+    await screen.findByRole('heading', { name: 'CUDA Round' });
+
+    if (visible) {
+      expect(await screen.findByRole('link', { name: 'A. Сложение векторов' })).toHaveAttribute('href', '/problem/vector-add?contest=cuda-round');
+      expect(tasks).toHaveBeenCalledWith({ context: 'cuda-round' }, expect.any(AbortSignal));
+    } else {
+      expect(screen.getByText(/^Задачи откроются /)).toBeVisible();
+      expect(screen.queryByRole('table', { name: 'Задачи соревнования' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: 'A. Сложение векторов' })).not.toBeInTheDocument();
+      expect(tasks).not.toHaveBeenCalled();
+    }
+  });
+});
+
+describe('Личные результаты контеста', () => {
+  it.each([
+    { status: 'wrong_answer', label: 'Неверный ответ', phase: 'finished' },
+    { status: 'queued', label: 'В очереди', phase: 'live' },
+  ] as const)('сохраняет принятое решение при последней посылке $status', async ({ status, label, phase }) => {
+    vi.spyOn(api, 'getContest').mockResolvedValue(contest(phase));
+    vi.spyOn(api, 'allProblems').mockResolvedValue([{
+      ...problem, solved: true, lastSubmissionId: 'latest', lastStatus: status,
+      bestSubmissionId: 'best', bestTimeMs: 0.1234, recordTimeMs: 0.05,
+    }]);
+    open('/contest/cuda-round');
+    const table = await screen.findByRole('table', { name: 'Задачи соревнования' });
+    expect(within(table).getByRole('link', { name: 'A. Сложение векторов' })).toHaveAttribute('href', '/problem/vector-add?contest=cuda-round');
+    expect(within(table).getByRole('link', { name: 'Принято' })).toHaveAttribute('href', '/submission/best');
+    expect(within(table).getByRole('link', { name: '0.1234' })).toHaveAttribute('href', '/submission/best');
+    expect(within(table).getByRole('link', { name: `Последняя: ${label}` })).toHaveAttribute('href', '/submission/latest');
+  });
+});

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Экраны платформы C++/CUDA</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #1e1f22; color: #bcbec4; font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }
+    main { width: 100%; max-width: 1440px; margin: 0 auto; padding: 28px 24px 40px; }
+    h1 { margin: 0 0 6px; color: #dfe1e5; font-size: 24px; line-height: 1.4; font-weight: 600; }
+    p { margin: 0 0 24px; color: #9da0a8; }
+    .gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin: 0; padding: 0; list-style: none; }
+    .shot { display: block; overflow: hidden; border: 1px solid #393b40; border-radius: 4px; background: #25262a; color: #dfe1e5; text-decoration: none; }
+    .shot:hover { border-color: #6b9bfa; }
+    .shot:focus-visible { outline: 2px solid #6b9bfa; outline-offset: 3px; }
+    .shot img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #1e1f22; }
+    .shot span { display: block; padding: 10px 14px; border-top: 1px solid #393b40; }
+    @media (max-width: 700px) {
+      main { padding: 20px 14px 28px; }
+      h1 { font-size: 20px; }
+      .gallery { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Экраны платформы C++/CUDA</h1>
+    <p>Нажмите на экран, чтобы открыть полный снимок.</p>
+    <ol class="gallery">
+      <li><a class="shot" href="01-problems.jpg"><img src="01-problems.jpg" alt=""><span>01. Задачи</span></a></li>
+      <li><a class="shot" href="02-contests.jpg"><img src="02-contests.jpg" alt=""><span>02. Соревнования</span></a></li>
+      <li><a class="shot" href="03-submissions.jpg"><img src="03-submissions.jpg" alt="" loading="lazy"><span>03. Посылки</span></a></li>
+      <li><a class="shot" href="04-rating.jpg"><img src="04-rating.jpg" alt="" loading="lazy"><span>04. Рейтинг</span></a></li>
+      <li><a class="shot" href="05-profile.jpg"><img src="05-profile.jpg" alt="" loading="lazy"><span>05. Профиль</span></a></li>
+      <li><a class="shot" href="06-problem.jpg"><img src="06-problem.jpg" alt="" loading="lazy"><span>06. Задача и редактор</span></a></li>
+      <li><a class="shot" href="07-problem-submissions.jpg"><img src="07-problem-submissions.jpg" alt="" loading="lazy"><span>07. Посылки задачи</span></a></li>
+      <li><a class="shot" href="08-problem-leaders.jpg"><img src="08-problem-leaders.jpg" alt="" loading="lazy"><span>08. Лидеры задачи</span></a></li>
+      <li><a class="shot" href="09-create-contest.jpg"><img src="09-create-contest.jpg" alt="" loading="lazy"><span>09. Создание контеста</span></a></li>
+      <li><a class="shot" href="10-contest.jpg"><img src="10-contest.jpg" alt="" loading="lazy"><span>10. Контест и статусы задач</span></a></li>
+    </ol>
+  </main>
+</body>
+</html>

@@ -4,3 +4,9 @@
 **/build
 **/.kotlin
 **/__pycache__
+**/node_modules
+**/dist
+**/coverage
+**/*.tsbuildinfo
+frontend/src/api/schema.d.ts
+**/.env*

@@ -1,0 +1,506 @@
+openapi: 3.0.3
+info:
+  title: GPU Codeforces Frontend API
+  version: 0.1.0
+  description: |
+    Предлагаемый контракт MVP. Все даты в UTC, время GPU в миллисекундах.
+    Только публичные задачи; подготовка задач и API воркера находятся вне этого контракта.
+    Сессия в HttpOnly cookie с Secure и SameSite=Lax. Запросы с телом используют
+    application/json; для изменяющих запросов сервер проверяет Origin. Фронт и API на одном origin.
+    GET /submissions/{id} опрашивается, пока статус queued, compiling, checking или measuring.
+    Рекорды и места считает сервер по принятым решениям в одной конфигурации проверки.
+    Практика и каждый контест имеют отдельные рекорды и результаты.
+    Ошибки имеют вид {message}: 400 - неверный запрос, 401 - нужен вход,
+    403 - нет доступа, 404 - не найдено, 500 - сбой.
+servers:
+  - url: /api
+security: [{}, {session: []}]
+paths:
+  /session:
+    get:
+      operationId: getCurrentUser
+      summary: Текущий пользователь
+      security: [{session: []}]
+      responses:
+        '200':
+          description: Пользователь сессии
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/User'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: login
+      summary: Войти
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, password]
+              properties:
+                identifier: {type: string, description: Ник или почта}
+                password: {type: string}
+      responses:
+        '200':
+          description: Пользователь; сервер устанавливает cookie сессии
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/User'}
+        default: {$ref: '#/components/responses/Error'}
+    delete:
+      operationId: logout
+      summary: Выйти
+      security: [{session: []}]
+      responses:
+        '204': {description: Сессия завершена; cookie удалена}
+        default: {$ref: '#/components/responses/Error'}
+  /users:
+    get:
+      operationId: listUsers
+      summary: Поиск авторов или рейтинг участников
+      description: sort=rating возвращает только участников с рейтингом и их места до фильтрации по q.
+      parameters:
+        - {$ref: '#/components/parameters/Query'}
+        - {name: sort, in: query, schema: {type: string, enum: [handle, rating], default: handle}}
+        - {$ref: '#/components/parameters/Offset'}
+        - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: Пользователи по нику либо рейтингу по убыванию
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/User'}}
+                  total: {type: integer}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: registerUser
+      summary: Зарегистрироваться
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [handle, email, password]
+              properties:
+                handle: {type: string, pattern: '^[A-Za-z0-9_]{3,24}$'}
+                email: {type: string, format: email}
+                password: {type: string, minLength: 8}
+      responses:
+        '201':
+          description: Новый пользователь; сервер устанавливает cookie сессии
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/User'}
+        default: {$ref: '#/components/responses/Error'}
+  /users/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      operationId: getUserProfile
+      summary: Профиль участника
+      responses:
+        '200':
+          description: Профиль; последние посылки доступны через /submissions?userId=ID
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user, solvedCount, contests]
+                properties:
+                  user: {$ref: '#/components/schemas/User'}
+                  solvedCount: {type: integer, description: Число разных решенных задач.}
+                  contests:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, title, phase, rank, ratingDelta, ratingAfter]
+                      properties:
+                        id: {type: string}
+                        title: {type: string}
+                        phase: {type: string, enum: [upcoming, live, finished]}
+                        rank: {type: integer, nullable: true}
+                        ratingDelta: {type: integer, nullable: true}
+                        ratingAfter: {type: integer, nullable: true}
+        default: {$ref: '#/components/responses/Error'}
+  /problems:
+    get:
+      operationId: listProblems
+      summary: Банк задач или задачи контеста с личными результатами
+      description: В контексте контеста возвращает его версии задач и порядок problemIds; sort действует только в практике. До начала задачи доступны только авторам.
+      parameters:
+        - {$ref: '#/components/parameters/Context'}
+        - {$ref: '#/components/parameters/Query'}
+        - {name: difficulty, in: query, schema: {type: string, enum: [easy, medium, hard]}}
+        - {name: tag, in: query, schema: {type: string}}
+        - {name: solved, in: query, schema: {type: boolean}}
+        - {name: sort, in: query, schema: {type: string, enum: [code, difficulty, bestTime], default: code}}
+        - {name: userId, in: query, description: Чьи результаты показать; по умолчанию текущего пользователя., schema: {type: string}}
+        - {$ref: '#/components/parameters/Offset'}
+        - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: Сортировка по возрастанию; без времени задачи идут последними. tags содержит темы доступного пула до фильтрации.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total, tags]
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/Problem'}}
+                  total: {type: integer}
+                  tags: {type: array, items: {type: string}}
+        default: {$ref: '#/components/responses/Error'}
+  /problems/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      operationId: getProblem
+      summary: Условие и шаблон решения
+      parameters:
+        - {$ref: '#/components/parameters/Context'}
+      responses:
+        '200':
+          description: В контексте контеста используются его условие и шаблон
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: '#/components/schemas/Problem'}
+                  - type: object
+                    required: [statementMarkdown, starterCode, timeLimitSeconds, memoryLimitMb, environmentMarkdown]
+                    properties:
+                      statementMarkdown: {type: string, description: 'Условие с сигнатурой, примерами, ограничениями входа и допусками.'}
+                      starterCode: {type: string}
+                      timeLimitSeconds: {type: number}
+                      memoryLimitMb: {type: integer}
+                      environmentMarkdown: {type: string, description: Оборудование и методика замера.}
+        default: {$ref: '#/components/responses/Error'}
+  /problems/{id}/example:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      operationId: checkExample
+      summary: Проверить решение на примере из условия
+      description: Ждет результата; не создает посылку и не меняет рекорды.
+      parameters:
+        - {$ref: '#/components/parameters/Context'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: {type: string}
+      responses:
+        '200':
+          description: Результат проверки примера; diagnostic содержит пояснение ошибки
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [passed, diagnostic]
+                properties:
+                  passed: {type: boolean}
+                  diagnostic: {type: string}
+        default: {$ref: '#/components/responses/Error'}
+  /problems/{id}/leaders:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      operationId: listProblemLeaders
+      summary: Лучшие принятые решения в одной конфигурации проверки
+      parameters:
+        - {$ref: '#/components/parameters/Context'}
+      responses:
+        '200':
+          description: По времени GPU по возрастанию; равные результаты имеют одинаковое место
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [rank, user, timeMs, submissionId]
+                  properties:
+                    rank: {type: integer}
+                    user: {$ref: '#/components/schemas/User'}
+                    timeMs: {type: number}
+                    submissionId: {type: string}
+        default: {$ref: '#/components/responses/Error'}
+  /submissions:
+    get:
+      operationId: listSubmissions
+      summary: История посылок
+      parameters:
+        - {name: userId, in: query, description: По умолчанию текущий пользователь; гостю нужно указать userId., schema: {type: string}}
+        - {name: problemId, in: query, schema: {type: string}}
+        - {name: context, in: query, description: 'all - все посылки, practice - практика, иначе ID контеста.', schema: {type: string, default: all}}
+        - {name: status, in: query, description: Статус из Submission., schema: {type: string}}
+        - {$ref: '#/components/parameters/Offset'}
+        - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: Новые посылки первыми; без кода и диагностики
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/Submission'}}
+                  total: {type: integer}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: submitSolution
+      summary: Отправить решение на C++/CUDA
+      security: [{session: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [problemId, code]
+              properties:
+                problemId: {type: string}
+                contestId: {type: string, description: Не указан - практика.}
+                code: {type: string}
+      responses:
+        '202':
+          description: Принято в очередь; конкурсная отправка требует регистрации и действующего контеста
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Submission'}
+        default: {$ref: '#/components/responses/Error'}
+  /submissions/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      operationId: getSubmission
+      summary: Результат посылки и опрос статуса
+      responses:
+        '200':
+          description: |
+            Всегда содержит passedTests, totalTests, previousBestTimeMs и environmentMarkdown.
+            Автору также возвращаются code и diagnostic; diagnostic может быть пустой строкой.
+            Для остальных пользователей code и diagnostic отсутствуют.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Submission'}
+        default: {$ref: '#/components/responses/Error'}
+  /submissions/{id}/recheck:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      operationId: recheckSubmission
+      summary: Повторить проверку после сбоя
+      description: Только автору после system_error или measurement_error. Сохраняет исходные код, контекст, версии и время отправки; доступно после завершения контеста.
+      security: [{session: []}]
+      responses:
+        '202':
+          description: Та же посылка возвращена в очередь
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Submission'}
+        default: {$ref: '#/components/responses/Error'}
+  /contests:
+    get:
+      operationId: listContests
+      summary: Список соревнований
+      parameters:
+        - {$ref: '#/components/parameters/Query'}
+        - {name: phase, in: query, schema: {type: string, enum: [upcoming, live, finished]}}
+        - {name: mine, in: query, description: Только контесты текущего автора; требует входа., schema: {type: boolean, default: false}}
+      responses:
+        '200':
+          description: По startAt по возрастанию; при phase=finished по убыванию
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Contest'}
+        default: {$ref: '#/components/responses/Error'}
+    post:
+      operationId: createContest
+      summary: Создать контест
+      security: [{session: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ContestInput'}
+      responses:
+        '201':
+          description: Контест создан; авторство не регистрирует для участия
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Contest'}
+        default: {$ref: '#/components/responses/Error'}
+  /contests/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      operationId: getContest
+      summary: Контест; его задачи доступны через /problems?context=ID
+      responses:
+        '200':
+          description: Всегда включает rulesMarkdown с правилами; таблица эталонов скрыта до начала от обычных посетителей.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Contest'}
+        default: {$ref: '#/components/responses/Error'}
+    put:
+      operationId: updateContest
+      summary: Изменить контест до начала
+      description: Только текущим авторам. Список authorIds заменяется целиком; создателя можно убрать, если остается другой автор.
+      security: [{session: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ContestInput'}
+      responses:
+        '200':
+          description: Контест сохранен; права проверяются по прежнему списку авторов
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Contest'}
+        default: {$ref: '#/components/responses/Error'}
+  /contests/{id}/registration:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    put:
+      operationId: registerForContest
+      summary: Зарегистрироваться в контесте
+      description: До завершения контеста. Повторный запрос имеет тот же результат.
+      security: [{session: []}]
+      responses:
+        '204': {description: Пользователь зарегистрирован}
+        default: {$ref: '#/components/responses/Error'}
+  /contests/{id}/standings:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      operationId: getContestStandings
+      summary: Таблица контеста
+      description: Сначала число решенных задач, затем сумма ускорений относительно эталонов. Равные результаты имеют одинаковое место. До начала список пуст.
+      responses:
+        '200':
+          description: Только результаты этого контеста; обновление обычным GET
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [rank, user, solved, speedup, times]
+                  properties:
+                    rank: {type: integer}
+                    user: {$ref: '#/components/schemas/User'}
+                    solved: {type: integer}
+                    speedup: {type: number}
+                    times:
+                      type: object
+                      description: ID задачи -> лучшее время GPU; нерешенных задач в объекте нет.
+                      additionalProperties: {type: number}
+        default: {$ref: '#/components/responses/Error'}
+components:
+  securitySchemes:
+    session: {type: apiKey, in: cookie, name: session}
+  parameters:
+    Id: {name: id, in: path, required: true, schema: {type: string}}
+    Query: {name: q, in: query, description: 'Подстрока названия, номера задачи или ника без учета регистра и пробелов по краям.', schema: {type: string}}
+    Context: {name: context, in: query, description: 'practice - практика, иначе ID контеста. Определяет версию задачи и результаты; до начала доступ только авторам.', schema: {type: string, default: practice}}
+    Offset: {name: offset, in: query, schema: {type: integer, minimum: 0, default: 0}}
+    Limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+  responses:
+    Error:
+      description: Ошибка
+      content:
+        application/json:
+          schema:
+            title: ErrorResponse
+            type: object
+            required: [message]
+            properties:
+              message: {type: string}
+  schemas:
+    User:
+      type: object
+      required: [id, handle, rating, rank, ratingDelta, ratingContestId]
+      properties:
+        id: {type: string}
+        handle: {type: string}
+        rating: {type: integer, nullable: true}
+        rank: {type: integer, nullable: true}
+        ratingDelta: {type: integer, nullable: true}
+        ratingContestId: {type: string, nullable: true}
+    Problem:
+      type: object
+      description: last* и best* относятся к контексту; без userId и сессии они null. solvedCount и recordTimeMs общие.
+      required: [id, code, title, difficulty, tags, solved, solvedCount, lastSubmissionId, lastStatus, bestSubmissionId, bestTimeMs, recordTimeMs]
+      properties:
+        id: {type: string}
+        code: {type: string, description: Номер задачи в банке.}
+        title: {type: string}
+        difficulty: {type: string, enum: [easy, medium, hard]}
+        tags: {type: array, items: {type: string}}
+        solved: {type: boolean, description: 'В практике учитывает решение в любом контексте, в контесте - только в нем; без userId и сессии false.'}
+        solvedCount: {type: integer, description: Число участников с solved=true.}
+        lastSubmissionId: {type: string, nullable: true}
+        lastStatus: {type: string, nullable: true, description: Статус из Submission; null означает отсутствие посылок.}
+        bestSubmissionId: {type: string, nullable: true}
+        bestTimeMs: {type: number, nullable: true}
+        recordTimeMs: {type: number, nullable: true}
+    Submission:
+      type: object
+      required: [id, problemId, problemTitle, user, contestId, contestTitle, createdAt, status, timeMs, comparable]
+      properties:
+        id: {type: string}
+        problemId: {type: string}
+        problemTitle: {type: string}
+        user: {$ref: '#/components/schemas/User'}
+        contestId: {type: string, nullable: true, description: null - практика.}
+        contestTitle: {type: string, nullable: true}
+        createdAt: {type: string, format: date-time}
+        status: {type: string, enum: [queued, compiling, checking, measuring, accepted, compile_error, wrong_answer, runtime_error, time_limit, memory_limit, system_error, measurement_error]}
+        timeMs: {type: number, nullable: true, description: Для accepted - измеренное время; для остальных статусов null.}
+        comparable: {type: boolean, description: Результат может участвовать в текущих рекордах своего контекста.}
+        passedTests: {type: integer, description: В детали посылки; число пройденных тестов.}
+        totalTests: {type: integer, nullable: true, description: В детали посылки; null до подготовки тестов.}
+        previousBestTimeMs: {type: number, nullable: true, description: В детали посылки; личный рекорд в том же контексте и конфигурации до этой отправки.}
+        environmentMarkdown: {type: string, description: В детали посылки; сохраненное оборудование и методика замера.}
+        code: {type: string, description: 'Только автору в GET /submissions/{id}.'}
+        diagnostic: {type: string, description: 'Только автору в GET /submissions/{id}.'}
+    Contest:
+      type: object
+      required: [id, title, startAt, endAt, authors, problemIds, problemCount, registered, gpu]
+      properties:
+        id: {type: string}
+        title: {type: string}
+        startAt: {type: string, format: date-time}
+        endAt: {type: string, format: date-time}
+        authors: {type: array, items: {$ref: '#/components/schemas/User'}}
+        problemIds: {type: array, items: {type: string}, description: Порядок задач; до начала скрыт от обычных посетителей пустым массивом.}
+        problemCount: {type: integer}
+        registered: {type: boolean, description: Участие текущего пользователя; для гостя false.}
+        gpu: {type: string, description: Одна доступная GPU назначается сервером для всего контеста.}
+        rulesMarkdown: {type: string, description: 'В детали контеста; правила и таблица эталонов. До начала обычным посетителям только общие правила без названий задач и эталонов.'}
+    ContestInput:
+      type: object
+      description: startAt в будущем, endAt позже startAt. Только публичные задачи; их порядок задает problemIds.
+      required: [title, startAt, endAt, authorIds, problemIds]
+      properties:
+        title: {type: string, minLength: 1, maxLength: 100}
+        startAt: {type: string, format: date-time}
+        endAt: {type: string, format: date-time}
+        authorIds: {type: array, minItems: 1, uniqueItems: true, items: {type: string}}
+        problemIds: {type: array, minItems: 1, uniqueItems: true, items: {type: string}}
