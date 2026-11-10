@@ -15,7 +15,7 @@ Backend ◀── RabbitMQ: judge.events (QUEUED → COMPILING → PREPARING →
 | Модуль | Что делает |
 |---|---|
 | `judge-api` | Контракты (Kotlin data classes): `SubmissionRequest`, `ProblemSpec`, `JudgeEvent`, вердикты, имена очередей. Бэкенд может подключить модуль как зависимость. |
-| `judge-gateway` | Spring Boot. Валидирует посылку, кладёт задание в очередь нужного GPU-профиля (с publisher confirm), сразу отвечает 202. Дедупликация по `submissionId`, отмена, мониторинг executors и очередей. OpenAPI: `/swagger-ui.html`. |
+| `judge-gateway` | Spring Boot. Валидирует посылку, кладёт задание в очередь нужного GPU-профиля (с publisher confirm), сразу отвечает 202. Дедупликация по `submissionId`, отмена, мониторинг executors и очередей. Контракт HTTP — [docs/openapi.yaml](docs/openapi.yaml), контроллеры реализуют сгенерированные по нему интерфейсы; Swagger UI: `/swagger-ui.html`. |
 | `judge-executor` | Spring Boot на GPU-машине. Забирает задания из очереди, компилирует, готовит тесты, запускает решение в nsjail на свободной GPU, проверяет, публикует события. |
 | `harness/` | C++/CUDA-обвязка, которая линкуется с решением: загрузка данных, вызов `solve`, замер времени, статус-протокол. |
 | `pytools/` | `judge_problem.prepare`: генерация тестов и эталонных ответов (Python + PyTorch). |
@@ -138,6 +138,8 @@ INFO [sub=s-42 a=1 gpu=]  JudgePipeline : Verdict ACCEPTED in 2410ms (max time 1
 - **Метрики:** `/actuator/prometheus`: `judge.executor.stage` (compile/prepare/run), `judge.executor.verdicts`, `judge.executor.requeues`, `judge.gateway.submissions`, `judge.gateway.healthy_gpus`.
 
 ## Контракт с бэкендом
+
+HTTP API описан в [docs/openapi.yaml](docs/openapi.yaml); ниже — то, что важно знать сверх схем.
 
 - `POST /api/v1/submissions` с телом `SubmissionRequest`: `{submissionId, problem: ProblemSpec, source, gpuProfile?}`. Ответы: 202 — принято, в ответе `jobId`; 200 + `duplicate: true` — повтор id, `jobId` первого запроса; 409 — этот же id прямо сейчас принимается другим запросом, повторите позже; 400 + `details` — невалидно; 413 — тело больше 8 МБ; 503 — брокер недоступен.
 - `DELETE /api/v1/submissions/{id}` — отмена. Это только оптимизация: сообщение не сохраняется и теряется, если executor профиля не подключён, перезапустился или задание ждёт дольше часа; API при этом всё равно отвечает 202. Решает бэкенд: после отмены он игнорирует любой результат, а на отменённую посылку может прийти обычный вердикт.

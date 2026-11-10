@@ -1,6 +1,8 @@
 server:
   port: ${PORT:8090}
   shutdown: graceful
+  mime-mappings:
+    yaml: application/yaml
 
 spring:
   application:
@@ -36,10 +38,10 @@ management:
         enabled: true
 
 springdoc:
-  api-docs:
-    path: /v3/api-docs
   swagger-ui:
     path: /swagger-ui.html
+    # the hand-written contract (judge/docs/openapi.yaml), not the one springdoc derives from the controllers
+    url: /openapi.yaml
 
 logging:
   level:

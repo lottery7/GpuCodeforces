@@ -80,6 +80,13 @@ python3 judge/tools/judge_cli.py submit judge/problems/examples/vector_add \
   judge/problems/examples/vector_add/solutions/accepted.cu --watch
 ```
 
+The gateway API contract is [judge/docs/openapi.yaml](judge/docs/openapi.yaml). Its
+controllers implement interfaces generated from it the same way as the backend's (see
+below), with `:judge-gateway` tasks and the snapshot
+[judge/docs/openapi-java.sha256](judge/docs/openapi-java.sha256). Schemas that are also
+broker messages (`ProblemSpec`, `SubmissionRequest` and the rest) map to the `judge-api`
+classes instead of generated models; a gateway test checks that they agree with the spec.
+
 Judge tests need neither a GPU nor Docker. They are part of `./gradlew test`
 and run in CI ([judge.yml](.github/workflows/judge.yml)):
 
