@@ -1,6 +1,10 @@
 .git
-**/node_modules
+.gradle
+.idea
 **/build
+**/.kotlin
+**/__pycache__
+**/node_modules
 **/dist
 **/coverage
 **/*.tsbuildinfo

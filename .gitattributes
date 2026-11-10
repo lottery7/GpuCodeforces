@@ -1,0 +1,5 @@
+# Sources are copied into Linux images (gradlew, nsjail policy, harness, Python tools): a CRLF checkout on
+# Windows breaks them there, so the working tree is LF everywhere except Windows scripts.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.jar binary

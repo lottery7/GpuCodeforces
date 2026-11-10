@@ -27,9 +27,9 @@ allprojects {
 }
 
 tasks.named("check") {
-    dependsOn(":backend:check")
+    dependsOn(":backend:check", ":judge-api:check", ":judge-gateway:check", ":judge-executor:check")
 }
 
 tasks.named("assemble") {
-    dependsOn(":backend:assemble")
+    dependsOn(":backend:assemble", ":judge-gateway:assemble", ":judge-executor:assemble")
 }
