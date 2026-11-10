@@ -19,7 +19,7 @@ vi.mock('../src/components/CodeEditor', () => ({ default: ({ value, onChange, re
 
 const owner: User = { id: 'owner', handle: 'cuda_user', rating: null, rank: null, ratingDelta: null, ratingContestId: null };
 const opponent: User = { ...owner, id: 'opponent', handle: 'opponent_cuda' };
-const task: ProblemDetail = { id: 'vector', code: '100', title: 'Сложение', format: 'guess', difficulty: 'easy', tags: [], solved: false, solvedCount: 0, lastSubmissionId: null, lastStatus: null, bestSubmissionId: null, bestTimeMs: null, recordTimeMs: null, statementMarkdown: 'Какой код быстрее?', starterCode: '', timeLimitSeconds: 2, memoryLimitMb: 1024, environmentMarkdown: 'NVIDIA A100', firstCode: 'void first() {}', secondCode: 'void second() {}', guessSubmissionId: null };
+const task: ProblemDetail = { id: 'vector', code: '100', title: 'Сложение', format: 'guess', difficulty: 'easy', tags: [], solved: false, solvedCount: 0, lastSubmissionId: null, lastStatus: null, bestSubmissionId: null, bestTimeMs: null, recordTimeMs: null, statementMarkdown: 'Какой код быстрее?', starterCode: '', timeLimitSeconds: 2, memoryLimitMb: 1024, environmentMarkdown: 'NVIDIA A100', firstCode: 'void first() {}', secondCode: 'void second() {}', guessSubmissionId: null, referenceMeasurement: { key: 'environment-v1', status: 'ready', measuredAt: null, diagnostic: null } };
 const answer: SubmissionRecord = { id: '42', problemId: task.id, problemTitle: task.title, format: 'guess', user: owner, contestId: null, contestTitle: null, createdAt: '2026-01-01T10:00:00Z', status: 'accepted', timeMs: null, comparable: false, guessResult: { choice: 'first', correctChoice: 'first', firstTimeMs: 0.1, secondTimeMs: 0.2, explanation: 'Первый код читает память последовательно.' } };
 const duel: ContestRecord = { id: 'duel', title: 'CUDA Duel', format: 'duel', challengerId: owner.id, opponentId: opponent.id, startAt: new Date(Date.now() - 60000).toISOString(), endAt: new Date(Date.now() + 3600000).toISOString(), authors: [owner], problemIds: [task.id], problemCount: 1, registered: false, gpu: 'NVIDIA A100' };
 
@@ -53,7 +53,7 @@ describe('Форматы задач', () => {
     expect(screen.queryByRole('link', { name: 'Лидеры' })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('radio', { name: 'Код 1 быстрее' }));
     await userEvent.click(screen.getByRole('button', { name: 'Проверить выбор' }));
-    expect(submit).toHaveBeenCalledWith(task.id, 'practice', { choice: 'first' });
+    expect(submit).toHaveBeenCalledWith(task.id, 'practice', { choice: 'first', benchmarkKey: task.referenceMeasurement!.key });
     expect(await screen.findByText('Верно')).toBeVisible();
     expect(screen.getByText(answer.guessResult!.explanation)).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Проверить выбор' })).not.toBeInTheDocument();

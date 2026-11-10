@@ -10,6 +10,10 @@ import dev.gpucodeforces.backend.api.model.SubmitGuessRequest
 import dev.gpucodeforces.backend.api.model.CreateComparisonRequest
 import dev.gpucodeforces.backend.api.model.Submission
 import dev.gpucodeforces.backend.auth.CurrentUser
+import dev.gpucodeforces.backend.api.model.ReferenceMeasurement
+import dev.gpucodeforces.backend.api.model.ReferenceMeasurementStatus
+import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
+import dev.gpucodeforces.backend.benchmark.ReferenceMeasurementView
 import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.submission.ExampleChecks
@@ -27,6 +31,7 @@ import org.springframework.http.ResponseEntity
 import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.RestController
 import java.math.BigDecimal
+import java.time.ZoneOffset
 import dev.gpucodeforces.backend.api.model.Problem as ProblemApiModel
 
 @RestController
@@ -43,6 +48,7 @@ class ProblemsController(
     private val comparisonService: ComparisonService,
     private val submissionRepository: SubmissionRepository,
     private val judgeProperties: JudgeProperties,
+    private val references: ReferenceMeasurements,
 ) : ProblemsApi {
     override fun listProblems(
         context: String,
@@ -64,9 +70,14 @@ class ProblemsController(
         val tags = pool.flatMap { it.version.tags }.distinct().sorted()
         if (format != null && format !in ProblemFormatData.FORMATS) throw BadRequestException("Неизвестный формат")
         val filtered = problemService.filter(pool, q, difficulty, tag).filter { format == null || it.version.format == format }
-        val results = submissionStats.problemResults(scope(problemContext, filtered), subject?.id)
+        val measured = filtered.associate { it.version.id to references.view(it.version) }
+        val environmentKey = references.environmentKey() ?: "unavailable"
+        val results = filtered.groupBy { problem ->
+            if (problem.version.format == ProblemFormatData.STANDARD) environmentKey else measured[problem.version.id]?.environmentKey ?: "unavailable"
+        }.flatMap { (environment, group) -> submissionStats.problemResults(scope(problemContext, group, environment), subject?.id).entries }
+            .associate { it.toPair() }
         val items = filtered
-            .map { it.version.toApiModel(results.getValue(it.version.problemId), problemCatalog.format(it.version)) }
+            .map { it.version.toApiModel(results.getValue(it.version.problemId), measured[it.version.id]) }
             .filter { solved == null || it.solved == solved }
             .let { if (problemContext == ProblemContext.Practice) sorted(it, sort) else it }
         return ResponseEntity.ok(ListProblems200Response(items.drop(offset).take(limit), items.size, tags))
@@ -79,10 +90,12 @@ class ProblemsController(
         val version = problem.version
         val spec = problemCatalog.spec(version)
         val format = problemCatalog.format(version)
-        val summary = version.toApiModel(submissionStats.problemResults(scope(problemContext, listOf(problem)), viewer?.id).getValue(id), format)
-        val gpuName = (problemContext as? ProblemContext.InContest)?.contest?.gpu ?: gpuProperties.name
-        val guessSubmissionId = if (viewer != null && version.format == ProblemFormatData.GUESS) {
-            submissionRepository.findGuess(viewer.id, version.id, (problemContext as? ProblemContext.InContest)?.contest?.id)?.id?.toString()
+        val reference = references.view(version)
+        val environmentKey = if (version.format == ProblemFormatData.STANDARD) references.environmentKey() else reference?.environmentKey
+        val summary = version.toApiModel(submissionStats.problemResults(scope(problemContext, listOf(problem), environmentKey ?: "unavailable"), viewer?.id).getValue(id), reference)
+        val gpuName = references.environmentName() ?: gpuProperties.name
+        val guessSubmissionId = if (viewer != null && version.format == ProblemFormatData.GUESS && reference?.status == "ready" && reference.key != null) {
+            submissionRepository.findGuess(viewer.id, version.id, (problemContext as? ProblemContext.InContest)?.contest?.id, reference.key)?.id?.toString()
         } else null
         return ResponseEntity.ok(
             GetProblem200Response(
@@ -97,7 +110,8 @@ class ProblemsController(
                 environmentMarkdown(spec, gpuName.takeUnless { judgeProperties.synthetic }),
             ).format(GetProblem200Response.FormatEnum.fromValue(version.format))
                 .versionId(version.id.toString())
-                .baselineTimeMs(format.baselineTimeMs)
+                .baselineTimeMs(summary.baselineTimeMs)
+                .referenceMeasurement(summary.referenceMeasurement)
                 .firstCode(format.firstCode)
                 .secondCode(format.secondCode)
                 .guessSubmissionId(guessSubmissionId)
@@ -107,7 +121,7 @@ class ProblemsController(
 
     override fun submitGuess(id: String, submitGuessRequest: SubmitGuessRequest, context: String): ResponseEntity<Submission> {
         val author = CurrentUser.resolve()!!
-        val submission = guessService.submit(id, context, submitGuessRequest.choice.value, author)
+        val submission = guessService.submit(id, context, submitGuessRequest.choice.value, author, submitGuessRequest.benchmarkKey)
         return ResponseEntity.ok(submissionViews.detail(submission, author))
     }
 
@@ -117,7 +131,7 @@ class ProblemsController(
             comparisonService.create(id, firstSubmissionId, secondSubmissionId, explanation, author)
         }
         return ResponseEntity.status(HttpStatus.CREATED).body(
-            version.toApiModel(ProblemResult(false, 0, null, null, null), problemCatalog.format(version)),
+            version.toApiModel(ProblemResult(false, 0, null, null, null), references.view(version)),
         )
     }
 
@@ -142,10 +156,11 @@ class ProblemsController(
         )
     }
 
-    private fun scope(context: ProblemContext, problems: List<ContextProblem>) = ResultScope(
+    private fun scope(context: ProblemContext, problems: List<ContextProblem>, environmentKey: String = references.environmentKey() ?: "unavailable") = ResultScope(
         (context as? ProblemContext.InContest)?.contest?.id,
         problems.associate { it.version.problemId to it.version.judgeHash },
         gpuProperties.profile,
+        environmentKey,
     )
 
     private fun sorted(items: List<ProblemApiModel>, sort: String): List<ProblemApiModel> {
@@ -163,7 +178,7 @@ class ProblemsController(
     }
 }
 
-fun ProblemVersion.toApiModel(result: ProblemResult, data: ProblemFormatData = ProblemFormatData()): ProblemApiModel = ProblemApiModel(
+fun ProblemVersion.toApiModel(result: ProblemResult, reference: ReferenceMeasurementView? = null): ProblemApiModel = ProblemApiModel(
     problemId,
     code,
     title,
@@ -176,4 +191,9 @@ fun ProblemVersion.toApiModel(result: ProblemResult, data: ProblemFormatData = P
     result.best?.id?.toString(),
     result.best?.timeMs,
     result.record?.timeMs,
-).format(ProblemApiModel.FormatEnum.fromValue(format)).baselineTimeMs(data.baselineTimeMs)
+).format(ProblemApiModel.FormatEnum.fromValue(format))
+    .baselineTimeMs(reference?.baselineTimeMs?.takeIf { reference.status == "ready" })
+    .referenceMeasurement(reference?.let {
+        ReferenceMeasurement().key(it.key).status(ReferenceMeasurementStatus.fromValue(it.status))
+            .measuredAt(it.measuredAt?.atOffset(ZoneOffset.UTC)).diagnostic(it.diagnostic)
+    })

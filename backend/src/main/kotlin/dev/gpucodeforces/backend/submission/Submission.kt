@@ -87,6 +87,16 @@ class Submission(
     @Column(name = "measurement")
     var measurement: String? = null
 
+    @Column(name = "benchmark_environment_key")
+    var benchmarkEnvironmentKey: String? = null
+
+    @Column(name = "guess_benchmark_key")
+    var guessBenchmarkKey: String? = null
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "guess_result")
+    var guessResult: String? = null
+
     @Column(name = "passed_tests", nullable = false)
     var passedTests: Int = 0
 
@@ -122,7 +132,7 @@ class Submission(
 
     override fun hashCode() = id.hashCode()
 
-    fun toRow() = SubmissionRow(id, userId, problemId, problemVersionId, contestId, status, timeMs, judgeHash, gpuProfile, createdAt)
+    fun toRow() = SubmissionRow(id, userId, problemId, problemVersionId, contestId, status, timeMs, judgeHash, gpuProfile, createdAt, benchmarkEnvironmentKey)
 
     companion object {
         const val RECHECK_SEPARATOR = ".r"
@@ -140,12 +150,14 @@ class SubmissionRow(
     val judgeHash: String,
     val gpuProfile: String,
     val createdAt: Instant,
+    val benchmarkEnvironmentKey: String? = null,
 )
 
 interface SubmissionRepository : JpaRepository<Submission, UUID> {
     @Query("SELECT s FROM Submission s WHERE s.userId = :userId AND s.problemVersionId = :versionId " +
-        "AND s.guessChoice IS NOT NULL AND ((:contestId IS NULL AND s.contestId IS NULL) OR s.contestId = :contestId)")
-    fun findGuess(userId: UUID, versionId: UUID, contestId: UUID?): Submission?
+        "AND s.guessChoice IS NOT NULL AND ((:contestId IS NULL AND s.contestId IS NULL) OR s.contestId = :contestId) " +
+        "AND ((:benchmarkKey IS NULL AND s.guessBenchmarkKey IS NULL) OR s.guessBenchmarkKey = :benchmarkKey)")
+    fun findGuess(userId: UUID, versionId: UUID, contestId: UUID?, benchmarkKey: String? = null): Submission?
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT s FROM Submission s WHERE s.id = :id")
@@ -163,7 +175,7 @@ interface SubmissionRepository : JpaRepository<Submission, UUID> {
     @Query(
         """
         SELECT new dev.gpucodeforces.backend.submission.SubmissionRow(
-            s.id, s.userId, s.problemId, s.problemVersionId, s.contestId, s.status, s.timeMs, s.judgeHash, s.gpuProfile, s.createdAt)
+            s.id, s.userId, s.problemId, s.problemVersionId, s.contestId, s.status, s.timeMs, s.judgeHash, s.gpuProfile, s.createdAt, s.benchmarkEnvironmentKey)
         FROM Submission s
         WHERE s.userId = :userId
           AND (:problemId IS NULL OR s.problemId = :problemId)

@@ -66,13 +66,10 @@ class ComparisonService(
         val data = jsonMapper.writeValueAsString(
             ProblemFormatData(
                 format = ProblemFormatData.GUESS,
-                firstTimeMs = first.timeMs,
-                secondTimeMs = second.timeMs,
                 explanation = description,
                 firstCode = first.code,
                 secondCode = second.code,
                 benchmark = firstFormat.benchmark,
-                benchmarkSynthetic = firstMeasurement?.synthetic ?: secondMeasurement?.synthetic,
             ),
         )
         val id = "comparison-${UUID.randomUUID()}"

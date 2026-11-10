@@ -23,6 +23,7 @@ import dev.gpucodeforces.backend.problem.ProblemVersion
 import dev.gpucodeforces.backend.problem.ProblemVersionRepository
 import dev.gpucodeforces.backend.submission.MeasurementData
 import dev.gpucodeforces.backend.submission.SubmissionRepository
+import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
 import dev.gpucodeforces.judge.api.GpuInfo
 import dev.gpucodeforces.judge.api.JudgeEvent
 import dev.gpucodeforces.judge.api.JudgeResult
@@ -36,6 +37,9 @@ import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.BeforeEach
+import org.mockito.ArgumentMatchers.any
+import org.mockito.BDDMockito.given
 import org.springframework.amqp.core.Message
 import org.springframework.amqp.core.MessageProperties
 import org.springframework.amqp.rabbit.core.RabbitTemplate
@@ -48,6 +52,7 @@ import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 import org.springframework.test.web.servlet.client.RestTestClient
 import org.springframework.transaction.support.TransactionTemplate
+import org.springframework.test.context.bean.override.mockito.MockitoBean
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.postgresql.PostgreSQLContainer
@@ -94,6 +99,15 @@ class SubmissionIntegrationTest {
 
     @Autowired
     lateinit var transactionTemplate: TransactionTemplate
+
+    @MockitoBean
+    lateinit var references: ReferenceMeasurements
+
+    @BeforeEach
+    fun environment() {
+        given(references.environmentKey()).willReturn("submission-test-environment")
+        given(references.environmentKeyFor(any(JudgeResult::class.java) ?: JudgeResult(Verdict.ACCEPTED))).willReturn("submission-test-environment")
+    }
 
     private val client by lazy { RestTestClient.bindToServer().baseUrl("http://localhost:$port/api").build() }
 
@@ -283,7 +297,7 @@ class SubmissionIntegrationTest {
                     "geometric-content", "geometric-judge", null, format = "optimization",
                     formatData = jsonMapper.writeValueAsString(
                         ProblemFormatData(
-                            format = "optimization", baselineTimeMs = BigDecimal("4"),
+                            format = "optimization",
                             benchmark = BenchmarkDefinition("Два теста сложения векторов", "geometric_mean"),
                         ),
                     ),

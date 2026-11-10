@@ -76,7 +76,7 @@ class ComparisonServiceTest {
         service.create(sample.id, first.id.toString(), second.id.toString(), explanation, author)
 
     @Test
-    fun `publishes a comparison from two owned historical CUDA versions`() {
+    fun `publishes owned historical code for a new benchmark without reusing earlier measured times`() {
         val firstVersion = version()
         val secondVersion = version()
         val first = submission(firstVersion)
@@ -93,10 +93,10 @@ class ComparisonServiceTest {
         assertThat(result.judgeSpec).isEqualTo(firstVersion.judgeSpec)
         assertThat(data.firstCode).isEqualTo(first.code)
         assertThat(data.secondCode).isEqualTo(second.code)
-        assertThat(data.firstTimeMs).isEqualByComparingTo("1.2")
-        assertThat(data.secondTimeMs).isEqualByComparingTo("2.4")
+        assertThat(data.firstTimeMs).isNull()
+        assertThat(data.secondTimeMs).isNull()
+        assertThat(data.baselineTimeMs).isNull()
         assertThat(data.explanation).isEqualTo("Причина разницы")
-        assertThat(data.correctChoice()).isEqualTo("first")
     }
 
     @Test
@@ -194,6 +194,8 @@ class ComparisonServiceTest {
         first.measurement = measurement(first.timeMs!!, true)
         val published = mapper.readValue(create(first, second).formatData, ProblemFormatData::class.java)
         assertThat(published.benchmark).isEqualTo(definition)
-        assertThat(published.benchmarkSynthetic).isTrue()
+        assertThat(published.benchmarkSynthetic).isNull()
+        assertThat(published.firstTimeMs).isNull()
+        assertThat(published.secondTimeMs).isNull()
     }
 }

@@ -67,8 +67,9 @@ sequenceDiagram
 
 ## Путь посылки
 
-Обычные задачи и оптимизация используют путь через judge. Угадывание проверяется в backend
-по сохраненной версии пакета и создает завершенную посылку без замера GPU.
+Обычные задачи и оптимизация используют путь через judge. Исходный код оптимизации и оба варианта
+угадывания заранее проверяются и измеряются отдельными заданиями judge. Ответ угадывания
+проверяется по готовому поколению замеров и сохраняет неизменяемый снимок результата.
 Начавшаяся дуэль использует тот же контест; оба участника уже зарегистрированы при подборе.
 Правила форматов: [backend/formats.md](backend/formats.md).
 
@@ -80,13 +81,36 @@ sequenceDiagram
   U->>B: GET /api/problems/{id}
   B-->>U: Два кода без ответа и времен
   U->>B: POST /api/problems/{id}/guess
-  B->>DB: Проверить контекст и сохранить один ответ
+  B->>DB: Проверить готовность замеров и контекст
+  B->>DB: Сохранить ответ и снимок времен текущего поколения
   DB-->>B: Посылка accepted или wrong_answer
   B-->>U: Свой ответ, времена и объяснение
   U->>B: POST /api/problems/{id}/comparisons
   B->>DB: Проверить две свои посылки и сохранить задачу guess
   B-->>U: Новая задача в банке
 ```
+
+```mermaid
+sequenceDiagram
+  participant B as backend
+  participant DB as PostgreSQL
+  participant G as judge-gateway
+  participant E as judge-executor
+  B->>G: GET /api/v1/executors
+  G-->>B: Живое оборудование профиля
+  B->>DB: Найти задания версии и отпечатка среды
+  B->>DB: Создать недостающие задания исходных кодов
+  loop Каждый исходный код
+    B->>G: POST /api/v1/submissions с reference ID
+    G->>E: Код, полные тесты и профиль GPU
+    E-->>B: События judge через RabbitMQ
+    B->>DB: Сохранить проверенный замер и оборудование
+  end
+  B->>DB: Все варианты готовы - открыть поколение
+  Note over B,DB: Новые тесты или GPU создают другие задания
+```
+
+Подробности восстановления и актуальности: [reference-measurements.md](backend/reference-measurements.md).
 
 ```mermaid
 sequenceDiagram
@@ -221,6 +245,8 @@ classDiagram
     UUID id
     String code
     String guessChoice
+    String guessBenchmarkKey
+    JSON guessResult
     SubmissionStatus status
     BigDecimal timeMs
     JSON measurement
@@ -228,11 +254,24 @@ classDiagram
     Int totalTests
     String judgeHash
     String gpuProfile
+    String benchmarkEnvironmentKey
     String jobId
     Int eventAttempt
     Int eventSeq
     Int recheckCount
   }
+  class ReferenceJob {
+    UUID id
+    UUID problemVersionId
+    String environmentKey
+    String role
+    String status
+    Int generation
+    BigDecimal timeMs
+    JSON measurement
+    String jobId
+  }
+  ProblemVersion "1" -- "*" ReferenceJob
   Session "*" --> "1" User
   DuelRequest "*" --> "1" User : creator
   DuelRequest "*" --> "0..1" User : opponent
@@ -318,6 +357,14 @@ classDiagram
       onEvent(Message)
     }
   }
+  namespace benchmark {
+    class ReferenceMeasurements {
+      refresh()
+      view(ProblemVersion) ReferenceMeasurementView
+      apply(JudgeEvent) Boolean
+    }
+    class ReferenceEnvironmentMonitor
+  }
   namespace rating {
     class ContestRatingFinalizer {
       finalizeDueContests()
@@ -343,6 +390,11 @@ classDiagram
   ProblemsController ..> ExampleChecks
   ProblemsController ..> GuessService
   ProblemsController ..> ComparisonService
+  ProblemsController ..> ReferenceMeasurements
+  GuessService ..> ReferenceMeasurements
+  ReferenceMeasurements ..> ReferenceEnvironmentMonitor
+  ReferenceMeasurements ..> JudgeGateway
+  ReferenceMeasurements ..> ProblemCatalog
   GuessService ..> ProblemService
   GuessService ..> ProblemCatalog
   GuessService ..> SubmissionService
@@ -357,6 +409,8 @@ classDiagram
   SubmissionService ..> ContestService
   SubmissionService ..> SubmissionStats
   SubmissionService ..> JudgeGateway
+  SubmissionService ..> ReferenceMeasurements
+  JudgeEventListener ..> ReferenceMeasurements
   ExampleChecks ..> ProblemCatalog
   ExampleChecks ..> JudgeGateway
   JudgeEventListener ..> SubmissionService

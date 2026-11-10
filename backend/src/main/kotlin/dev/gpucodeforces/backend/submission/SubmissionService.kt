@@ -5,6 +5,7 @@ import dev.gpucodeforces.backend.common.ForbiddenException
 import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.common.NotFoundApiException
 import dev.gpucodeforces.backend.common.toUuidOrNotFound
+import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
 import dev.gpucodeforces.backend.contest.ContestPhase
 import dev.gpucodeforces.backend.contest.ContestService
 import dev.gpucodeforces.backend.problem.ProblemCatalog
@@ -46,6 +47,7 @@ class SubmissionService(
     private val gpuProperties: GpuProperties,
     private val transactionTemplate: TransactionTemplate,
     private val jsonMapper: JsonMapper,
+    private val references: ReferenceMeasurements,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -70,7 +72,7 @@ class SubmissionService(
                     environmentMarkdown = environmentMarkdown(problemCatalog.spec(version), (contest?.gpu ?: gpuProperties.name).takeUnless { judgeProperties.synthetic }),
                     judgeHash = version.judgeHash,
                     gpuProfile = gpuProperties.profile,
-                    previousBestTimeMs = submissionStats.bestTime(author.id, version.problemId, contest?.id, version.judgeHash, gpuProperties.profile),
+                    previousBestTimeMs = submissionStats.bestTime(author.id, version.problemId, contest?.id, version.judgeHash, gpuProperties.profile, references.environmentKey() ?: "unavailable"),
                 ),
             )
         }!!
@@ -99,6 +101,7 @@ class SubmissionService(
             submission.status = SubmissionStatus.QUEUED
             submission.timeMs = null
             submission.measurement = null
+            submission.benchmarkEnvironmentKey = null
             submission.passedTests = 0
             submission.totalTests = null
             submission.diagnostic = ""
@@ -204,6 +207,7 @@ class SubmissionService(
                 val measurement = captureMeasurement(result, problemCatalog.spec(version), problemCatalog.format(version).aggregation(), judgeProperties.synthetic, expectedTestCount)
                 submission.timeMs = measurement.timeMs
                 submission.measurement = jsonMapper.writeValueAsString(measurement.data)
+                submission.benchmarkEnvironmentKey = references.environmentKeyFor(result)
             } catch (exception: InvalidMeasurementException) {
                 submission.status = SubmissionStatus.MEASUREMENT_ERROR
                 submission.timeMs = null

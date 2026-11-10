@@ -166,6 +166,7 @@ data class ExecutorHeartbeat(
     val inFlight: Int,
     /** Max jobs taken from the queue at once (prefetch). */
     val capacity: Int,
+    val toolchain: String? = null,
 )
 
 data class GpuSlotStatus(

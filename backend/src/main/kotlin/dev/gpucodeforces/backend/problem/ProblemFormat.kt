@@ -15,12 +15,6 @@ data class ProblemFormatData(
 ) {
     fun aggregation(): String = if (format == STANDARD) BenchmarkDefinition.MAX else benchmark?.aggregation ?: BenchmarkDefinition.MAX
 
-    fun correctChoice(): String = when (firstTimeMs!!.compareTo(secondTimeMs!!)) {
-        -1 -> "first"
-        1 -> "second"
-        else -> "equal"
-    }
-
     companion object {
         const val STANDARD = "standard"
         const val OPTIMIZATION = "optimization"

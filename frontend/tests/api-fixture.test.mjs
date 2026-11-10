@@ -265,13 +265,13 @@ describe('Fixture HTTP API', () => {
     expect(detail).toMatchObject({ format: 'guess', guessSubmissionId: null });
     expect(detail.firstCode).toContain('void solve');
     expect(detail).not.toHaveProperty('firstTimeMs');
-    const guess = await request('/problems/guess-vector/guess', { method: 'POST', body: { choice: 'first' }, cookie: owner });
+    const guess = await request('/problems/guess-vector/guess', { method: 'POST', body: { choice: 'first', benchmarkKey: detail.referenceMeasurement.key }, cookie: owner });
     expect(guess.status).toBe(200);
     expect(guess.body).toMatchObject({ status: 'accepted', timeMs: null, guessResult: { choice: 'first', correctChoice: 'first' } });
     expect((await request('/problems/guess-vector', { cookie: owner })).body.guessSubmissionId).toBe(guess.body.id);
-    const repeated = await request('/problems/guess-vector/guess', { method: 'POST', body: { choice: 'first' }, cookie: owner });
+    const repeated = await request('/problems/guess-vector/guess', { method: 'POST', body: { choice: 'first', benchmarkKey: detail.referenceMeasurement.key }, cookie: owner });
     expect(repeated.body.id).toBe(guess.body.id);
-    expect((await request('/problems/guess-vector/guess', { method: 'POST', body: { choice: 'second' }, cookie: owner })).status).toBe(400);
+    expect((await request('/problems/guess-vector/guess', { method: 'POST', body: { choice: 'second', benchmarkKey: detail.referenceMeasurement.key }, cookie: owner })).status).toBe(400);
     expect((await request(`/submissions/${guess.body.id}`, { cookie: other })).body).not.toHaveProperty('guessResult');
     expect((await request('/problems?format=guess', { cookie: owner })).body.items.every(item => item.format === 'guess')).toBe(true);
     expect((await request('/submissions', { method: 'POST', body: { problemId: 'guess-vector', code: 'void solve() {}' }, cookie: owner })).status).toBe(400);

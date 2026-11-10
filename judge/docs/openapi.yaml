@@ -352,6 +352,7 @@ components:
         hostname: {type: string}
         gpuProfile: {type: string}
         version: {type: string}
+        toolchain: {type: string, nullable: true, description: "Фактические версии CUDA, компилятора и PyTorch; совпадают с JudgeResult.toolchain."}
         startedAt: {type: string, format: date-time}
         timestamp: {type: string, format: date-time}
         gpus:

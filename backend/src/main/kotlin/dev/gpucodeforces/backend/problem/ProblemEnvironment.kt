@@ -25,5 +25,5 @@ fun benchmark(spec: ProblemSpec, data: ProblemFormatData, gpuName: String?, synt
     .timingMode(MeasurementTiming.fromValue(spec.timing.effectiveMode.name.lowercase()))
     .warmupRuns(spec.timing.warmupRuns)
     .maxRuns(spec.timing.maxRuns)
-    .gpuName(gpuName.takeUnless { synthetic || data.benchmarkSynthetic == true })
-    .synthetic(synthetic || data.benchmarkSynthetic == true)
+    .gpuName(gpuName.takeUnless { synthetic })
+    .synthetic(synthetic)

@@ -45,6 +45,9 @@ is empty. The package format is described (in Russian) in
 Supported formats are ordinary CUDA tasks, optimization of a supplied solution and guessing which of two
 solutions is faster. Duels match a random opponent or start after accepting an invitation; the shared task is selected by topic. Package metadata, participation
 and scoring are described in [docs/backend/formats.md](docs/backend/formats.md).
+Baseline and guessing variants are measured automatically by the judge. Hardware or test changes
+trigger fresh measurements; packages do not contain manually entered times. See
+[reference measurements](docs/backend/reference-measurements.md).
 
 ```sh
 PROBLEMS_GIT_URL=https://github.com/lottery7/GpuCodeforcesProblems.git PROBLEMS_DIRECTORY=build/problems   PROBLEMS_PATH=problems ./gradlew :backend:bootRun

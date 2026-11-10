@@ -116,7 +116,7 @@ function outcomeFor(code) {
   return 'accepted';
 }
 
-export function createApiServer() {
+export function createApiServer({ referenceMeasurements = new Map() } = {}) {
   const storage = memoryStorage();
   let model = makeModel(storage);
   function mutateModel(update) {
@@ -137,6 +137,17 @@ export function createApiServer() {
   const timers = new Set();
   const duelRequests = new Map();
   const notifications = [];
+  const referenceStartedAt = new Date().toISOString();
+
+  function referenceState(problem) {
+    return { key: `fixture-${problem.id}-v1-environment-v1`, status: 'ready', measuredAt: referenceStartedAt, diagnostic: null, baselineTimeMs: problem.baselineTimeMs, firstTimeMs: problem.firstTimeMs, secondTimeMs: problem.secondTimeMs, ...referenceMeasurements.get(problem.id) };
+  }
+
+  function referenceDto(problem) {
+    if (!['optimization', 'guess'].includes(problem.format)) return undefined;
+    const { key, status, measuredAt, diagnostic } = referenceState(problem);
+    return { key, status, measuredAt: status === 'ready' ? measuredAt : null, diagnostic };
+  }
 
   function expireDuels() {
     for (const duel of duelRequests.values()) {
@@ -239,7 +250,9 @@ export function createApiServer() {
     const best = targetId ? problem.format === 'guess' ? model.submissions({ problemId: problem.id, userId: targetId, ...(contestId ? { contestId } : {}) }).find(item => item.status === 'accepted') : model.best(problem.id, { userId: targetId, contestId }) : null;
     return {
       id: problem.id, code: problem.code, title: problem.title,
-      format: ['optimization', 'guess'].includes(problem.format) ? problem.format : 'standard', baselineTimeMs: problem.baselineTimeMs ?? null,
+      format: ['optimization', 'guess'].includes(problem.format) ? problem.format : 'standard',
+      baselineTimeMs: problem.format === 'optimization' && referenceState(problem).status === 'ready' ? referenceState(problem).baselineTimeMs ?? null : null,
+      referenceMeasurement: referenceDto(problem),
       difficulty: problem.difficulty, tags: problem.tags,
       solved: targetId ? model.solved(problem.id, targetId, contestId) : false,
       solvedCount: model.users().filter(user => model.solved(problem.id, user.id, contestId)).length,
@@ -567,7 +580,7 @@ export function createApiServer() {
             environmentMarkdown: environmentMarkdown(problem.benchmark),
             benchmark: { inputDescription: problem.benchmark.caseLabel, aggregation: 'geometric_mean', timingMode: 'wall', warmupRuns: 1, maxRuns: 3, gpuName: null, synthetic: true },
             firstCode: problem.firstCode ?? null, secondCode: problem.secondCode ?? null,
-            guessSubmissionId: problem.format === 'guess' && model.user() ? String(model.submissions({ userId: model.user().id, problemId: id, contestId }).find(item => item.guessResult)?.id ?? '') || null : null,
+            guessSubmissionId: problem.format === 'guess' && referenceState(problem).status === 'ready' && model.user() ? String(model.submissions({ userId: model.user().id, problemId: id, contestId }).find(item => item.guessResult?.benchmarkKey === referenceState(problem).key)?.id ?? '') || null : null,
           });
         }
         if (method === 'GET' && action === 'leaders') {
@@ -585,16 +598,19 @@ export function createApiServer() {
         if (method === 'POST' && action === 'guess') {
           const user = requireUser();
           if (problem.format !== 'guess' || !['first', 'second', 'equal'].includes(body.choice)) throw new ApiError(400, 'Выберите вариант ответа.');
+          const reference = referenceState(problem);
+          if (reference.status !== 'ready') throw new ApiError(503, 'Эталонные измерения еще не готовы.');
+          if (body.benchmarkKey !== reference.key) throw new ApiError(400, 'Условия сравнения изменились. Обновите задачу.');
           if (contestId && (model.phase(contestId) !== 'live' || !model.joined(contestId))) throw new ApiError(403, 'Нужно участвовать в действующем контесте.');
-          const previous = model.submissions({ userId: user.id, problemId: id, contestId }).find(item => item.guessResult);
+          const previous = model.submissions({ userId: user.id, problemId: id, contestId }).find(item => item.guessResult?.benchmarkKey === reference.key);
           if (previous) {
             if (previous.guessResult.choice !== body.choice) throw new ApiError(400, 'Ответ уже сохранен.');
             return send(response, 200, submissionDto(previous, true));
           }
-          const correctChoice = problem.firstTimeMs === problem.secondTimeMs ? 'equal' : problem.firstTimeMs < problem.secondTimeMs ? 'first' : 'second';
+          const correctChoice = reference.firstTimeMs === reference.secondTimeMs ? 'equal' : reference.firstTimeMs < reference.secondTimeMs ? 'first' : 'second';
           let result;
           mutateModel(state => {
-            result = { id: state.nextSubmissionId++, userId: user.id, problemId: id, contestId, createdAt: new Date().toISOString(), status: body.choice === correctChoice ? 'accepted' : 'wrong', timeMs: null, benchmark: problem.benchmark, benchmarkSnapshot: problem.benchmark, passedTests: body.choice === correctChoice ? 1 : 0, totalTests: 1, testVersion: problem.benchmark.testVersion, guessResult: { choice: body.choice, correctChoice, firstTimeMs: problem.firstTimeMs, secondTimeMs: problem.secondTimeMs, explanation: problem.explanation ?? '' } };
+            result = { id: state.nextSubmissionId++, userId: user.id, problemId: id, contestId, createdAt: new Date().toISOString(), status: body.choice === correctChoice ? 'accepted' : 'wrong', timeMs: null, benchmark: problem.benchmark, benchmarkSnapshot: problem.benchmark, passedTests: body.choice === correctChoice ? 1 : 0, totalTests: 1, testVersion: problem.benchmark.testVersion, guessResult: { choice: body.choice, correctChoice, firstTimeMs: reference.firstTimeMs, secondTimeMs: reference.secondTimeMs, explanation: problem.explanation ?? '', benchmarkKey: reference.key, synthetic: true } };
             state.submissions.push(result);
           });
           return send(response, 200, submissionDto(result, true));

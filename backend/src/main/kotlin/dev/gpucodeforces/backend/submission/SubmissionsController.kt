@@ -8,6 +8,7 @@ import dev.gpucodeforces.backend.api.model.GuessResult
 import dev.gpucodeforces.backend.api.model.MeasurementSummary
 import dev.gpucodeforces.backend.api.model.BenchmarkAggregation
 import dev.gpucodeforces.backend.api.model.MeasurementTiming
+import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
 import dev.gpucodeforces.backend.auth.CurrentUser
 import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.common.GpuProperties
@@ -81,12 +82,14 @@ class SubmissionViews(
     private val userRepository: UserRepository,
     private val gpuProperties: GpuProperties,
     private val jsonMapper: JsonMapper,
+    private val references: ReferenceMeasurements,
 ) {
     fun summaries(rows: List<SubmissionRow>): List<SubmissionApiModel> {
         val versions = problemCatalog.versions(rows.map { it.problemVersionId }.toSet())
         val users = userRepository.findAllById(rows.map { it.userId }.toSet()).associateBy { it.id }
         val contests = contestRepository.findAllById(rows.mapNotNull { it.contestId }.toSet()).associateBy { it.id }
         val comparableHashes = mutableMapOf<Pair<String, UUID?>, String?>()
+        val environmentKey = references.environmentKey()
         return rows.map { row ->
             val contest = row.contestId?.let { contests.getValue(it) }
             // Accepted results are comparable while the context still judges this problem the same way.
@@ -101,7 +104,8 @@ class SubmissionViews(
                 row.createdAt.atOffset(ZoneOffset.UTC),
                 SubmissionApiModel.StatusEnum.fromValue(row.status.value),
                 row.timeMs,
-                row.status == SubmissionStatus.ACCEPTED && row.timeMs != null && row.judgeHash == contextHash && row.gpuProfile == gpuProperties.profile,
+                row.status == SubmissionStatus.ACCEPTED && row.timeMs != null && row.judgeHash == contextHash && row.gpuProfile == gpuProperties.profile &&
+                    environmentKey != null && row.benchmarkEnvironmentKey == environmentKey,
             ).format(SubmissionApiModel.FormatEnum.fromValue(versions.getValue(row.problemVersionId).format))
         }
     }
@@ -126,12 +130,11 @@ class SubmissionViews(
         if (viewer?.id != submission.userId) return summary
         summary.code(submission.code).diagnostic(submission.diagnostic)
         submission.guessChoice?.let { choice ->
-            val version = problemCatalog.versions(listOf(submission.problemVersionId)).getValue(submission.problemVersionId)
-            val data = problemCatalog.format(version)
+            val data = submission.guessResult?.let { jsonMapper.readValue(it, GuessSnapshot::class.java) } ?: return summary
             summary.guessResult(GuessResult(
                 GuessChoice.fromValue(choice), GuessChoice.fromValue(data.correctChoice()),
-                data.firstTimeMs!!, data.secondTimeMs!!, data.explanation,
-            ))
+                data.firstTimeMs, data.secondTimeMs, data.explanation,
+            ).benchmarkKey(data.benchmarkKey).synthetic(data.synthetic))
         }
         return summary
     }

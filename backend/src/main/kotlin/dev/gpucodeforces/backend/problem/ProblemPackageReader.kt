@@ -17,7 +17,6 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
 import java.util.HexFormat
-import java.math.BigDecimal
 
 /** A problem package that failed validation; the message is shown in the sync log. */
 class ProblemPackageException(message: String) : RuntimeException(message)
@@ -81,8 +80,8 @@ class ProblemPackageReader(jsonMapper: JsonMapper) {
                 else sha256(statementFile, specFile, generator, starter, formatFile, format.firstCode.orEmpty(), format.secondCode.orEmpty()),
             judgeHash = when {
                 format.format == ProblemFormatData.GUESS -> sha256(specFile, generator, formatFile!!, format.firstCode!!, format.secondCode!!)
-                format.format == ProblemFormatData.OPTIMIZATION && format.benchmark != null ->
-                    sha256(specFile, generator, specMapper.writeValueAsString(format.benchmark))
+                format.format == ProblemFormatData.OPTIMIZATION ->
+                    sha256(specFile, generator, starter, format.benchmark?.let(specMapper::writeValueAsString).orEmpty())
                 else -> sha256(specFile, generator)
             },
             format = format,
@@ -92,13 +91,17 @@ class ProblemPackageReader(jsonMapper: JsonMapper) {
     private fun readFormat(directory: Path, source: String?, starter: String?): ProblemFormatData {
         if (source == null) return ProblemFormatData()
         val format = try {
-            specMapper.readValue(source, ProblemFormatData::class.java)
+            val tree = specMapper.readTree(source) as? ObjectNode ?: fail("$FORMAT_FILE должен содержать объект")
+            listOf("baselineTimeMs", "firstTimeMs", "secondTimeMs").firstOrNull(tree::has)?.let {
+                fail("$it нельзя задавать в $FORMAT_FILE: время измеряет платформа")
+            }
+            if (tree.has("benchmarkSynthetic")) fail("источник измерений задаёт платформа")
+            specMapper.treeToValue(tree, ProblemFormatData::class.java)
         } catch (exception: JacksonException) {
             fail("неверный $FORMAT_FILE: ${exception.originalMessage}")
         }
         if (format.format !in ProblemFormatData.FORMATS) fail("неизвестный format в $FORMAT_FILE")
         if (format.firstCode != null || format.secondCode != null) fail("варианты кода задаются файлами first.cu и second.cu")
-        if (format.benchmarkSynthetic != null) fail("источник измерений задаёт платформа")
         format.benchmark?.let { benchmark ->
             if (benchmark.inputDescription.isBlank() || benchmark.inputDescription.length > 4000) fail("benchmark.inputDescription должен быть непустым, до 4000 символов")
             if (benchmark.aggregation !in BenchmarkDefinition.AGGREGATIONS) fail("неизвестный benchmark.aggregation")
@@ -108,20 +111,13 @@ class ProblemPackageReader(jsonMapper: JsonMapper) {
         }
         return when (format.format) {
             ProblemFormatData.OPTIMIZATION -> {
-                if (format.baselineTimeMs == null || format.baselineTimeMs <= BigDecimal.ZERO) fail("baselineTimeMs должен быть больше нуля")
                 if (starter.isNullOrBlank()) fail("для оптимизации нужен непустой $STARTER_FILE")
                 val limit = SpecValidator.Limits().maxSourceBytes
                 if (starter.toByteArray().size > limit || starter.contains('\u0000')) fail("$STARTER_FILE содержит нулевые байты или больше $limit байт")
-                if (format.firstTimeMs != null || format.secondTimeMs != null) fail("времена вариантов доступны только для guess")
                 format
             }
             ProblemFormatData.GUESS -> {
                 if (format.explanation.isBlank() || format.explanation.length > 4000) fail("explanation должен быть непустым, до 4000 символов")
-                if (format.firstTimeMs == null || format.firstTimeMs <= BigDecimal.ZERO ||
-                    format.secondTimeMs == null || format.secondTimeMs <= BigDecimal.ZERO) {
-                    fail("firstTimeMs и secondTimeMs должны быть больше нуля")
-                }
-                if (format.baselineTimeMs != null) fail("baselineTimeMs доступен только для optimization")
                 val first = readFile(directory, "first.cu")
                 val second = readFile(directory, "second.cu")
                 val limit = SpecValidator.Limits().maxSourceBytes
@@ -130,12 +126,7 @@ class ProblemPackageReader(jsonMapper: JsonMapper) {
                 }
                 format.copy(firstCode = first, secondCode = second)
             }
-            else -> {
-                if (format.baselineTimeMs != null || format.firstTimeMs != null || format.secondTimeMs != null) {
-                    fail("standard не содержит измерений формата")
-                }
-                format
-            }
+            else -> format
         }
     }
 

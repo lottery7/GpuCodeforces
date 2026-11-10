@@ -70,3 +70,7 @@
   .guess-submit { width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) { .guess-code-card { transition: none; } }
+.reference-status { margin: 16px 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); background: var(--bg); }
+.reference-status strong { color: var(--text-strong); font-weight: 500; }
+.reference-status p { margin: 6px 0 0; overflow-wrap: anywhere; }
+.reference-status.failed { border-color: #75504a; }

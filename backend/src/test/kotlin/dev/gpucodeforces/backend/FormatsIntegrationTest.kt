@@ -3,6 +3,7 @@ package dev.gpucodeforces.backend
 import dev.gpucodeforces.backend.api.model.GetContestStandings200ResponseInner
 import dev.gpucodeforces.backend.api.model.ContestInput
 import dev.gpucodeforces.backend.api.model.GetProblem200Response
+import dev.gpucodeforces.backend.api.model.ListProblems200Response
 import dev.gpucodeforces.backend.api.model.RegisterUserRequest
 import dev.gpucodeforces.backend.api.model.Submission
 import dev.gpucodeforces.backend.api.model.User
@@ -18,15 +19,23 @@ import dev.gpucodeforces.backend.problem.ProblemFormatData
 import dev.gpucodeforces.backend.problem.ProblemRepository
 import dev.gpucodeforces.backend.problem.ProblemVersion
 import dev.gpucodeforces.backend.problem.ProblemVersionRepository
+import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
+import dev.gpucodeforces.backend.benchmark.ReferenceMeasurementView
+import dev.gpucodeforces.backend.common.GpuProperties
+import dev.gpucodeforces.backend.submission.SubmissionRepository
+import dev.gpucodeforces.backend.submission.SubmissionStatus
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.BeforeEach
+import org.mockito.BDDMockito.given
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection
 import org.springframework.http.MediaType
 import org.springframework.test.web.servlet.client.RestTestClient
+import org.springframework.test.context.bean.override.mockito.MockitoBean
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.postgresql.PostgreSQLContainer
@@ -37,6 +46,7 @@ import java.time.ZoneOffset
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
+import dev.gpucodeforces.backend.submission.Submission as StoredSubmission
 
 @Tag("integration")
 @Testcontainers
@@ -66,6 +76,20 @@ class FormatsIntegrationTest {
     @Autowired
     lateinit var jsonMapper: JsonMapper
 
+    @Autowired
+    lateinit var submissions: SubmissionRepository
+
+    @Autowired
+    lateinit var gpu: GpuProperties
+
+    @MockitoBean
+    lateinit var references: ReferenceMeasurements
+
+    @BeforeEach
+    fun measurementEnvironment() {
+        given(references.environmentKey()).willReturn("environment-1")
+    }
+
     private val client by lazy { RestTestClient.bindToServer().baseUrl("http://localhost:$port/api").build() }
 
     private fun register(): Pair<User, String> {
@@ -80,7 +104,7 @@ class FormatsIntegrationTest {
         val template = catalog.currentVersion("vector_add")!!
         if (!problems.existsById(problemId)) problems.save(Problem(problemId, source = "comparison"))
         val format = ProblemFormatData(
-            format = "guess", firstTimeMs = firstTimeMs, secondTimeMs = BigDecimal("2.5"),
+            format = "guess",
             firstCode = "void first() {}", secondCode = "void second() {}", explanation = "Первый вариант быстрее",
         )
         val version = versions.save(ProblemVersion(
@@ -91,13 +115,27 @@ class FormatsIntegrationTest {
             formatData = jsonMapper.writeValueAsString(format),
         ))
         problems.save(problems.findById(problemId).orElseThrow().apply { currentVersionId = version.id })
+        measured(version, "environment-1", firstTimeMs)
         return version
     }
 
-    private fun submit(id: String, cookie: String, choice: String = "first", context: String = "practice"): Submission =
-        client.post().uri("/problems/$id/guess?context=$context").contentType(MediaType.APPLICATION_JSON)
-            .cookie("session", cookie).body(mapOf("choice" to choice)).exchange().expectStatus().isOk
+    private fun measured(version: ProblemVersion, key: String, firstTimeMs: BigDecimal) {
+        val result = ReferenceMeasurementView(
+            key = "${version.id}:$key", status = "ready", baselineTimeMs = null,
+            firstTimeMs = firstTimeMs, secondTimeMs = BigDecimal("2.5"),
+            measuredAt = Instant.now(), synthetic = false, diagnostic = null, environmentKey = key,
+        )
+        given(references.view(version)).willReturn(result)
+        given(references.requireReady(version)).willReturn(result)
+    }
+
+    private fun submit(id: String, cookie: String, choice: String = "first", context: String = "practice"): Submission {
+        val problem = client.get().uri("/problems/$id?context=$context").cookie("session", cookie)
+            .exchange().expectStatus().isOk.expectBody(GetProblem200Response::class.java).returnResult().responseBody!!
+        return client.post().uri("/problems/$id/guess?context=$context").contentType(MediaType.APPLICATION_JSON)
+            .cookie("session", cookie).body(mapOf("choice" to choice, "benchmarkKey" to problem.referenceMeasurement!!.key)).exchange().expectStatus().isOk
             .expectBody(Submission::class.java).returnResult().responseBody!!
+    }
 
     @Test
     fun `guess answers are private immutable and concurrent retries share one submission`() {
@@ -122,7 +160,7 @@ class FormatsIntegrationTest {
         assertThat(result.comparable).isFalse()
         assertThat(result.guessResult!!.correctChoice.value).isEqualTo("first")
         client.post().uri("/problems/$id/guess").contentType(MediaType.APPLICATION_JSON).cookie("session", cookie)
-            .body(mapOf("choice" to "second")).exchange().expectStatus().isBadRequest
+            .body(mapOf("choice" to "second", "benchmarkKey" to "${version.id}:environment-1")).exchange().expectStatus().isBadRequest
 
         val outsider = client.get().uri("/submissions/${result.id}").cookie("session", otherCookie)
             .exchange().expectStatus().isOk.expectBody().returnResult().responseBody!!
@@ -171,6 +209,99 @@ class FormatsIntegrationTest {
         assertThat(rows.single().times).containsOnlyKeys(version.problemId)
         assertThat(rows.single().totalSeconds).isGreaterThanOrEqualTo(0)
         assertThat(rows.single().times.getValue(version.problemId)).isEqualTo(rows.single().totalSeconds)
+    }
+
+    @Test
+    fun `the same version gets a new attempt after an environment change and keeps its old answer snapshot`() {
+        val (_, cookie) = register()
+        val version = guessVersion()
+        val previous = submit(version.problemId, cookie)
+        assertThat(previous.guessResult!!.firstTimeMs).isEqualByComparingTo("1.25")
+
+        given(references.environmentKey()).willReturn("environment-2")
+        measured(version, "environment-2", BigDecimal("3.75"))
+
+        client.post().uri("/problems/${version.problemId}/guess").contentType(MediaType.APPLICATION_JSON).cookie("session", cookie)
+            .body(mapOf("choice" to "first", "benchmarkKey" to "${version.id}:environment-1"))
+            .exchange().expectStatus().isBadRequest
+
+        val currentProblem = client.get().uri("/problems/${version.problemId}").cookie("session", cookie)
+            .exchange().expectStatus().isOk.expectBody(GetProblem200Response::class.java).returnResult().responseBody!!
+        assertThat(currentProblem.versionId).isEqualTo(version.id.toString())
+        assertThat(currentProblem.guessSubmissionId).isNull()
+        val current = submit(version.problemId, cookie, "second")
+        assertThat(current.id).isNotEqualTo(previous.id)
+        assertThat(current.status).isEqualTo(Submission.StatusEnum.ACCEPTED)
+        assertThat(current.guessResult!!.firstTimeMs).isEqualByComparingTo("3.75")
+
+        val old = client.get().uri("/submissions/${previous.id}").cookie("session", cookie)
+            .exchange().expectStatus().isOk.expectBody(Submission::class.java).returnResult().responseBody!!
+        assertThat(old.guessResult!!.firstTimeMs).isEqualByComparingTo("1.25")
+        assertThat(old.guessResult!!.correctChoice.value).isEqualTo("first")
+    }
+
+    @Test
+    fun `a missing benchmark key is rejected without consuming an answer`() {
+        val (_, cookie) = register()
+        val version = guessVersion()
+
+        client.post().uri("/problems/${version.problemId}/guess").contentType(MediaType.APPLICATION_JSON).cookie("session", cookie)
+            .body(mapOf("choice" to "first")).exchange().expectStatus().isBadRequest
+
+        val problem = client.get().uri("/problems/${version.problemId}").cookie("session", cookie)
+            .exchange().expectStatus().isOk.expectBody(GetProblem200Response::class.java).returnResult().responseBody!!
+        assertThat(problem.guessSubmissionId).isNull()
+        assertThat(submit(version.problemId, cookie).status).isEqualTo(Submission.StatusEnum.ACCEPTED)
+    }
+
+    @Test
+    fun `optimization baseline and best results stay in the captured cohort after the environment changes`() {
+        val (user, cookie) = register()
+        val template = catalog.currentVersion("vector_add")!!
+        val problemId = "optimization-${UUID.randomUUID()}"
+        problems.save(Problem(problemId, source = "comparison"))
+        val version = versions.save(ProblemVersion(
+            id = UUID.randomUUID(), problemId = problemId, code = "O", title = "Optimization $problemId", difficulty = "easy",
+            tags = emptyList(), authors = emptyList(), draft = false, statementMarkdown = "Ускорьте решение",
+            starterCode = "void solve() {}", judgeSpec = template.judgeSpec, contentHash = UUID.randomUUID().toString(),
+            judgeHash = UUID.randomUUID().toString(), revision = null, format = "optimization",
+            formatData = jsonMapper.writeValueAsString(ProblemFormatData(format = "optimization")),
+        ))
+        problems.save(problems.findById(problemId).orElseThrow().apply { currentVersionId = version.id })
+        val reference = ReferenceMeasurementView(
+            key = "${version.id}:environment-A", status = "ready", baselineTimeMs = BigDecimal("20"),
+            firstTimeMs = null, secondTimeMs = null, measuredAt = Instant.now(), synthetic = false,
+            diagnostic = null, environmentKey = "environment-A",
+        )
+        given(references.view(version)).willReturn(reference)
+        given(references.environmentKey()).willReturn("environment-B")
+        fun accepted(time: String, environment: String) = submissions.saveAndFlush(
+            StoredSubmission(
+                UUID.randomUUID(), UUID.fromString(user.id), problemId, version.id, null,
+                "void solve() {}", "GPU", version.judgeHash, gpu.profile, null,
+            ).also {
+                it.status = SubmissionStatus.ACCEPTED
+                it.timeMs = BigDecimal(time)
+                it.benchmarkEnvironmentKey = environment
+            },
+        )
+        val captured = accepted("4", "environment-A")
+        accepted("1", "environment-B")
+
+        val detail = client.get().uri("/problems/$problemId").cookie("session", cookie)
+            .exchange().expectStatus().isOk.expectBody(GetProblem200Response::class.java).returnResult().responseBody!!
+        assertThat(detail.baselineTimeMs).isEqualByComparingTo("20")
+        assertThat(detail.bestTimeMs).isEqualByComparingTo("4")
+        assertThat(detail.recordTimeMs).isEqualByComparingTo("4")
+        assertThat(detail.bestSubmissionId).isEqualTo(captured.id.toString())
+
+        val listed = client.get().uri("/problems?q=$problemId").cookie("session", cookie)
+            .exchange().expectStatus().isOk.expectBody(ListProblems200Response::class.java).returnResult().responseBody!!
+            .items.single { it.id == problemId }
+        assertThat(listed.baselineTimeMs).isEqualByComparingTo("20")
+        assertThat(listed.bestTimeMs).isEqualByComparingTo("4")
+        assertThat(listed.recordTimeMs).isEqualByComparingTo("4")
+        assertThat(listed.bestSubmissionId).isEqualTo(captured.id.toString())
     }
 
     @Test

@@ -8,6 +8,8 @@ import dev.gpucodeforces.judge.api.JudgeJob
 import dev.gpucodeforces.judge.api.Topology
 import dev.gpucodeforces.judge.executor.config.ExecutorProperties
 import dev.gpucodeforces.judge.executor.config.REAL
+import dev.gpucodeforces.judge.executor.compile.Toolchain
+import dev.gpucodeforces.judge.executor.mock.MockJudge
 import dev.gpucodeforces.judge.executor.gpu.GpuManager
 import dev.gpucodeforces.judge.executor.pipeline.Disposition
 import dev.gpucodeforces.judge.executor.pipeline.JobProcessor
@@ -25,6 +27,7 @@ import org.springframework.amqp.rabbit.listener.api.ChannelAwareMessageListener
 import org.springframework.context.annotation.Profile
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
+import org.springframework.beans.factory.ObjectProvider
 import tools.jackson.core.JacksonException
 
 @Component
@@ -97,11 +100,13 @@ class HeartbeatPublisher(
     private val pipeline: JobProcessor,
     private val publisher: EventPublisher,
     private val clock: Clock,
+    toolchains: ObjectProvider<Toolchain>,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val startedAt = clock.instant()
     private val hostname = InetAddress.getLocalHost().hostName
     private val version = javaClass.`package`?.implementationVersion ?: "dev"
+    private val toolchain = toolchains.ifAvailable?.description ?: MockJudge.TOOLCHAIN
     @Volatile private var failing = false
 
     @Scheduled(fixedDelayString = "\${judge.executor.heartbeat-interval:5s}")
@@ -118,6 +123,7 @@ class HeartbeatPublisher(
                     gpus = gpus.pool.slots.map { it.status() },
                     inFlight = pipeline.inFlight.get(),
                     capacity = props.capacity,
+                    toolchain = toolchain,
                 ),
             )
             if (failing) log.info("Heartbeats are being delivered again")

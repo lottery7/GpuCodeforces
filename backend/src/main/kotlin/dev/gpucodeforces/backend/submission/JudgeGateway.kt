@@ -2,6 +2,7 @@ package dev.gpucodeforces.backend.submission
 
 import dev.gpucodeforces.judge.api.SubmissionAccepted
 import dev.gpucodeforces.judge.api.SubmissionRequest
+import dev.gpucodeforces.judge.api.ExecutorHeartbeat
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
@@ -12,6 +13,7 @@ import org.springframework.web.client.RestClientException
 import org.springframework.web.client.RestClientResponseException
 import tools.jackson.databind.json.JsonMapper
 import java.time.Duration
+import java.time.Instant
 
 @ConfigurationProperties("platform.judge")
 data class JudgeProperties(
@@ -43,6 +45,8 @@ sealed interface SendOutcome {
     data class Rejected(val reason: String) : SendOutcome
 }
 
+data class JudgeExecutorView(val alive: Boolean, val lastSeen: Instant, val heartbeat: ExecutorHeartbeat, val healthyGpus: Int = 0)
+
 /** Client of the judge gateway `POST /api/v1/submissions` (judge/docs/openapi.yaml). Verdicts come back via RabbitMQ. */
 @Component
 class JudgeGateway(properties: JudgeProperties, builder: RestClient.Builder, private val jsonMapper: JsonMapper) {
@@ -55,6 +59,19 @@ class JudgeGateway(properties: JudgeProperties, builder: RestClient.Builder, pri
             },
         )
         .build()
+
+    private val monitorClient = client.mutate().requestFactory(
+        SimpleClientHttpRequestFactory().apply {
+            setConnectTimeout(Duration.ofSeconds(2))
+            setReadTimeout(Duration.ofSeconds(3))
+        },
+    ).build()
+
+    fun executors(): List<JudgeExecutorView>? = try {
+        monitorClient.get().uri("/api/v1/executors").retrieve().body(Array<JudgeExecutorView>::class.java)?.toList()
+    } catch (_: RestClientException) {
+        null
+    }
 
     fun send(request: SubmissionRequest): SendOutcome = try {
         val accepted = client.post().uri("/api/v1/submissions")

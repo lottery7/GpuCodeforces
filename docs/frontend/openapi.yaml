@@ -305,7 +305,7 @@ paths:
                       versionId: {type: string, description: ID неизменяемой версии задачи.}
                       firstCode: {type: string, nullable: true, description: Первый вариант для угадывания; без времен и ответа.}
                       secondCode: {type: string, nullable: true, description: Второй вариант для угадывания; без времен и ответа.}
-                      guessSubmissionId: {type: string, nullable: true, description: Своя попытка угадывания именно этой версии и контекста; null до ответа.}
+                      guessSubmissionId: {type: string, nullable: true, description: 'Своя попытка угадывания этой версии, контекста и активных условий измерения; null до ответа.'}
                       timeLimitSeconds: {type: number}
                       memoryLimitMb: {type: integer}
                       environmentMarkdown: {type: string, description: Оборудование и методика замера.}
@@ -347,9 +347,11 @@ paths:
       operationId: submitGuess
       summary: Угадать более быстрый код
       description: |
-        Одна попытка на пользователя, версию задачи и контекст. Повтор того же выбора возвращает
+        Одна попытка на пользователя, версию задачи, условия измерения и контекст. Повтор того же выбора возвращает
         сохраненную посылку; изменить ответ нельзя. В контесте нужны регистрация и текущая фаза live.
-        Ответ проверяет backend без запуска GPU. Результат и объяснение доступны только автору попытки.
+        Ответ проверяет backend по готовым эталонным измерениям. До состояния ready возвращается 503.
+        Результат и объяснение доступны только автору попытки; сохраненные времена не меняются при смене окружения.
+        benchmarkKey должен совпадать с текущим referenceMeasurement.key; устаревшие условия возвращают 400 без сохранения попытки.
       security: [{session: []}]
       parameters:
         - {$ref: '#/components/parameters/Context'}
@@ -360,15 +362,17 @@ paths:
             schema:
               title: SubmitGuessRequest
               type: object
-              required: [choice]
+              required: [choice, benchmarkKey]
               properties:
                 choice: {$ref: '#/components/schemas/GuessChoice'}
+                benchmarkKey: {type: string, minLength: 1, description: Ключ эталонного измерения из актуального GET задачи.}
       responses:
         '200':
           description: Сохраненный ответ; timeMs равен null, guessResult содержит разбор.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Submission'}
+        '503': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /problems/{id}/example:
     parameters:
@@ -747,6 +751,17 @@ components:
     MeasurementTiming:
       type: string
       enum: [wall, gpu_kernels]
+    ReferenceMeasurementStatus:
+      type: string
+      enum: [pending, running, ready, failed]
+    ReferenceMeasurement:
+      type: object
+      required: [status]
+      properties:
+        key: {type: string, nullable: true, description: Ключ версии задачи и условий измерения; меняется при смене окружения.}
+        status: {$ref: '#/components/schemas/ReferenceMeasurementStatus'}
+        measuredAt: {type: string, format: date-time, nullable: true}
+        diagnostic: {type: string, nullable: true, description: Краткая причина ошибки эталонного измерения.}
     Benchmark:
       type: object
       required: [inputDescription, aggregation, timingMode, warmupRuns, maxRuns, gpuName, synthetic]
@@ -787,7 +802,8 @@ components:
         title: {type: string}
         difficulty: {type: string, enum: [easy, medium, hard]}
         format: {type: string, enum: [standard, optimization, guess], default: standard}
-        baselineTimeMs: {type: number, nullable: true, description: Время исходного решения для оптимизации на GPU платформы.}
+        baselineTimeMs: {type: number, nullable: true, description: Автоматически измеренное время исходного решения. Доступно только при referenceMeasurement.status=ready; иначе null.}
+        referenceMeasurement: {$ref: '#/components/schemas/ReferenceMeasurement'}
         tags: {type: array, items: {type: string}}
         solved: {type: boolean, description: 'В практике учитывает решение в любом контексте, в контесте - только в нем; без userId и сессии false.'}
         solvedCount: {type: integer, description: Число участников с solved=true.}
@@ -829,6 +845,8 @@ components:
       type: object
       required: [choice, correctChoice, firstTimeMs, secondTimeMs, explanation]
       properties:
+        benchmarkKey: {type: string, description: Сохраненный ключ условий измерения этой попытки.}
+        synthetic: {type: boolean, description: Сохраненная пометка тестовых результатов этой попытки.}
         choice: {$ref: '#/components/schemas/GuessChoice'}
         correctChoice: {$ref: '#/components/schemas/GuessChoice'}
         firstTimeMs: {type: number}
