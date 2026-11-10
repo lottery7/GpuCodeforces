@@ -70,8 +70,10 @@ export default function App() {
       <details ref={menu} className="mobile-nav"><summary>Меню</summary><nav aria-label="Мобильная навигация">{links()}{account()}</nav></details>
     </div></header>
     <main id="content" ref={main} tabIndex={-1} className="container">
+      <div className="global-feedback">
       {Boolean(session.error) && <div className="session-error"><ErrorMessage error={session.error} /><button className="text-link" onClick={session.refresh}>Проверить соединение</button></div>}
-      <ErrorMessage error={logoutError} />
+      <ErrorMessage error={logoutError} reveal />
+      </div>
       <PageBoundary key={location.pathname}>
         <Suspense fallback={<div className="empty" role="status">Загрузка...</div>}>
         <Routes>

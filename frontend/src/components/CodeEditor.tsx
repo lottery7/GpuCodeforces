@@ -1,7 +1,13 @@
 import { useMemo, useState } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
 import { cpp } from '@codemirror/lang-cpp';
-import { EditorView } from '@codemirror/view';
+import { redo, undo } from '@codemirror/commands';
+import { EditorView, keymap } from '@codemirror/view';
+
+const historyShortcuts = keymap.of([
+  { key: 'Ctrl-z', run: undo, preventDefault: true },
+  { key: 'Ctrl-Shift-z', run: redo, preventDefault: true },
+]);
 
 const editorTheme = EditorView.theme({
   '&': { backgroundColor: '#1e1f22', color: '#bcbec4', fontSize: '13px' },
@@ -14,20 +20,22 @@ const editorTheme = EditorView.theme({
   '&.cm-focused': { outline: 'none' },
 }, { dark: true });
 
-export default function CodeEditor({ value, onChange, readOnly = false, label = 'Код решения на C++ и CUDA', status }: {
+export default function CodeEditor({ value, onChange, readOnly = false, label = 'Код решения на C++ и CUDA', status, fit = false }: {
   value: string;
   onChange?: (value: string) => void;
   readOnly?: boolean;
   label?: string;
   status?: string;
+  fit?: boolean;
 }) {
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
-  const extensions = useMemo(() => [cpp(), editorTheme, EditorView.contentAttributes.of({ 'aria-label': label, spellcheck: 'false' })], [label]);
+  const extensions = useMemo(() => [cpp(), editorTheme, historyShortcuts, EditorView.contentAttributes.of({ 'aria-label': label, spellcheck: 'false' })], [label]);
   return <>
+    <div className={`code-editor${fit ? ' code-editor-fit' : ''}`}>
     <CodeMirror
       value={value}
-      height="min(58vh, 560px)"
-      minHeight="300px"
+      height={fit ? '100%' : 'clamp(180px, 42dvh, 440px)'}
+      minHeight={fit ? '0' : '180px'}
       theme="dark"
       extensions={extensions}
       editable={!readOnly}
@@ -42,6 +50,7 @@ export default function CodeEditor({ value, onChange, readOnly = false, label = 
         setCursor({ line: line.number, column: position - line.from + 1 });
       }}
     />
+    </div>
     <div className="editor-status"><span role={status ? 'status' : undefined}>{status || 'CUDA / UTF-8'}</span><span>Строка {cursor.line}, столбец {cursor.column}</span></div>
   </>;
 }

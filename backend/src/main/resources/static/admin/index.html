@@ -13,19 +13,34 @@
 
   <section>
     <h2>Банк задач</h2>
-    <button id="sync" type="button">Импортировать задачи сейчас</button>
-    <pre id="sync-result"></pre>
+    <div class="operation-actions">
+      <button id="sync" type="button">Импортировать задачи сейчас</button>
+      <span id="sync-status" role="status"></span>
+    </div>
+    <pre id="sync-result" tabindex="0" hidden></pre>
   </section>
 
   <section>
     <h2>Groovy-консоль</h2>
     <p>В скрипте доступны <code>ctx</code> (Spring ApplicationContext) и <code>out</code>. Это полный доступ к процессу.</p>
-    <textarea id="script" spellcheck="false" rows="12">ctx.getBean('problemSyncService').sync()</textarea>
-    <button id="run" type="button">Выполнить</button>
-    <h3>Результат</h3>
-    <pre id="result"></pre>
-    <h3>Вывод</h3>
-    <pre id="output"></pre>
+    <div class="console-workspace">
+      <div>
+        <label for="script">Скрипт</label>
+        <textarea id="script" spellcheck="false" rows="12">ctx.getBean('problemSyncService').sync()</textarea>
+        <div class="operation-actions">
+          <button id="run" type="button">Выполнить</button>
+          <span id="run-status" role="status"></span>
+        </div>
+      </div>
+      <div id="console-results" hidden>
+        <h3>Результат</h3>
+        <pre id="result" tabindex="0"></pre>
+        <div id="console-output" hidden>
+          <h3>Вывод</h3>
+          <pre id="output" tabindex="0"></pre>
+        </div>
+      </div>
+    </div>
   </section>
 </main>
 <script src="admin.js"></script>

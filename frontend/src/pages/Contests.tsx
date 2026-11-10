@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useSearchParams } from 'react-router';
 import { api } from '../api/client';
@@ -36,6 +37,8 @@ export default function Contests() {
       void queryClient.invalidateQueries({ queryKey: ['profile'] });
     },
   });
+  const resetJoin = join.reset;
+  useEffect(() => resetJoin(), [selected, query, user?.id, resetJoin]);
   const tabPath = (tab: string) => `/contests?${new URLSearchParams({ tabs: tab, ...(query ? { q: query } : {}) })}`;
   const returnTo = location.pathname + location.search;
   const entries = [
@@ -53,7 +56,6 @@ export default function Contests() {
         <div className="search"><SearchInput label="Найти соревнование" placeholder="Название контеста" value={query} onChange={value => setParams({ tabs: selected, ...(value ? { q: value } : {}) }, { replace: true })} /></div>
         {query && <Link className="filter-reset" to={`/contests?tabs=${selected}`}>Сбросить</Link>}
       </div>
-      {join.error && <ErrorMessage error={join.error} />}
       {contests.isPending && <p className="loading" role="status">Загрузка соревнований...</p>}
       {contests.error && <div><ErrorMessage error={contests.error} /><button className="text-link" onClick={() => void contests.refetch()}>Повторить</button></div>}
       {contests.data && (contests.data.length ? <div className="table-wrap"><table className="data-table contest-list" aria-label="Список соревнований">
@@ -62,7 +64,10 @@ export default function Contests() {
           <td><Link to={`/contest/${encodeURIComponent(contest.id)}`}>{contest.title}</Link></td>
           <td><time dateTime={contest.startAt}>{dateTime(contest.startAt)}</time></td>
           <td>{duration(contest)}</td><td>{contest.problemCount}</td>
-          {selected === 'mine' ? <td>{({ upcoming: 'До начала', live: 'Идет', finished: 'Завершен' })[phaseOf(contest)]}</td> : selected !== 'finished' && <td>{contest.registered ? <span className="success">{selected === 'upcoming' ? 'Вы зарегистрированы' : 'Вы участвуете'}</span> : user ? <button className="btn secondary" disabled={join.isPending} onClick={() => join.mutate(contest.id)}>{join.isPending && join.variables === contest.id ? 'Регистрация...' : 'Зарегистрироваться'}</button> : <Link className="btn secondary" to={`/login?returnTo=${encodeURIComponent(returnTo)}`}>Зарегистрироваться</Link>}</td>}
+          {selected === 'mine' ? <td>{({ upcoming: 'До начала', live: 'Идет', finished: 'Завершен' })[phaseOf(contest)]}</td> : selected !== 'finished' && <td className="contest-registration">
+            {contest.registered ? <span className="success">{selected === 'upcoming' ? 'Вы зарегистрированы' : 'Вы участвуете'}</span> : user ? <button className="btn secondary" disabled={join.isPending} onClick={() => join.mutate(contest.id)}>{join.isPending && join.variables === contest.id ? 'Регистрация...' : 'Зарегистрироваться'}</button> : <Link className="btn secondary" to={`/login?returnTo=${encodeURIComponent(returnTo)}`}>Зарегистрироваться</Link>}
+            {join.variables === contest.id && <ErrorMessage error={join.error} reveal />}
+          </td>}
         </tr>)}</tbody>
       </table></div> : <Empty>{query.trim() ? 'Соревнования не найдены. Измените запрос или выберите другую вкладку.' : selected === 'mine' ? 'У вас пока нет контестов.' : selected === 'live' ? 'Сейчас нет активных соревнований.' : selected === 'upcoming' ? 'Новые соревнования еще не объявлены.' : 'Завершенных соревнований пока нет.'}</Empty>)}
     </>}

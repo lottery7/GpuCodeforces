@@ -61,6 +61,34 @@ describe('Список соревнований', () => {
     expect(input).toHaveValue('CUDA');
     expect(screen.getByRole('link', { name: 'Текущие' })).toHaveAttribute('href', '/contests?tabs=live&q=CUDA');
   });
+
+  it.each(['вкладки', 'поиска'])('показывает ошибку регистрации в нужной ячейке и сбрасывает при смене %s', async change => {
+    const first = { ...contest('live'), id: 'first', title: 'Первый контест' };
+    const second = { ...contest('live'), id: 'second', title: 'Второй контест' };
+    vi.spyOn(api, 'listContests').mockResolvedValue([first, second]);
+    const register = vi.spyOn(api, 'registerForContest').mockRejectedValue(new Error('Не удалось зарегистрироваться.'));
+    open('/contests?tabs=live');
+    const target = await screen.findByRole('row', { name: /Второй контест/ });
+    const button = within(target).getByRole('button', { name: 'Зарегистрироваться' });
+    await userEvent.click(button);
+    const error = await within(target).findByRole('alert');
+    expect(register).toHaveBeenCalledWith('second');
+    expect(error).toHaveTextContent('Не удалось зарегистрироваться.');
+    expect(error.closest('td')).toBe(button.closest('td'));
+    expect(within(screen.getByRole('row', { name: /Первый контест/ })).queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+
+    if (change === 'вкладки') {
+      await userEvent.click(screen.getByRole('link', { name: 'Будущие' }));
+      await userEvent.click(screen.getByRole('link', { name: 'Текущие' }));
+    } else {
+      const input = screen.getByRole('searchbox', { name: 'Найти соревнование' });
+      fireEvent.change(input, { target: { value: 'контест' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+    }
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    expect(screen.getByRole('row', { name: /Второй контест/ })).toBeVisible();
+  });
 });
 
 describe('Доступ к задачам до начала', () => {

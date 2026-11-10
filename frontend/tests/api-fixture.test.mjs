@@ -233,4 +233,26 @@ describe('Fixture HTTP API', () => {
     expect((await request('/problems/softmax', { cookie: alex })).body.solved).toBe(true);
     expect((await request('/submissions?problemId=softmax&status=wrong_answer', { cookie: alex })).body.total).toBe(1);
   }, 7000);
+
+  it('returns full long diagnostics only to the owner and preserves context on recheck', async () => {
+    const owner = await login('new_cuda');
+    const other = await login('alex_cuda');
+    const code = 'FIXTURE_LONG_DIAGNOSTIC';
+    const example = await request('/problems/vector-addition/example', { method: 'POST', body: { code }, cookie: owner });
+    expect(example.body.passed).toBe(false);
+    expect(example.body.diagnostic).toHaveLength(16384);
+    expect(example.body.diagnostic.split('\n').length).toBeGreaterThan(100);
+    const queued = await request('/submissions', { method: 'POST', body: { problemId: 'vector-addition', code }, cookie: owner });
+    const failed = await waitForStatus(queued.body.id, 'system_error', owner);
+    expect(failed.diagnostic).toBe(example.body.diagnostic);
+    expect(failed).toMatchObject({ code, contestId: null, createdAt: queued.body.createdAt });
+    for (const cookie of [other, undefined]) {
+      const detail = await request(`/submissions/${failed.id}`, { cookie });
+      expect(detail.body).not.toHaveProperty('diagnostic');
+      expect(detail.body).not.toHaveProperty('code');
+    }
+    expect((await request(`/submissions/${failed.id}/recheck`, { method: 'POST', cookie: owner })).status).toBe(202);
+    const accepted = await waitForStatus(failed.id, 'accepted', owner);
+    expect(accepted).toMatchObject({ code, diagnostic: '', contestId: null, createdAt: failed.createdAt, environmentMarkdown: failed.environmentMarkdown });
+  }, 10000);
 });

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -10,10 +10,26 @@ export function PageHeader({ title, description, actions }: { title: string; des
   return <div className="page-head"><div><h1>{title}</h1>{description && <p className="muted">{description}</p>}</div>{actions && <div className="inline">{actions}</div>}</div>;
 }
 
-export function ErrorMessage({ error }: { error: unknown }) {
+export function useFeedbackVisibility<T extends HTMLElement = HTMLDivElement>(trigger: unknown, enabled = true) {
+  const ref = useRef<T>(null);
+  useLayoutEffect(() => {
+    if (!trigger || !enabled || !ref.current) return;
+    const rect = ref.current.getBoundingClientRect();
+    const viewport = window.visualViewport;
+    const top = (viewport?.offsetTop ?? 0) + 8;
+    const bottom = (viewport?.offsetTop ?? 0) + (viewport?.height ?? window.innerHeight) - 8;
+    if (rect.height > 0 && (rect.top < top || rect.bottom > bottom)) {
+      ref.current.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
+    }
+  }, [trigger, enabled]);
+  return ref;
+}
+
+export function ErrorMessage({ error, reveal = false }: { error: unknown; reveal?: boolean }) {
   const location = useLocation();
+  const ref = useFeedbackVisibility(error, reveal);
   if (!error) return null;
-  return <div className="notice error" role="alert">{error instanceof Error ? error.message : 'Не удалось выполнить запрос.'}{error instanceof ApiError && error.status === 401 && !['/login', '/register'].includes(location.pathname) && <>{' '}<Link to={`/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`}>Войти</Link></>}</div>;
+  return <div ref={ref} className="notice error feedback-anchor" role="alert"><div className="error-copy" tabIndex={0}>{error instanceof Error ? error.message : 'Не удалось выполнить запрос.'}</div>{error instanceof ApiError && error.status === 401 && !['/login', '/register'].includes(location.pathname) && <Link to={`/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`}>Войти</Link>}</div>;
 }
 
 export function QueryState({ query, children }: { query: { isPending?: boolean; isLoading?: boolean; error: unknown; data?: unknown; refetch: () => unknown }; children?: ReactNode }) {
