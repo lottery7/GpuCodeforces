@@ -6,7 +6,13 @@ import dev.gpucodeforces.backend.api.model.GetProblem200Response
 import dev.gpucodeforces.backend.api.model.ListProblems200Response
 import dev.gpucodeforces.backend.api.model.RegisterUserRequest
 import dev.gpucodeforces.backend.api.model.User
+import dev.gpucodeforces.backend.contest.ContestProblemRepository
+import dev.gpucodeforces.backend.problem.ProblemPackageReader
+import dev.gpucodeforces.backend.problem.ProblemRepository
 import dev.gpucodeforces.backend.problem.ProblemSyncService
+import dev.gpucodeforces.backend.problem.ProblemVersionRepository
+import dev.gpucodeforces.backend.problem.ProblemsProperties
+import org.eclipse.jgit.api.Git
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
@@ -19,9 +25,11 @@ import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 import org.springframework.test.web.servlet.client.RestTestClient
+import org.springframework.transaction.support.TransactionTemplate
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.postgresql.PostgreSQLContainer
+import tools.jackson.databind.json.JsonMapper
 import java.math.BigDecimal
 import java.nio.file.Files
 import java.nio.file.Path
@@ -48,6 +56,24 @@ class ProblemIntegrationTest {
 
     @Autowired
     lateinit var jdbc: JdbcTemplate
+
+    @Autowired
+    lateinit var packageReader: ProblemPackageReader
+
+    @Autowired
+    lateinit var problemRepository: ProblemRepository
+
+    @Autowired
+    lateinit var versionRepository: ProblemVersionRepository
+
+    @Autowired
+    lateinit var contestProblemRepository: ContestProblemRepository
+
+    @Autowired
+    lateinit var transactionTemplate: TransactionTemplate
+
+    @Autowired
+    lateinit var jsonMapper: JsonMapper
 
     private val client by lazy { RestTestClient.bindToServer().baseUrl("http://localhost:$port/api").build() }
 
@@ -132,6 +158,29 @@ class ProblemIntegrationTest {
             Long::class.java,
         )
         assertThat(stalePins).isZero()
+
+        // The real setup: a clone of the problem repository with the packages in problems/. A directory in a
+        // foreign format is reported as invalid instead of being skipped silently.
+        val origin = Files.createTempDirectory("problem-repo")
+        Git.init().setDirectory(origin.toFile()).setInitialBranch("master").call().use { git ->
+            val packages = Files.createDirectories(origin.resolve("problems"))
+            examples.resolve("vector_add").copyToRecursively(packages.resolve("git_task"), followLinks = false)
+            Files.createDirectories(packages.resolve("legacy")).resolve("problem.md").writeText("# old format")
+            git.add().addFilepattern(".").call()
+            git.commit().setMessage("problems").setAuthor("test", "test@example.com").setCommitter("test", "test@example.com").call()
+        }
+        val fromGit = ProblemSyncService(
+            ProblemsProperties(
+                directory = Files.createTempDirectory("problem-clone").resolve("repo").toString(),
+                gitUrl = origin.toUri().toString(),
+                path = "problems",
+            ),
+            packageReader, problemRepository, versionRepository, contestProblemRepository, transactionTemplate, jsonMapper,
+        ).sync()
+
+        assertThat(fromGit.revision).hasSize(40)
+        assertThat(fromGit.failed).containsOnlyKeys("legacy")
+        assertThat(list().items.map { it.id }).containsExactly("git_task")
     }
 
     companion object {
@@ -141,11 +190,11 @@ class ProblemIntegrationTest {
         val postgres = PostgreSQLContainer("postgres:18.1-alpine")
 
         private val problems: Path = Files.createTempDirectory("problems")
+        private val examples: Path = Path.of("../judge/problems/examples")
 
         @JvmStatic
         @DynamicPropertySource
         fun problemDirectory(registry: DynamicPropertyRegistry) {
-            val examples = Path.of("../judge/problems/examples")
             listOf("vector_add", "matmul_host").forEach { examples.resolve(it).copyToRecursively(problems.resolve(it), followLinks = false) }
             val draft = examples.resolve("vector_add").copyToRecursively(problems.resolve("draft_task"), followLinks = false)
                 .resolve("statement.md")

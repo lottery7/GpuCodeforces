@@ -79,11 +79,7 @@ class Builder(
         if (link.timedOut) throw BuildInfrastructureException("link timed out: ${link.describe()}")
         if (!link.ok) {
             val text = sanitize(link.stderr + link.stdout, emptyList()).replace("$OBJECT_MOUNT/", "").replace("$HARNESS_MOUNT/", "")
-            val hint = if ("undefined reference" in text && signature.function in text) {
-                "Function ${signature.function} with the required signature is not defined"
-            } else {
-                "Linking failed"
-            }
+            val hint = linkErrorHint(text, signature.function)
             return BuildOutcome.CompileError(listOf(obj.log, text).filter { it.isNotBlank() }.joinToString("\n"), hint)
         }
         return BuildOutcome.Ok(binary, obj.log, obj.cached)
@@ -289,6 +285,20 @@ class Builder(
         /** Stands in for the dependency file when the compiler wrote none. */
         @Language("Makefile")
         private const val NO_DEPENDENCIES = "solution.o: solution.cu\n"
+
+        /**
+         * One-line explanation of a failed link for the contestant; the linker output follows it. The function name
+         * alone proves nothing: the linker also names the function an unresolved symbol is used in
+         * ("in function `solve(...)'"), so only "undefined reference to `solve(" means a missing definition.
+         */
+        fun linkErrorHint(linkerOutput: String, function: String): String = when {
+            // threadIdx, blockIdx, blockDim and gridDim exist only in device code; host code using them fails to link.
+            "__device_builtin_variable_" in linkerOutput ->
+                "threadIdx/blockIdx/blockDim/gridDim are used outside a __global__ kernel: $function runs on the host " +
+                    "and has to launch a kernel"
+            "undefined reference to `$function(" in linkerOutput -> "Function $function with the required signature is not defined"
+            else -> "Linking failed"
+        }
 
         /** Removes host paths from compiler messages: `/work/solution.cu(3): error` -> `solution.cu(3): error`. */
         fun sanitize(text: String, dirs: List<Path>): String =

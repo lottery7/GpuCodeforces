@@ -7,6 +7,7 @@ import dev.gpucodeforces.judge.api.ParamSpec
 import dev.gpucodeforces.judge.api.PolicyOverrides
 import dev.gpucodeforces.judge.api.Signature
 import dev.gpucodeforces.judge.api.TimingMode
+import dev.gpucodeforces.judge.executor.compile.Builder
 import dev.gpucodeforces.judge.executor.compile.EffectivePolicy
 import dev.gpucodeforces.judge.executor.compile.HarnessGenerator
 import dev.gpucodeforces.judge.executor.compile.SourceChecks
@@ -178,5 +179,24 @@ class BuildChecksTest {
             "solve(static_cast<const __half*>(p[0]), static_cast<float*>(p[1]), static_cast<float>(s[2].d), static_cast<int64_t>(s[3].i));" in src,
             src,
         )
+    }
+
+    @Test
+    fun `link error hint tells kernel code in solve from a missing solve`() {
+        // Real output: solve used blockIdx/threadIdx itself instead of launching a kernel.
+        val kernelCodeInSolve = """
+            /usr/bin/ld: solution.o: in function `solve(float const*, float const*, float*, int)':
+            tmpxft_00000001_00000000-6_solution.cudafe1.cpp:(.text+0x16): undefined reference to `__device_builtin_variable_blockIdx'
+            collect2: error: ld returned 1 exit status
+        """.trimIndent()
+        val missingSolve = """
+            /usr/bin/ld: harness.o: in function `main':
+            harness.cpp:(.text+0x2b1): undefined reference to `solve(float const*, float const*, float*, int)'
+            collect2: error: ld returned 1 exit status
+        """.trimIndent()
+
+        assertTrue(Builder.linkErrorHint(kernelCodeInSolve, "solve").startsWith("threadIdx/blockIdx/blockDim/gridDim are used outside"))
+        assertEquals("Function solve with the required signature is not defined", Builder.linkErrorHint(missingSolve, "solve"))
+        assertEquals("Linking failed", Builder.linkErrorHint("ld: cannot find -lfoo", "solve"))
     }
 }

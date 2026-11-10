@@ -2,6 +2,7 @@ package dev.gpucodeforces.backend.problem
 
 import dev.gpucodeforces.judge.api.CudaSignature
 import dev.gpucodeforces.judge.api.GeneratorSpec
+import dev.gpucodeforces.judge.api.MemorySpace
 import dev.gpucodeforces.judge.api.ProblemSpec
 import dev.gpucodeforces.judge.api.SpecValidator
 import org.springframework.stereotype.Component
@@ -71,7 +72,8 @@ class ProblemPackageReader(jsonMapper: JsonMapper) {
             statementMarkdown = statement,
             starterCode = starter,
             spec = spec.copy(version = sha256(specFile, generator).take(VERSION_LENGTH)),
-            contentHash = sha256(statementFile, specFile, generator, starterFile.orEmpty()),
+            // The generated starter counts too: a better template has to reach problems already in the bank.
+            contentHash = sha256(statementFile, specFile, generator, starter),
             judgeHash = sha256(specFile, generator),
         )
     }
@@ -120,8 +122,23 @@ class ProblemPackageReader(jsonMapper: JsonMapper) {
     private fun defaultStarter(spec: ProblemSpec): String {
         val includes = (listOf("cuda_runtime.h") + CudaSignature.typeIncludes(spec.signature))
             .joinToString("\n") { "#include <$it>" }
-        val pointers = spec.signature.arrays.joinToString(", ") { "${it.name} (${it.memory!!.name.lowercase()})" }
-        return "$includes\n\n// Массивы: $pointers\n${CudaSignature.declaration(spec.signature)} {\n}\n"
+        val pointers = spec.signature.arrays.joinToString(", ") {
+            "${it.name} — ${if (it.memory == MemorySpace.HOST) "память CPU" else "память GPU"}"
+        }
+        // Contestants used blockIdx/threadIdx right in solve; the template says where the kernel goes.
+        return """
+            |$includes
+            |
+            |__global__ void kernel(/* параметры */) {
+            |    // Вычисления на GPU: blockIdx, blockDim и threadIdx доступны только здесь.
+            |}
+            |
+            |// solve выполняется на CPU: запустите из неё ядро, kernel<<<блоки, потоки>>>(...).
+            |// Массивы: $pointers.
+            |${CudaSignature.declaration(spec.signature)} {
+            |}
+            |
+        """.trimMargin()
     }
 
     private fun readFile(directory: Path, name: String): String {

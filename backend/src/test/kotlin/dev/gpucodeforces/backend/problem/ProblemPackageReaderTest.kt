@@ -35,7 +35,7 @@ class ProblemPackageReaderTest {
         // The backend id replaces the one judge_cli.py needs in problem.json; the generator comes from problem.py.
         assertThat(problem.spec.id).isEqualTo("vector_add")
         assertThat(problem.spec.generator.source).contains("def tests()")
-        assertThat(problem.starterCode).contains("void solve(const float* A, const float* B, float* C, int N) {")
+        assertThat(problem.starterCode).contains("void solve(const float* A, const float* B, float* C, int N) {").contains("__global__ void kernel")
     }
 
     @Test
