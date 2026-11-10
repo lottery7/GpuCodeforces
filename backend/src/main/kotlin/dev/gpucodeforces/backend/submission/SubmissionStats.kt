@@ -47,6 +47,12 @@ interface SubmissionStatsRepository : Repository<Submission, UUID> {
     )
     fun findHeads(userId: UUID, problemIds: Collection<String>): List<SubmissionHead>
 
+    @Query("SELECT DISTINCT s.userId FROM Submission s WHERE s.contestId = :contestId")
+    fun findContestParticipants(contestId: UUID): List<UUID>
+
+    @Query("SELECT count(s) FROM Submission s WHERE s.contestId = :contestId AND s.status IN :statuses")
+    fun countInContestWithStatus(contestId: UUID, statuses: Collection<SubmissionStatus>): Long
+
     @Query("SELECT count(DISTINCT s.problemId) FROM Submission s WHERE s.userId = :userId AND s.status = :status")
     fun countProblemsWithStatus(userId: UUID, status: SubmissionStatus): Long
 }
@@ -111,6 +117,12 @@ class SubmissionStats(private val repository: SubmissionStatsRepository) {
         repository.findWithStatusInContest(SubmissionStatus.ACCEPTED, contestId)
             .groupBy { it.userId }
             .mapValues { (_, submissions) -> submissions.groupBy { it.problemId }.mapValues { (_, it) -> it.minOf { s -> s.createdAt } } }
+
+    /** Users who sent at least one submission to the contest: only they are rated. */
+    fun contestParticipants(contestId: UUID): Set<UUID> = repository.findContestParticipants(contestId).toSet()
+
+    /** Contest submissions still waiting for their verdict. */
+    fun pendingInContest(contestId: UUID): Long = repository.countInContestWithStatus(contestId, SubmissionStatus.PENDING)
 
     fun solvedProblemCount(userId: UUID): Int = repository.countProblemsWithStatus(userId, SubmissionStatus.ACCEPTED).toInt()
 
