@@ -108,7 +108,7 @@ class ProblemSyncService(
             }
         }
         val present = packages.map { it.id }.toSet() + failedIds
-        val removed = problemRepository.findAll().filter { it.id !in present && it.currentVersionId != null }
+        val removed = problemRepository.findAll().filter { it.source == "package" && it.id !in present && it.currentVersionId != null }
         removed.forEach { it.currentVersionId = null }
         return SyncResult(revision, imported, unchanged, removed.size, emptyMap())
     }
@@ -128,6 +128,8 @@ class ProblemSyncService(
         contentHash = contentHash,
         judgeHash = judgeHash,
         revision = revision,
+        format = format.format,
+        formatData = jsonMapper.writeValueAsString(format),
     )
 
     /** Clones or fast-forwards [root] to the configured branch and returns the commit id. */

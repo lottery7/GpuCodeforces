@@ -3,6 +3,8 @@ package dev.gpucodeforces.backend.submission
 import dev.gpucodeforces.backend.api.SubmissionsApi
 import dev.gpucodeforces.backend.api.model.ListSubmissions200Response
 import dev.gpucodeforces.backend.api.model.SubmitSolutionRequest
+import dev.gpucodeforces.backend.api.model.GuessChoice
+import dev.gpucodeforces.backend.api.model.GuessResult
 import dev.gpucodeforces.backend.auth.CurrentUser
 import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.common.GpuProperties
@@ -94,8 +96,8 @@ class SubmissionViews(
                 row.createdAt.atOffset(ZoneOffset.UTC),
                 SubmissionApiModel.StatusEnum.fromValue(row.status.value),
                 row.timeMs,
-                row.status == SubmissionStatus.ACCEPTED && row.judgeHash == contextHash && row.gpuProfile == gpuProperties.profile,
-            )
+                row.status == SubmissionStatus.ACCEPTED && row.timeMs != null && row.judgeHash == contextHash && row.gpuProfile == gpuProperties.profile,
+            ).format(SubmissionApiModel.FormatEnum.fromValue(versions.getValue(row.problemVersionId).format))
         }
     }
 
@@ -106,7 +108,17 @@ class SubmissionViews(
             .totalTests(submission.totalTests)
             .previousBestTimeMs(submission.previousBestTimeMs)
             .environmentMarkdown(submission.environmentMarkdown)
-        return if (viewer?.id == submission.userId) summary.code(submission.code).diagnostic(submission.diagnostic) else summary
+        if (viewer?.id != submission.userId) return summary
+        summary.code(submission.code).diagnostic(submission.diagnostic)
+        submission.guessChoice?.let { choice ->
+            val version = problemCatalog.versions(listOf(submission.problemVersionId)).getValue(submission.problemVersionId)
+            val data = problemCatalog.format(version)
+            summary.guessResult(GuessResult(
+                GuessChoice.fromValue(choice), GuessChoice.fromValue(data.correctChoice()),
+                data.firstTimeMs!!, data.secondTimeMs!!, data.explanation,
+            ))
+        }
+        return summary
     }
 
     private fun contextJudgeHash(problemId: String, contestId: UUID?): String? = if (contestId == null) {

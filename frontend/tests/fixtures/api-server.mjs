@@ -39,9 +39,9 @@ function memoryStorage() {
   };
 }
 
-function makeModel() {
+function makeModel(storage = memoryStorage()) {
   const context = vm.createContext({
-    window: {}, localStorage: memoryStorage(), sessionStorage: memoryStorage(),
+    window: {}, localStorage: storage, sessionStorage: memoryStorage(),
   });
   vm.runInContext(modelSource, context);
   return context.window.AppModel;
@@ -117,7 +117,21 @@ function outcomeFor(code) {
 }
 
 export function createApiServer() {
-  const model = makeModel();
+  const storage = memoryStorage();
+  let model = makeModel(storage);
+  function mutateModel(update) {
+    const userId = model.user()?.id ?? null;
+    const state = JSON.parse(storage.getItem('gpu-forces-prototype-v3'));
+    update(state);
+    storage.setItem('gpu-forces-prototype-v3', JSON.stringify(state));
+    model = makeModel(storage);
+    model.setSession(userId);
+  }
+  const source = model.submission(1042).code;
+  mutateModel(state => {
+    state.preparedProblems.push({ ...model.problem('vector-addition'), id: 'optimize-vector', code: '010', title: 'Оптимизируйте сложение векторов', format: 'optimization', starter: source.replaceAll('255', '127').replaceAll('256', '128'), baselineTimeMs: 0.08 });
+    state.preparedProblems.push({ ...model.problem('vector-addition'), id: 'guess-vector', code: '011', title: 'Какое сложение быстрее?', format: 'guess', firstCode: source, secondCode: source.replaceAll('255', '127').replaceAll('256', '128'), firstTimeMs: 0.052, secondTimeMs: 0.08, explanation: 'В этом замере вариант с блоком из 256 потоков быстрее.' });
+  });
   const sessions = new Map();
   const passwords = new Map(model.users().map(user => [user.id, passwordHash('password123')]));
   const timers = new Set();
@@ -169,9 +183,10 @@ export function createApiServer() {
 
   function problemDto(problem, contestId, targetId) {
     const last = targetId ? model.submissions({ problemId: problem.id, userId: targetId, contestId })[0] : null;
-    const best = targetId ? model.best(problem.id, { userId: targetId, contestId }) : null;
+    const best = targetId ? problem.format === 'guess' ? model.submissions({ problemId: problem.id, userId: targetId, ...(contestId ? { contestId } : {}) }).find(item => item.status === 'accepted') : model.best(problem.id, { userId: targetId, contestId }) : null;
     return {
       id: problem.id, code: problem.code, title: problem.title,
+      format: ['optimization', 'guess'].includes(problem.format) ? problem.format : 'standard', baselineTimeMs: problem.baselineTimeMs ?? null,
       difficulty: problem.difficulty, tags: problem.tags,
       solved: targetId ? model.solved(problem.id, targetId, contestId) : false,
       solvedCount: model.users().filter(user => model.solved(problem.id, user.id, contestId)).length,
@@ -218,6 +233,7 @@ export function createApiServer() {
     const hidden = model.phase(contest.id) === 'upcoming' && !model.isContestAuthor(contest.id);
     return {
       id: contest.id, title: contest.title, startAt: contest.startAt, endAt: contest.endAt,
+      format: contest.format ?? 'standard', challengerId: contest.challengerId ?? null, opponentId: contest.opponentId ?? null,
       authors: contest.authorIds.map(id => publicUser(userById(id))),
       problemIds: hidden ? [] : contest.problemIds, problemCount: contest.problemIds.length,
       registered: model.joined(contest.id),
@@ -238,15 +254,16 @@ export function createApiServer() {
       : submission.diagnostic?.message ?? '';
     return {
       id: String(submission.id), problemId: problem.id, problemTitle: problem.title,
+      format: ['optimization', 'guess'].includes(problem.format) ? problem.format : 'standard',
       user: publicUser(userById(submission.userId)), contestId: submission.contestId,
       contestTitle: submission.contestId ? contestById(submission.contestId).title : null,
       createdAt: submission.createdAt, status: wireStatuses[submission.status],
       timeMs: submission.status === 'accepted' ? submission.timeMs : null,
-      comparable: model.canCompare(submission),
+      comparable: problem.format === 'guess' ? true : model.canCompare(submission),
       ...(detail ? {
         passedTests: submission.passedTests, totalTests: submission.totalTests,
         previousBestTimeMs: previous, environmentMarkdown: environmentMarkdown(benchmark),
-        ...(owner ? { code: submission.code, diagnostic } : {}),
+        ...(owner ? problem.format === 'guess' ? { guessResult: submission.guessResult } : { code: submission.code, diagnostic } : {}),
       } : {}),
     };
   }
@@ -288,7 +305,14 @@ export function createApiServer() {
       }
     }
     for (const id of body.problemIds) problemById(id);
-    return { ...body, durationMinutes: (end - start) / 60000, gpuId: 'a100' };
+    const format = body.format ?? 'standard';
+    if (!['standard', 'duel'].includes(format)) throw new ApiError(400, 'Неизвестный формат.');
+    if (format === 'duel') {
+      const user = requireUser();
+      const opponent = userById(textBody(body, 'opponentId'));
+      if (opponent.id === user.id || body.problemIds.length !== 1 || body.authorIds.length !== 1 || body.authorIds[0] !== user.id) throw new ApiError(400, 'Дуэль требует двух разных участников, одного автора и одну задачу.');
+    } else if (body.opponentId) throw new ApiError(400, 'Соперник доступен только в дуэли.');
+    return { ...body, format, durationMinutes: (end - start) / 60000, gpuId: 'a100' };
   }
 
   function send(response, status, data, cookie) {
@@ -309,7 +333,7 @@ export function createApiServer() {
       const method = request.method;
       const query = url.searchParams;
       const sessionToken = /(?:^|;\s*)session=([^;]+)/.exec(request.headers.cookie ?? '')?.[1];
-      const needsBody = method === 'POST' && (resource === 'session' || resource === 'users' || resource === 'submissions' && !id || resource === 'contests' && !id || resource === 'problems' && action === 'example')
+      const needsBody = method === 'POST' && (resource === 'session' || resource === 'users' || resource === 'submissions' && !id || resource === 'contests' && !id || resource === 'problems' && ['example', 'guess', 'comparisons'].includes(action))
         || method === 'PUT' && resource === 'contests' && id && !action;
       const body = needsBody ? await readBody(request) : {};
       model.setSession(sessions.get(sessionToken) ?? null);
@@ -378,12 +402,15 @@ export function createApiServer() {
         const tags = [...new Set(all.flatMap(problem => problem.tags))].sort((a, b) => a.localeCompare(b));
         const q = (query.get('q') ?? '').trim().toLowerCase();
         const difficulty = query.get('difficulty');
+        const format = query.get('format');
+        if (format !== null && !['standard', 'optimization', 'guess'].includes(format)) throw new ApiError(400, 'Неизвестный формат задачи.');
         const solved = query.get('solved');
         if (difficulty !== null && !['easy', 'medium', 'hard'].includes(difficulty)) throw new ApiError(400, 'Неизвестная сложность.');
         if (solved !== null && !['true', 'false'].includes(solved)) throw new ApiError(400, 'Некорректный фильтр решения.');
         let items = all.map(problem => problemDto(problem, contestId, target)).filter(problem =>
           `${problem.code} ${problem.title}`.toLowerCase().includes(q)
           && (difficulty === null || problem.difficulty === difficulty)
+          && (format === null || problem.format === format)
           && (!query.has('tag') || problem.tags.includes(query.get('tag')))
           && (solved === null || problem.solved === truth(solved)));
         const sort = query.get('sort') ?? 'code';
@@ -401,9 +428,11 @@ export function createApiServer() {
         if (method === 'GET' && !action) {
           return send(response, 200, {
             ...problemDto(problem, contestId, model.user()?.id ?? null),
-            statementMarkdown: statementMarkdown(problem), starterCode: problem.starter,
+            versionId: `fixture-${problem.id}-v1`, statementMarkdown: statementMarkdown(problem), starterCode: problem.starter,
             timeLimitSeconds: problem.limits.timeSeconds, memoryLimitMb: problem.limits.memoryMb,
             environmentMarkdown: environmentMarkdown(problem.benchmark),
+            firstCode: problem.firstCode ?? null, secondCode: problem.secondCode ?? null,
+            guessSubmissionId: problem.format === 'guess' && model.user() ? String(model.submissions({ userId: model.user().id, problemId: id, contestId }).find(item => item.guessResult)?.id ?? '') || null : null,
           });
         }
         if (method === 'GET' && action === 'leaders') {
@@ -413,9 +442,38 @@ export function createApiServer() {
           })));
         }
         if (method === 'POST' && action === 'example') {
+          if (problem.format === 'guess') throw new ApiError(400, 'В этой задаче нужно выбрать ответ.');
           const code = textBody(body, 'code');
           const outcome = outcomeFor(code);
           return send(response, 200, { passed: outcome === 'accepted', diagnostic: code.includes('FIXTURE_LONG_DIAGNOSTIC') ? longDiagnostic : diagnostics[outcome] ?? '' });
+        }
+        if (method === 'POST' && action === 'guess') {
+          const user = requireUser();
+          if (problem.format !== 'guess' || !['first', 'second', 'equal'].includes(body.choice)) throw new ApiError(400, 'Выберите вариант ответа.');
+          if (contestId && (model.phase(contestId) !== 'live' || !model.joined(contestId))) throw new ApiError(403, 'Нужно участвовать в действующем контесте.');
+          const previous = model.submissions({ userId: user.id, problemId: id, contestId }).find(item => item.guessResult);
+          if (previous) {
+            if (previous.guessResult.choice !== body.choice) throw new ApiError(400, 'Ответ уже сохранен.');
+            return send(response, 200, submissionDto(previous, true));
+          }
+          const correctChoice = problem.firstTimeMs === problem.secondTimeMs ? 'equal' : problem.firstTimeMs < problem.secondTimeMs ? 'first' : 'second';
+          let result;
+          mutateModel(state => {
+            result = { id: state.nextSubmissionId++, userId: user.id, problemId: id, contestId, createdAt: new Date().toISOString(), status: body.choice === correctChoice ? 'accepted' : 'wrong', timeMs: null, benchmark: problem.benchmark, benchmarkSnapshot: problem.benchmark, passedTests: body.choice === correctChoice ? 1 : 0, totalTests: 1, testVersion: problem.benchmark.testVersion, guessResult: { choice: body.choice, correctChoice, firstTimeMs: problem.firstTimeMs, secondTimeMs: problem.secondTimeMs, explanation: problem.explanation ?? '' } };
+            state.submissions.push(result);
+          });
+          return send(response, 200, submissionDto(result, true));
+        }
+        if (method === 'POST' && action === 'comparisons') {
+          const user = requireUser();
+          const first = model.submission(textBody(body, 'firstSubmissionId'));
+          const second = model.submission(textBody(body, 'secondSubmissionId'));
+          if (!first || !second || first.id === second.id || [first, second].some(item => item.userId !== user.id || item.problemId !== id || item.status !== 'accepted' || !Number.isFinite(item.timeMs) || item.timeMs <= 0 || item.contestId && model.phase(item.contestId) !== 'finished') || first.profileId !== second.profileId || first.testVersion !== second.testVersion) throw new ApiError(400, 'Выберите две свои принятые посылки одной задачи в одной конфигурации проверки.');
+          const explanation = textBody(body, 'explanation').trim();
+          if (explanation.length > 4000) throw new ApiError(400, 'Объяснение слишком длинное.');
+          const comparison = { ...problem, id: `comparison-${randomUUID()}`, code: `C${Date.now()}`, title: `${problem.title}: сравнение решений`, format: 'guess', firstCode: first.code, secondCode: second.code, firstTimeMs: first.timeMs, secondTimeMs: second.timeMs, explanation };
+          mutateModel(state => state.preparedProblems.push(comparison));
+          return send(response, 201, problemDto(comparison, null, user.id));
         }
       }
 
@@ -438,7 +496,7 @@ export function createApiServer() {
           requireUser();
           const problemId = textBody(body, 'problemId');
           const contestId = body.contestId === undefined ? null : textBody(body, 'contestId');
-          problemById(problemId, contestId);
+          if (problemById(problemId, contestId).format === 'guess') throw new ApiError(400, 'В этой задаче нужно выбрать ответ.');
           const code = textBody(body, 'code');
           const result = model.submit({ problemId, contestId, code });
           if (!result.ok) throw new ApiError(400, result.error);
@@ -480,7 +538,11 @@ export function createApiServer() {
           const values = validateContestInput(body);
           const result = model.saveContest(null, values);
           if (!result.ok) throw new ApiError(400, result.error);
-          return send(response, 201, contestDto(result.contest, true));
+          if (values.format === 'duel') mutateModel(state => {
+            Object.assign(state.contests.find(item => item.id === result.contest.id), { format: 'duel', challengerId: model.user().id, opponentId: values.opponentId });
+            state.registrations.push({ contestId: result.contest.id, userId: model.user().id });
+          });
+          return send(response, 201, contestDto(contestById(result.contest.id), true));
         }
       }
 
@@ -491,12 +553,14 @@ export function createApiServer() {
           requireUser();
           if (!model.isContestAuthor(id)) throw new ApiError(403, 'Изменять контест могут только его авторы.');
           const values = validateContestInput(body);
+          if (values.format !== (contest.format ?? 'standard') || contest.format === 'duel' && values.opponentId !== contest.opponentId) throw new ApiError(400, 'Формат и участников менять нельзя.');
           const result = model.saveContest(id, values);
           if (!result.ok) throw new ApiError(400, result.error);
           return send(response, 200, contestDto(result.contest, true));
         }
         if (method === 'PUT' && action === 'registration') {
-          requireUser();
+          const user = requireUser();
+          if (contest.format === 'duel' && ![contest.challengerId, contest.opponentId].includes(user.id)) throw new ApiError(403, 'Дуэль только для приглашенных участников.');
           const result = model.joinContest(id);
           if (!result.ok) throw new ApiError(400, result.error);
           return send(response, 204);

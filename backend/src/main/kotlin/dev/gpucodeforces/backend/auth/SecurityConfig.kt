@@ -52,6 +52,8 @@ class SecurityConfig(
                     .requestMatchers(HttpMethod.POST, "/api/submissions/*/recheck").authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/submissions").authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/problems/*/example").authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/problems/*/guess").authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/problems/*/comparisons").authenticated()
                     .requestMatchers("/api/admin/**").authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/contests").authenticated()
                     .requestMatchers(HttpMethod.PUT, "/api/contests/*").authenticated()

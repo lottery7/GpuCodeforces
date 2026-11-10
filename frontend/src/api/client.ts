@@ -1,6 +1,6 @@
 import createClient from 'openapi-fetch';
 import type { paths } from './schema';
-import type { ContestInput, ContestQuery, LoginInput, ProblemQuery, RegisterInput, SubmissionQuery, SubmitInput, UserQuery } from './types';
+import type { ComparisonInput, ContestInput, ContestQuery, GuessInput, LoginInput, ProblemQuery, RegisterInput, SubmissionQuery, SubmitInput, UserQuery } from './types';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -42,6 +42,8 @@ export function createApi(baseUrl = '/api', fetcher?: typeof fetch) {
     getProblem: (id: string, context = 'practice', signal?: AbortSignal) => result(http.GET('/problems/{id}', { params: { path: { id }, query: { context } }, signal })),
     problemLeaders: (id: string, context = 'practice', signal?: AbortSignal) => result(http.GET('/problems/{id}/leaders', { params: { path: { id }, query: { context } }, signal })),
     checkExample: (id: string, context: string, code: string) => result(http.POST('/problems/{id}/example', { params: { path: { id }, query: { context } }, body: { code } })),
+    submitGuess: (id: string, context: string, body: GuessInput) => result(http.POST('/problems/{id}/guess', { params: { path: { id }, query: { context } }, body })),
+    createComparison: (id: string, body: ComparisonInput) => result(http.POST('/problems/{id}/comparisons', { params: { path: { id } }, body })),
     listSubmissions: (query: SubmissionQuery = {}, signal?: AbortSignal) => result(http.GET('/submissions', { params: { query }, signal })),
     submitSolution: (body: SubmitInput) => result(http.POST('/submissions', { body })),
     getSubmission: (id: string, signal?: AbortSignal) => result(http.GET('/submissions/{id}', { params: { path: { id } }, signal })),

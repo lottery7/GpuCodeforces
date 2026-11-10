@@ -94,7 +94,7 @@ describe('API client', () => {
   it('loads every problem beyond the 100 item limit and keeps the server order', async () => {
     const problems: Problem[] = Array.from({ length: 237 }, (_, index) => ({
       id: `problem-${index}`, code: String(index).padStart(3, '0'), title: `Problem ${index}`,
-      difficulty: 'easy', tags: [], solved: false, solvedCount: 0,
+      difficulty: 'easy', format: 'standard', tags: [], solved: false, solvedCount: 0,
       lastSubmissionId: null, lastStatus: null, bestSubmissionId: null, bestTimeMs: null, recordTimeMs: null,
     }));
     const { requests, fetcher } = capture(async request => {

@@ -114,7 +114,7 @@ describe('Fixture HTTP API', () => {
     expect(visible.rulesMarkdown).toContain('Сложение векторов');
     expect((await request('/problems?context=weekly-13', { cookie: author })).body.total).toBe(3);
     expect((await request('/contests/weekly-13/standings', { cookie: author })).body).toEqual([]);
-    expect((await request('/problems')).body.total).toBe(8);
+    expect((await request('/problems')).body.total).toBe(10);
   });
 
   it('allows removing the creator while keeping at least one author', async () => {
@@ -214,7 +214,7 @@ describe('Fixture HTTP API', () => {
     const contests = (await request('/contests?q=12&phase=live')).body;
     expect(contests.map(contest => contest.id)).toEqual(['weekly-12']);
     const paginated = (await request('/problems?offset=1&limit=2')).body;
-    expect(paginated.total).toBe(8);
+    expect(paginated.total).toBe(10);
     expect(paginated.items).toHaveLength(2);
   });
 
@@ -257,4 +257,53 @@ describe('Fixture HTTP API', () => {
     const accepted = await waitForStatus(failed.id, 'accepted', owner);
     expect(accepted).toMatchObject({ code, diagnostic: '', contestId: null, createdAt: failed.createdAt, environmentMarkdown: failed.environmentMarkdown });
   }, 10000);
+
+  it('keeps guesses immutable, restores the attempt and hides the answer from other users', async () => {
+    const owner = await login('new_cuda');
+    const other = await login('alex_cuda');
+    const detail = (await request('/problems/guess-vector', { cookie: owner })).body;
+    expect(detail).toMatchObject({ format: 'guess', guessSubmissionId: null });
+    expect(detail.firstCode).toContain('void solve');
+    expect(detail).not.toHaveProperty('firstTimeMs');
+    const guess = await request('/problems/guess-vector/guess', { method: 'POST', body: { choice: 'first' }, cookie: owner });
+    expect(guess.status).toBe(200);
+    expect(guess.body).toMatchObject({ status: 'accepted', timeMs: null, guessResult: { choice: 'first', correctChoice: 'first' } });
+    expect((await request('/problems/guess-vector', { cookie: owner })).body.guessSubmissionId).toBe(guess.body.id);
+    const repeated = await request('/problems/guess-vector/guess', { method: 'POST', body: { choice: 'first' }, cookie: owner });
+    expect(repeated.body.id).toBe(guess.body.id);
+    expect((await request('/problems/guess-vector/guess', { method: 'POST', body: { choice: 'second' }, cookie: owner })).status).toBe(400);
+    expect((await request(`/submissions/${guess.body.id}`, { cookie: other })).body).not.toHaveProperty('guessResult');
+    expect((await request('/problems?format=guess', { cookie: owner })).body.items.every(item => item.format === 'guess')).toBe(true);
+    expect((await request('/submissions', { method: 'POST', body: { problemId: 'guess-vector', code: 'void solve() {}' }, cookie: owner })).status).toBe(400);
+  });
+
+  it('creates a duel for two people and one task', async () => {
+    const owner = await login('alex_cuda');
+    const opponent = await login('new_cuda');
+    const outsider = await login('author_cuda');
+    const start = Date.now() + 3600000;
+    const input = { title: 'Duel', format: 'duel', opponentId: 'new_cuda', authorIds: ['alex_cuda'], problemIds: ['vector-addition'], startAt: new Date(start).toISOString(), endAt: new Date(start + 3600000).toISOString() };
+    const created = await request('/contests', { method: 'POST', body: input, cookie: owner });
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({ format: 'duel', challengerId: 'alex_cuda', opponentId: 'new_cuda', registered: true });
+    expect((await request(`/contests/${created.body.id}/registration`, { method: 'PUT', cookie: outsider })).status).toBe(403);
+    expect((await request(`/contests/${created.body.id}/registration`, { method: 'PUT', cookie: opponent })).status).toBe(204);
+    expect((await request('/contests', { method: 'POST', body: { ...input, problemIds: ['vector-addition', 'reduction'] }, cookie: owner })).status).toBe(400);
+  });
+
+  it('publishes a comparison from two own accepted submissions without publishing measurements', async () => {
+    const cookie = await login('alex_cuda');
+    const queued = await request('/submissions', { method: 'POST', body: { problemId: 'vector-addition', code: 'void solve() {}' }, cookie });
+    await waitForStatus(queued.body.id, 'accepted', cookie);
+    const created = await request('/problems/vector-addition/comparisons', { method: 'POST', body: { firstSubmissionId: '1042', secondSubmissionId: queued.body.id, explanation: 'Разные размеры блока.' }, cookie });
+    expect(created.status).toBe(201);
+    expect(created.body.format).toBe('guess');
+    const detail = (await request(`/problems/${created.body.id}`)).body;
+    expect(detail.firstCode).toContain('void solve');
+    expect(detail.secondCode).toBe('void solve() {}');
+    expect(detail).not.toHaveProperty('firstTimeMs');
+    expect(detail).not.toHaveProperty('explanation');
+    const other = await login('new_cuda');
+    expect((await request('/problems/vector-addition/comparisons', { method: 'POST', body: { firstSubmissionId: '1042', secondSubmissionId: queued.body.id, explanation: 'Чужие посылки.' }, cookie: other })).status).toBe(400);
+  });
 });

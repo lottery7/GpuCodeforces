@@ -52,6 +52,15 @@ class ContestService(
     @Transactional
     fun create(input: ContestInputApi, creator: User): Contest {
         validate(input)
+        val format = input.format?.value ?: "standard"
+        if (format == "duel" && input.authorIds != setOf(creator.id.toString())) {
+            throw BadRequestException("Единственный автор дуэли - её инициатор")
+        }
+        val opponent = if (format == "duel") {
+            val id = input.opponentId?.toUuidOrBadRequest("Соперник не найден") ?: throw BadRequestException("Выберите соперника")
+            if (id == creator.id) throw BadRequestException("Нельзя вызвать на дуэль себя")
+            userRepository.findById(id).orElseThrow { BadRequestException("Соперник не найден") }
+        } else null
         val contest = contestRepository.save(
             Contest(
                 id = UUID.randomUUID(),
@@ -60,9 +69,13 @@ class ContestService(
                 endAt = input.endAt.toInstant(),
                 gpu = gpuProperties.name,
                 authors = resolveAuthors(input.authorIds).toMutableSet(),
+                format = format,
+                challengerId = if (format == "duel") creator.id else null,
+                opponentId = opponent?.id,
             ),
         )
         saveProblems(contest.id, input.problemIds)
+        if (format == "duel") contestRegistrationRepository.save(ContestRegistration(contest.id, creator.id))
         log.info("Contest {} created by {}: {} - {}, problems {}", contest.id, creator.handle, contest.startAt, contest.endAt, input.problemIds)
         return contest
     }
@@ -86,6 +99,12 @@ class ContestService(
             throw ForbiddenException("Контест нельзя изменить после начала")
         }
         validate(input)
+        if ((input.format?.value ?: "standard") != contest.format || input.opponentId != contest.opponentId?.toString()) {
+            throw BadRequestException("Формат и участников дуэли нельзя изменить")
+        }
+        if (contest.format == "duel" && input.authorIds != setOf(contest.challengerId.toString())) {
+            throw BadRequestException("Единственный автор дуэли - её инициатор")
+        }
         contest.title = input.title
         contest.startAt = input.startAt.toInstant()
         contest.endAt = input.endAt.toInstant()
@@ -97,7 +116,11 @@ class ContestService(
 
     @Transactional
     fun register(id: String, currentUser: User) {
-        val contest = get(id)
+        val found = get(id)
+        val contest = if (found.format == "duel") contestRepository.findForUpdate(found.id)!! else found
+        if (contest.format == "duel" && currentUser.id != contest.challengerId && currentUser.id != contest.opponentId) {
+            throw ForbiddenException("В дуэли участвуют только приглашённые участники")
+        }
         if (contest.phaseAt(Instant.now()) == ContestPhase.FINISHED) {
             throw BadRequestException("Контест уже завершён")
         }
@@ -132,8 +155,10 @@ class ContestService(
 
     fun buildRulesMarkdown(contest: Contest, problems: List<ContestProblem>, viewer: User?): String {
         val header = "## Правила\n\n" +
+            (if (contest.format == "duel") "Дуэль двух участников. " else "") +
             "Задача решена, если принята хотя бы одна посылка: верный ответ на всех тестах в пределах лимита времени. " +
-            "Место определяется числом решённых задач, затем меньшим суммарным временем сдачи. Время сдачи задачи — " +
+            "Правильный ответ в угадывании считается принятой посылкой. " +
+            "Место определяется числом решённых задач, затем меньшим суммарным временем сдачи. Время сдачи задачи - " +
             "от начала контеста до отправки первой принятой посылки; длительность проверки, время работы решения на GPU " +
             "и неверные попытки на место не влияют. Равные результаты делят место."
         val isAuthor = viewer != null && contest.authors.any { it.id == viewer.id }
@@ -147,6 +172,10 @@ class ContestService(
     }
 
     private fun validate(input: ContestInputApi) {
+        val format = input.format?.value ?: "standard"
+        if (format !in setOf("standard", "duel")) throw BadRequestException("Неизвестный формат контеста")
+        if (format == "duel" && input.problemIds.size != 1) throw BadRequestException("Для дуэли нужна ровно одна задача")
+        if (format == "standard" && input.opponentId != null) throw BadRequestException("Соперник задаётся только для дуэли")
         val now = Instant.now()
         if (!input.startAt.toInstant().isAfter(now)) throw BadRequestException("Начало контеста должно быть в будущем")
         if (!input.endAt.toInstant().isAfter(input.startAt.toInstant())) {

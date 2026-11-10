@@ -15,7 +15,7 @@ class AcceptedSubmission(
     val contestId: UUID?,
     val judgeHash: String,
     val gpuProfile: String,
-    val timeMs: BigDecimal,
+    val timeMs: BigDecimal?,
     val createdAt: Instant,
 )
 
@@ -80,7 +80,7 @@ class Leader(val rank: Int, val submission: AcceptedSubmission)
 class SubmissionStats(private val repository: SubmissionStatsRepository) {
     fun bestTime(userId: UUID, problemId: String, contestId: UUID?, judgeHash: String, gpuProfile: String): BigDecimal? {
         val scope = ResultScope(contestId, mapOf(problemId to judgeHash), gpuProfile)
-        return accepted(listOf(problemId)).filter { it.userId == userId && scope.counts(it) }.minOfOrNull { it.timeMs }
+        return accepted(listOf(problemId)).filter { it.userId == userId && scope.counts(it) && it.timeMs != null }.minOfOrNull { it.timeMs!! }
     }
 
     /** Personal results of [userId] (if any) and shared counters for the problems of one context. */
@@ -105,11 +105,11 @@ class SubmissionStats(private val repository: SubmissionStatsRepository) {
 
     /** Best accepted submission of every user, fastest first; equal times share a rank. */
     fun leaders(problemId: String, scope: ResultScope, limit: Int): List<Leader> {
-        val best = accepted(listOf(problemId)).filter { scope.counts(it) }
+        val best = accepted(listOf(problemId)).filter { scope.counts(it) && it.timeMs != null }
             .groupBy { it.userId }.values.map { it.fastest()!! }
             .sortedWith(compareBy<AcceptedSubmission> { it.timeMs }.thenBy { it.createdAt })
             .take(limit)
-        return best.map { submission -> Leader(1 + best.count { it.timeMs < submission.timeMs }, submission) }
+        return best.map { submission -> Leader(1 + best.count { it.timeMs!! < submission.timeMs!! }, submission) }
     }
 
     /** When each participant sent the first accepted submission of each problem of a contest (submission time, not verdict time). */
@@ -130,5 +130,5 @@ class SubmissionStats(private val repository: SubmissionStatsRepository) {
         if (problemIds.isEmpty()) emptyList() else repository.findWithStatus(SubmissionStatus.ACCEPTED, problemIds)
 
     private fun List<AcceptedSubmission>.fastest(): AcceptedSubmission? =
-        minWithOrNull(compareBy<AcceptedSubmission> { it.timeMs }.thenBy { it.createdAt })
+        filter { it.timeMs != null }.minWithOrNull(compareBy<AcceptedSubmission> { it.timeMs }.thenBy { it.createdAt })
 }

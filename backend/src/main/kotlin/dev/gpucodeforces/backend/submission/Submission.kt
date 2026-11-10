@@ -72,6 +72,8 @@ class Submission(
     val previousBestTimeMs: BigDecimal?,
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: Instant = Instant.now(),
+    @Column(name = "guess_choice")
+    val guessChoice: String? = null,
 ) {
     @Column(nullable = false)
     var status: SubmissionStatus = SubmissionStatus.QUEUED
@@ -135,6 +137,10 @@ class SubmissionRow(
 )
 
 interface SubmissionRepository : JpaRepository<Submission, UUID> {
+    @Query("SELECT s FROM Submission s WHERE s.userId = :userId AND s.problemVersionId = :versionId " +
+        "AND s.guessChoice IS NOT NULL AND ((:contestId IS NULL AND s.contestId IS NULL) OR s.contestId = :contestId)")
+    fun findGuess(userId: UUID, versionId: UUID, contestId: UUID?): Submission?
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT s FROM Submission s WHERE s.id = :id")
     fun findForUpdate(id: UUID): Submission?

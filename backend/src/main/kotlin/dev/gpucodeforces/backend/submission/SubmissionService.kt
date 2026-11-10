@@ -9,6 +9,7 @@ import dev.gpucodeforces.backend.contest.ContestPhase
 import dev.gpucodeforces.backend.contest.ContestService
 import dev.gpucodeforces.backend.problem.ProblemCatalog
 import dev.gpucodeforces.backend.problem.ProblemContext
+import dev.gpucodeforces.backend.problem.ProblemFormatData
 import dev.gpucodeforces.backend.problem.ProblemService
 import dev.gpucodeforces.backend.problem.environmentMarkdown
 import dev.gpucodeforces.backend.user.User
@@ -49,6 +50,7 @@ class SubmissionService(
 
     fun submit(problemId: String, contestId: String?, code: String, author: User): Submission {
         val problem = problemService.problem(problemId, submissionContext(contestId, author), author)
+        if (problem.version.format == ProblemFormatData.GUESS) throw BadRequestException("Выберите более быстрый код вместо отправки решения")
         validateSource(code)
         if (submissionRepository.countByUserIdAndStatusIn(author.id, SubmissionStatus.PENDING) >= judgeProperties.maxPendingPerUser) {
             throw BadRequestException("Дождитесь проверки предыдущих посылок")
@@ -244,7 +246,7 @@ class SubmissionService(
         }!!
     }
 
-    private fun submissionContext(contestId: String?, author: User): ProblemContext {
+    fun submissionContext(contestId: String?, author: User): ProblemContext {
         if (contestId == null) return ProblemContext.Practice
         val context = problemService.context(contestId, author) as ProblemContext.InContest
         val contest = context.contest

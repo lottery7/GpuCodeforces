@@ -6,6 +6,9 @@ import dev.gpucodeforces.backend.api.model.CheckExampleRequest
 import dev.gpucodeforces.backend.api.model.GetProblem200Response
 import dev.gpucodeforces.backend.api.model.ListProblemLeaders200ResponseInner
 import dev.gpucodeforces.backend.api.model.ListProblems200Response
+import dev.gpucodeforces.backend.api.model.SubmitGuessRequest
+import dev.gpucodeforces.backend.api.model.CreateComparisonRequest
+import dev.gpucodeforces.backend.api.model.Submission
 import dev.gpucodeforces.backend.auth.CurrentUser
 import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.common.GpuProperties
@@ -13,10 +16,14 @@ import dev.gpucodeforces.backend.submission.ExampleChecks
 import dev.gpucodeforces.backend.submission.ProblemResult
 import dev.gpucodeforces.backend.submission.ResultScope
 import dev.gpucodeforces.backend.submission.SubmissionStats
+import dev.gpucodeforces.backend.submission.GuessService
+import dev.gpucodeforces.backend.submission.SubmissionViews
+import dev.gpucodeforces.backend.submission.SubmissionRepository
 import dev.gpucodeforces.backend.user.UserRepository
 import dev.gpucodeforces.backend.user.UserService
 import dev.gpucodeforces.backend.user.toApiModel
 import org.springframework.http.ResponseEntity
+import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.RestController
 import java.math.BigDecimal
 import dev.gpucodeforces.backend.api.model.Problem as ProblemApiModel
@@ -30,11 +37,16 @@ class ProblemsController(
     private val userService: UserService,
     private val userRepository: UserRepository,
     private val gpuProperties: GpuProperties,
+    private val guessService: GuessService,
+    private val submissionViews: SubmissionViews,
+    private val comparisonService: ComparisonService,
+    private val submissionRepository: SubmissionRepository,
 ) : ProblemsApi {
     override fun listProblems(
         context: String,
         q: String?,
         difficulty: String?,
+        format: String?,
         tag: String?,
         solved: Boolean?,
         sort: String,
@@ -48,10 +60,11 @@ class ProblemsController(
         val problemContext = problemService.context(context, viewer)
         val pool = problemService.problems(problemContext, viewer)
         val tags = pool.flatMap { it.version.tags }.distinct().sorted()
-        val filtered = problemService.filter(pool, q, difficulty, tag)
+        if (format != null && format !in ProblemFormatData.FORMATS) throw BadRequestException("Неизвестный формат")
+        val filtered = problemService.filter(pool, q, difficulty, tag).filter { format == null || it.version.format == format }
         val results = submissionStats.problemResults(scope(problemContext, filtered), subject?.id)
         val items = filtered
-            .map { it.version.toApiModel(results.getValue(it.version.problemId)) }
+            .map { it.version.toApiModel(results.getValue(it.version.problemId), problemCatalog.format(it.version)) }
             .filter { solved == null || it.solved == solved }
             .let { if (problemContext == ProblemContext.Practice) sorted(it, sort) else it }
         return ResponseEntity.ok(ListProblems200Response(items.drop(offset).take(limit), items.size, tags))
@@ -63,8 +76,12 @@ class ProblemsController(
         val problem = problemService.problem(id, problemContext, viewer)
         val version = problem.version
         val spec = problemCatalog.spec(version)
-        val summary = version.toApiModel(submissionStats.problemResults(scope(problemContext, listOf(problem)), viewer?.id).getValue(id))
+        val format = problemCatalog.format(version)
+        val summary = version.toApiModel(submissionStats.problemResults(scope(problemContext, listOf(problem)), viewer?.id).getValue(id), format)
         val gpuName = (problemContext as? ProblemContext.InContest)?.contest?.gpu ?: gpuProperties.name
+        val guessSubmissionId = if (viewer != null && version.format == ProblemFormatData.GUESS) {
+            submissionRepository.findGuess(viewer.id, version.id, (problemContext as? ProblemContext.InContest)?.contest?.id)?.id?.toString()
+        } else null
         return ResponseEntity.ok(
             GetProblem200Response(
                 summary.id, summary.code, summary.title, GetProblem200Response.DifficultyEnum.fromValue(summary.difficulty.value), summary.tags,
@@ -76,7 +93,28 @@ class ProblemsController(
                 // The page shows it as GPU memory; without a GPU limit the solution is bounded by its RAM limit.
                 (spec.limits.gpuMemoryLimitMb ?: spec.limits.memoryLimitMb).toInt(),
                 environmentMarkdown(spec, gpuName),
-            ),
+            ).format(GetProblem200Response.FormatEnum.fromValue(version.format))
+                .versionId(version.id.toString())
+                .baselineTimeMs(format.baselineTimeMs)
+                .firstCode(format.firstCode)
+                .secondCode(format.secondCode)
+                .guessSubmissionId(guessSubmissionId),
+        )
+    }
+
+    override fun submitGuess(id: String, submitGuessRequest: SubmitGuessRequest, context: String): ResponseEntity<Submission> {
+        val author = CurrentUser.resolve()!!
+        val submission = guessService.submit(id, context, submitGuessRequest.choice.value, author)
+        return ResponseEntity.ok(submissionViews.detail(submission, author))
+    }
+
+    override fun createComparison(id: String, createComparisonRequest: CreateComparisonRequest): ResponseEntity<ProblemApiModel> {
+        val author = CurrentUser.resolve()!!
+        val version = with(createComparisonRequest) {
+            comparisonService.create(id, firstSubmissionId, secondSubmissionId, explanation, author)
+        }
+        return ResponseEntity.status(HttpStatus.CREATED).body(
+            version.toApiModel(ProblemResult(false, 0, null, null, null), problemCatalog.format(version)),
         )
     }
 
@@ -122,7 +160,7 @@ class ProblemsController(
     }
 }
 
-fun ProblemVersion.toApiModel(result: ProblemResult): ProblemApiModel = ProblemApiModel(
+fun ProblemVersion.toApiModel(result: ProblemResult, data: ProblemFormatData = ProblemFormatData()): ProblemApiModel = ProblemApiModel(
     problemId,
     code,
     title,
@@ -135,4 +173,4 @@ fun ProblemVersion.toApiModel(result: ProblemResult): ProblemApiModel = ProblemA
     result.best?.id?.toString(),
     result.best?.timeMs,
     result.record?.timeMs,
-)
+).format(ProblemApiModel.FormatEnum.fromValue(format)).baselineTimeMs(data.baselineTimeMs)

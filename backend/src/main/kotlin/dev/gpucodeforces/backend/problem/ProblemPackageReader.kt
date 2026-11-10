@@ -17,6 +17,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
 import java.util.HexFormat
+import java.math.BigDecimal
 
 /** A problem package that failed validation; the message is shown in the sync log. */
 class ProblemPackageException(message: String) : RuntimeException(message)
@@ -40,6 +41,7 @@ class ProblemPackage(
     val spec: ProblemSpec,
     val contentHash: String,
     val judgeHash: String,
+    val format: ProblemFormatData = ProblemFormatData(),
 )
 
 /**
@@ -62,6 +64,8 @@ class ProblemPackageReader(jsonMapper: JsonMapper) {
         val specFile = readFile(directory, SPEC_FILE)
         val generator = readFile(directory, GENERATOR_FILE)
         val starterFile = directory.resolve(STARTER_FILE).takeIf { Files.isRegularFile(it) }?.let { Files.readString(it) }
+        val formatFile = directory.resolve(FORMAT_FILE).takeIf { Files.isRegularFile(it) }?.let { Files.readString(it) }
+        val format = readFormat(directory, formatFile, starterFile)
 
         val (frontMatter, statement) = parseStatement(statementFile)
         val spec = parseSpec(id, specFile, generator)
@@ -73,9 +77,55 @@ class ProblemPackageReader(jsonMapper: JsonMapper) {
             starterCode = starter,
             spec = spec.copy(version = sha256(specFile, generator).take(VERSION_LENGTH)),
             // The generated starter counts too: a better template has to reach problems already in the bank.
-            contentHash = sha256(statementFile, specFile, generator, starter),
-            judgeHash = sha256(specFile, generator),
+            contentHash = if (formatFile == null) sha256(statementFile, specFile, generator, starter)
+                else sha256(statementFile, specFile, generator, starter, formatFile, format.firstCode.orEmpty(), format.secondCode.orEmpty()),
+            judgeHash = if (format.format == ProblemFormatData.GUESS)
+                sha256(specFile, generator, formatFile!!, format.firstCode!!, format.secondCode!!)
+                else sha256(specFile, generator),
+            format = format,
         )
+    }
+
+    private fun readFormat(directory: Path, source: String?, starter: String?): ProblemFormatData {
+        if (source == null) return ProblemFormatData()
+        val format = try {
+            specMapper.readValue(source, ProblemFormatData::class.java)
+        } catch (exception: JacksonException) {
+            fail("неверный $FORMAT_FILE: ${exception.originalMessage}")
+        }
+        if (format.format !in ProblemFormatData.FORMATS) fail("неизвестный format в $FORMAT_FILE")
+        if (format.firstCode != null || format.secondCode != null) fail("варианты кода задаются файлами first.cu и second.cu")
+        return when (format.format) {
+            ProblemFormatData.OPTIMIZATION -> {
+                if (format.baselineTimeMs == null || format.baselineTimeMs <= BigDecimal.ZERO) fail("baselineTimeMs должен быть больше нуля")
+                if (starter.isNullOrBlank()) fail("для оптимизации нужен непустой $STARTER_FILE")
+                val limit = SpecValidator.Limits().maxSourceBytes
+                if (starter.toByteArray().size > limit || starter.contains('\u0000')) fail("$STARTER_FILE содержит нулевые байты или больше $limit байт")
+                if (format.firstTimeMs != null || format.secondTimeMs != null) fail("времена вариантов доступны только для guess")
+                format
+            }
+            ProblemFormatData.GUESS -> {
+                if (format.explanation.isBlank() || format.explanation.length > 4000) fail("explanation должен быть непустым, до 4000 символов")
+                if (format.firstTimeMs == null || format.firstTimeMs <= BigDecimal.ZERO ||
+                    format.secondTimeMs == null || format.secondTimeMs <= BigDecimal.ZERO) {
+                    fail("firstTimeMs и secondTimeMs должны быть больше нуля")
+                }
+                if (format.baselineTimeMs != null) fail("baselineTimeMs доступен только для optimization")
+                val first = readFile(directory, "first.cu")
+                val second = readFile(directory, "second.cu")
+                val limit = SpecValidator.Limits().maxSourceBytes
+                if (listOf(first, second).any { it.isBlank() || it.toByteArray().size > limit || it.contains('\u0000') }) {
+                    fail("варианты кода должны быть непустыми, без нулевых байт, не больше $limit байт")
+                }
+                format.copy(firstCode = first, secondCode = second)
+            }
+            else -> {
+                if (format.baselineTimeMs != null || format.firstTimeMs != null || format.secondTimeMs != null) {
+                    fail("standard не содержит измерений формата")
+                }
+                format
+            }
+        }
     }
 
     private fun parseStatement(content: String): Pair<StatementFrontMatter, String> {
@@ -163,6 +213,7 @@ class ProblemPackageReader(jsonMapper: JsonMapper) {
         const val SPEC_FILE = "problem.json"
         const val GENERATOR_FILE = "problem.py"
         const val STARTER_FILE = "starter.cu"
+        const val FORMAT_FILE = "format.json"
         val DIFFICULTIES = listOf("easy", "medium", "hard")
         private const val MAX_CODE_LENGTH = 16
         private const val MAX_TITLE_LENGTH = 200

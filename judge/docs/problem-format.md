@@ -1,5 +1,9 @@
 # Формат задачи
 
+Форматы платформы описаны в [docs/backend/formats.md](../../docs/backend/formats.md).
+Оптимизация передается судье как обычная CUDA посылка. Угадывание проверяет backend без обращения
+к судье; `format.json`, `first.cu` и `second.cu` не входят в контракт `ProblemSpec`.
+
 Задача — это JSON `ProblemSpec` (см. `judge-api/.../ProblemSpec.kt`), который бэкенд передаёт в каждой посылке, плюс исходник генератора на Python. Списка тестов в JSON нет: тесты объявляет генератор (`tests()`). Пример: `judge/problems/examples/vector_add/` (`problem.json` + `problem.py`; `judge/tools/judge_cli.py` склеивает их в один `ProblemSpec`).
 
 ## ProblemSpec

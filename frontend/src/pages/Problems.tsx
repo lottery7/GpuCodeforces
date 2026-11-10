@@ -4,7 +4,7 @@ import { api } from '../api/client';
 import type { ProblemQuery } from '../api/types';
 import { useSession } from '../auth';
 import { Empty, PageHeader, Pagination, QueryState, SearchInput, TimeValue } from '../ui';
-import { difficultyLabels, problemPath } from '../utils';
+import { difficultyLabels, formatLabels, problemPath } from '../utils';
 
 const limit = 20;
 
@@ -15,9 +15,11 @@ export default function Problems() {
   const difficulty = params.get('difficulty') || '';
   const sort = params.get('sort') || 'code';
   const status = params.get('status') || '';
+  const format = params.get('format') || '';
   const offset = Math.max(0, Number.parseInt(params.get('offset') || '0', 10) || 0);
   const query: ProblemQuery = {
     context: 'practice',
+    format: format === 'standard' || format === 'optimization' || format === 'guess' ? format : undefined,
     q: params.get('q') || undefined,
     difficulty: difficulty === 'easy' || difficulty === 'medium' || difficulty === 'hard' ? difficulty : undefined,
     tag: params.get('tag') || undefined,
@@ -39,11 +41,14 @@ export default function Problems() {
     setParams(next, { replace: true });
   }
   const personal = Boolean(user || target);
-  const hasFilters = Boolean(params.get('q') || difficulty || params.get('tag') || status);
+  const hasFilters = Boolean(params.get('q') || difficulty || params.get('tag') || status || format);
   return <>
     <PageHeader title={target ? 'Задачи участника' : 'Задачи'} />
     <div className="toolbar">
       <SearchInput value={params.get('q') || ''} onChange={value => patch({ q: value })} placeholder="Название или номер задачи" label="Найти задачу" />
+      <select aria-label="Формат задачи" value={format} onChange={event => patch({ format: event.target.value })}>
+        <option value="">Все форматы</option>{Object.entries(formatLabels).map(([value, title]) => <option key={value} value={value}>{title}</option>)}
+      </select>
       <select aria-label="Сложность" value={difficulty} onChange={event => patch({ difficulty: event.target.value })}>
         <option value="">Сложность</option>
         {Object.entries(difficultyLabels).map(([value, title]) => <option key={value} value={value}>{title}</option>)}
@@ -65,8 +70,8 @@ export default function Problems() {
             <tbody>{problems.data.items.map(problem => <tr key={problem.id}>
               <td>{problem.solved && <span className="accepted" aria-label="Решена">✓</span>}</td>
               <td><Link className="task-link" to={problemPath(problem.id)}>{problem.code}. {problem.title}</Link><div className="subline">{problem.tags.map((tag, index) => <span key={tag}>{index > 0 && ' / '}<button className="text-link tag" onClick={() => patch({ tag })}>{tag}</button></span>)}</div></td>
-              <td>{difficultyLabels[problem.difficulty]}</td><td>{problem.solvedCount}</td>
-              {personal && <td className="mono">{problem.bestSubmissionId ? <Link to={`/submission/${encodeURIComponent(problem.bestSubmissionId)}`}><TimeValue value={problem.bestTimeMs} /></Link> : <TimeValue value={problem.bestTimeMs} />}</td>}
+              <td>{difficultyLabels[problem.difficulty]}<div className="subline">{formatLabels[problem.format ?? 'standard']}</div></td><td>{problem.solvedCount}</td>
+              {personal && <td className="mono">{problem.format === 'guess' ? problem.solved ? '+' : '-' : problem.bestSubmissionId ? <Link to={`/submission/${encodeURIComponent(problem.bestSubmissionId)}`}><TimeValue value={problem.bestTimeMs} /></Link> : <TimeValue value={problem.bestTimeMs} />}</td>}
             </tr>)}</tbody>
           </table>
         </div> : <Empty>{hasFilters ? 'Задачи не найдены. Измените запрос или сбросьте фильтры.' : 'В банке пока нет задач.'}</Empty>}

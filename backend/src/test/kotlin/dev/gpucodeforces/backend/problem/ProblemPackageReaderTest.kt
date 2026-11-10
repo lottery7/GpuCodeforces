@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import tools.jackson.databind.json.JsonMapper
 import tools.jackson.module.kotlin.KotlinModule
+import org.intellij.lang.annotations.Language
 import java.nio.file.Path
 import kotlin.io.path.ExperimentalPathApi
 import kotlin.io.path.copyToRecursively
@@ -85,5 +86,61 @@ class ProblemPackageReaderTest {
 
         assertThatThrownBy { reader.read(directory) }
             .isInstanceOf(ProblemPackageException::class.java).hasMessageContaining("problem.py")
+    }
+
+    @Test
+    fun `optimization requires a real starting solution and a positive baseline`() {
+        val directory = copyOf("vector_add")
+        @Language("JSON")
+        val metadata = """{"format":"optimization","baselineTimeMs":2.5}"""
+        directory.resolve("format.json").writeText(metadata)
+        assertThatThrownBy { reader.read(directory) }.hasMessageContaining("starter.cu")
+
+        directory.resolve("starter.cu").writeText("void solve() {}")
+        val problem = reader.read(directory)
+        assertThat(problem.format.format).isEqualTo("optimization")
+        assertThat(problem.format.baselineTimeMs).isEqualByComparingTo("2.5")
+        assertThat(problem.starterCode).isEqualTo("void solve() {}")
+
+        directory.resolve("format.json").writeText(metadata.replace("2.5", "0"))
+        assertThatThrownBy { reader.read(directory) }.hasMessageContaining("baselineTimeMs")
+    }
+
+    @Test
+    fun `guess packages preserve private measurements and change comparison scope with the answer`() {
+        val directory = copyOf("vector_add")
+        @Language("JSON")
+        val metadata = """{"format":"guess","firstTimeMs":1.2,"secondTimeMs":2.4,"explanation":"Пояснение"}"""
+        directory.resolve("format.json").writeText(metadata)
+        directory.resolve("first.cu").writeText("void first() {}")
+        directory.resolve("second.cu").writeText("void second() {}")
+        val before = reader.read(directory)
+        assertThat(before.format.correctChoice()).isEqualTo("first")
+        assertThat(before.format.firstCode).isEqualTo("void first() {}")
+        assertThat(before.format.explanation).isEqualTo("Пояснение")
+
+        directory.resolve("format.json").writeText(metadata.replace("1.2", "3.6"))
+        val after = reader.read(directory)
+        assertThat(after.format.correctChoice()).isEqualTo("second")
+        assertThat(after.judgeHash).isNotEqualTo(before.judgeHash)
+        assertThat(after.contentHash).isNotEqualTo(before.contentHash)
+    }
+
+    @Test
+    fun `guess packages reject missing candidates and invalid metadata`() {
+        val directory = copyOf("vector_add")
+        @Language("JSON")
+        val metadata = """{"format":"guess","firstTimeMs":1.2,"secondTimeMs":2.4,"explanation":"Пояснение"}"""
+        directory.resolve("format.json").writeText(metadata)
+        assertThatThrownBy { reader.read(directory) }.hasMessageContaining("first.cu")
+        directory.resolve("first.cu").writeText("void first() {}")
+        directory.resolve("second.cu").writeText(" ")
+        assertThatThrownBy { reader.read(directory) }.hasMessageContaining("варианты кода")
+        directory.resolve("format.json").writeText(metadata.replace("2.4", "-1"))
+        assertThatThrownBy { reader.read(directory) }.hasMessageContaining("secondTimeMs")
+        directory.resolve("format.json").writeText(metadata.replace("guess", "unknown"))
+        assertThatThrownBy { reader.read(directory) }.hasMessageContaining("неизвестный format")
+        directory.resolve("format.json").writeText(metadata.replace("Пояснение", ""))
+        assertThatThrownBy { reader.read(directory) }.hasMessageContaining("explanation")
     }
 }

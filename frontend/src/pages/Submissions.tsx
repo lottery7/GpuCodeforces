@@ -16,8 +16,8 @@ export function SubmissionTable({ items, inProblem = false, showUser = false }: 
       <td className="mono"><Link to={`/submission/${encodeURIComponent(item.id)}`}>#{item.id}</Link></td>
       {!inProblem && <td><Link to={problemPath(item.problemId, item.contestId || 'practice')}>{item.problemTitle}</Link><div className="subline">{item.contestId ? <Link to={`/contest/${encodeURIComponent(item.contestId)}`}>{item.contestTitle || 'Контест'}</Link> : 'Практика'}</div></td>}
       {showUser && <td><UserLink user={item.user} /></td>}
-      <td><Status status={item.status} />{item.status === 'accepted' && !item.comparable && <div className="subline">Старый профиль проверки</div>}</td>
-      <td className="mono"><TimeValue value={item.status === 'accepted' ? item.timeMs : null} /></td>
+      <td><Status status={item.status} />{item.status === 'accepted' && item.format !== 'guess' && !item.comparable && <div className="subline">Старый профиль проверки</div>}</td>
+      <td className="mono">{item.format === 'guess' ? item.status === 'accepted' ? '+' : '-' : <TimeValue value={item.status === 'accepted' ? item.timeMs : null} />}</td>
       <td><time dateTime={item.createdAt}>{dateTime(item.createdAt)}</time></td>
     </tr>)}</tbody>
   </table></div>;

@@ -16,7 +16,7 @@ vi.mock('../src/components/CodeEditor', () => ({
 }));
 
 const problem: ProblemDetail = {
-  id: 'vector-add', code: '100', title: 'Сложение векторов', difficulty: 'easy', tags: [],
+  id: 'vector-add', code: '100', title: 'Сложение векторов', difficulty: 'easy', format: 'standard', tags: [],
   solved: false, solvedCount: 0, lastSubmissionId: null, lastStatus: null, bestSubmissionId: null,
   bestTimeMs: null, recordTimeMs: null, statementMarkdown: 'Сложите два вектора.', starterCode: 'void solve() {}',
   timeLimitSeconds: 2, memoryLimitMb: 1024, environmentMarkdown: 'NVIDIA A100',

@@ -35,6 +35,12 @@ class Contest(
         inverseJoinColumns = [JoinColumn(name = "user_id")],
     )
     var authors: MutableSet<User> = mutableSetOf(),
+    @Column(nullable = false)
+    val format: String = "standard",
+    @Column(name = "challenger_id")
+    val challengerId: UUID? = null,
+    @Column(name = "opponent_id")
+    val opponentId: UUID? = null,
 ) {
     constructor(title: String, startAt: Instant, endAt: Instant, gpu: String) :
         this(UUID.randomUUID(), title, startAt, endAt, gpu)

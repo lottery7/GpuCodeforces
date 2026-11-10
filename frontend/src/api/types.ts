@@ -15,3 +15,6 @@ export type UserQuery = NonNullable<operations['listUsers']['parameters']['query
 export type LoginInput = operations['login']['requestBody']['content']['application/json'];
 export type RegisterInput = operations['registerUser']['requestBody']['content']['application/json'];
 export type SubmitInput = operations['submitSolution']['requestBody']['content']['application/json'];
+export type GuessInput = operations['submitGuess']['requestBody']['content']['application/json'];
+export type GuessResult = NonNullable<Submission['guessResult']>;
+export type ComparisonInput = operations['createComparison']['requestBody']['content']['application/json'];

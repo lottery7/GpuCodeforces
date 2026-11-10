@@ -42,6 +42,10 @@ into `PROBLEMS_DIRECTORY`, pulls it every minute and imports `PROBLEMS_PATH`; wi
 is empty. The package format is described (in Russian) in
 [docs/backend/problem-package.md](docs/backend/problem-package.md).
 
+Supported formats are ordinary CUDA tasks, optimization of a supplied solution and guessing which of two
+solutions is faster. Contests can also be duels between two selected users. Package metadata, participation
+and scoring are described in [docs/backend/formats.md](docs/backend/formats.md).
+
 ```sh
 PROBLEMS_GIT_URL=https://github.com/lottery7/GpuCodeforcesProblems.git PROBLEMS_DIRECTORY=build/problems   PROBLEMS_PATH=problems ./gradlew :backend:bootRun
 ```

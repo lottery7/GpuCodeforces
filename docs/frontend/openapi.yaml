@@ -137,6 +137,7 @@ paths:
         - {$ref: '#/components/parameters/Context'}
         - {$ref: '#/components/parameters/Query'}
         - {name: difficulty, in: query, schema: {type: string, enum: [easy, medium, hard]}}
+        - {name: format, in: query, schema: {type: string, enum: [standard, optimization, guess]}}
         - {name: tag, in: query, schema: {type: string}}
         - {name: solved, in: query, schema: {type: boolean}}
         - {name: sort, in: query, schema: {type: string, enum: [code, difficulty, bestTime], default: code}}
@@ -177,9 +178,73 @@ paths:
                     properties:
                       statementMarkdown: {type: string, description: 'Условие с сигнатурой, примерами, ограничениями входа и допусками.'}
                       starterCode: {type: string}
+                      versionId: {type: string, description: ID неизменяемой версии задачи.}
+                      firstCode: {type: string, nullable: true, description: Первый вариант для угадывания; без времен и ответа.}
+                      secondCode: {type: string, nullable: true, description: Второй вариант для угадывания; без времен и ответа.}
+                      guessSubmissionId: {type: string, nullable: true, description: Своя попытка угадывания именно этой версии и контекста; null до ответа.}
                       timeLimitSeconds: {type: number}
                       memoryLimitMb: {type: integer}
                       environmentMarkdown: {type: string, description: Оборудование и методика замера.}
+        default: {$ref: '#/components/responses/Error'}
+  /problems/{id}/comparisons:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      operationId: createComparison
+      summary: Создать угадывание из своих принятых решений
+      description: |
+        Публикует новую задачу guess с двумя своими кодами. Посылки должны быть разными,
+        принятыми и относиться к одной публичной задаче, конфигурации проверки и GPU платформы.
+        Посылки текущего контеста использовать нельзя. Времена и объяснение открываются после ответа.
+      security: [{session: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              title: CreateComparisonRequest
+              type: object
+              required: [firstSubmissionId, secondSubmissionId, explanation]
+              properties:
+                firstSubmissionId: {type: string}
+                secondSubmissionId: {type: string}
+                explanation: {type: string, minLength: 1, maxLength: 4000}
+      responses:
+        '201':
+          description: Новая задача доступна в банке.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        default: {$ref: '#/components/responses/Error'}
+  /problems/{id}/guess:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      operationId: submitGuess
+      summary: Угадать более быстрый код
+      description: |
+        Одна попытка на пользователя, версию задачи и контекст. Повтор того же выбора возвращает
+        сохраненную посылку; изменить ответ нельзя. В контесте нужны регистрация и текущая фаза live.
+        Ответ проверяет backend без запуска GPU. Результат и объяснение доступны только автору попытки.
+      security: [{session: []}]
+      parameters:
+        - {$ref: '#/components/parameters/Context'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              title: SubmitGuessRequest
+              type: object
+              required: [choice]
+              properties:
+                choice: {$ref: '#/components/schemas/GuessChoice'}
+      responses:
+        '200':
+          description: Сохраненный ответ; timeMs равен null, guessResult содержит разбор.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Submission'}
         default: {$ref: '#/components/responses/Error'}
   /problems/{id}/example:
     parameters:
@@ -188,7 +253,7 @@ paths:
       operationId: checkExample
       security: [{session: []}]
       summary: Проверить решение на примере из условия
-      description: Ждет результата; не создает посылку и не меняет рекорды.
+      description: Ждет результата; не создает посылку и не меняет рекорды. Недоступно для формата guess.
       parameters:
         - {$ref: '#/components/parameters/Context'}
       requestBody:
@@ -340,7 +405,7 @@ paths:
             schema: {$ref: '#/components/schemas/ContestInput'}
       responses:
         '201':
-          description: Контест создан; авторство не регистрирует для участия
+          description: Контест создан; авторство не регистрирует для участия. В дуэли инициатор зарегистрирован сразу.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Contest'}
@@ -361,7 +426,7 @@ paths:
     put:
       operationId: updateContest
       summary: Изменить контест до начала
-      description: Только текущим авторам. Список authorIds заменяется целиком; создателя можно убрать, если остается другой автор.
+      description: Только текущим авторам. Список authorIds заменяется целиком; создателя можно убрать, если остается другой автор. Формат и участники дуэли не меняются; ее автором остается инициатор.
       security: [{session: []}]
       requestBody:
         required: true
@@ -381,7 +446,7 @@ paths:
     put:
       operationId: registerForContest
       summary: Зарегистрироваться в контесте
-      description: До завершения контеста. Повторный запрос имеет тот же результат.
+      description: До завершения контеста. Повторный запрос имеет тот же результат. В дуэль может вступить только указанный соперник или уже зарегистрированный инициатор.
       security: [{session: []}]
       responses:
         '204': {description: Пользователь зарегистрирован}
@@ -394,9 +459,9 @@ paths:
       summary: Таблица контеста
       description: |
         Сначала число решенных задач, затем меньшее суммарное время сдачи. Задача решена, если принята хотя бы одна
-        посылка (верный ответ в пределах лимита времени); время сдачи задачи — от начала контеста до первой принятой
+        посылка (верный ответ в пределах лимита времени); время сдачи задачи - от начала контеста до первой принятой
         посылки. Время работы решения на GPU и неверные попытки на место не влияют. Равные результаты имеют одинаковое
-        место. До начала список пуст.
+        место. Правильный ответ guess считается принятой посылкой без замера GPU. До начала список пуст.
       responses:
         '200':
           description: Только результаты этого контеста; обновление обычным GET
@@ -511,6 +576,8 @@ components:
         code: {type: string, description: Номер задачи в банке.}
         title: {type: string}
         difficulty: {type: string, enum: [easy, medium, hard]}
+        format: {type: string, enum: [standard, optimization, guess], default: standard}
+        baselineTimeMs: {type: number, nullable: true, description: Время исходного решения для оптимизации на GPU платформы.}
         tags: {type: array, items: {type: string}}
         solved: {type: boolean, description: 'В практике учитывает решение в любом контексте, в контесте - только в нем; без userId и сессии false.'}
         solvedCount: {type: integer, description: Число участников с solved=true.}
@@ -526,12 +593,13 @@ components:
         id: {type: string}
         problemId: {type: string}
         problemTitle: {type: string}
+        format: {type: string, enum: [standard, optimization, guess], default: standard}
         user: {$ref: '#/components/schemas/User'}
         contestId: {type: string, nullable: true, description: null - практика.}
         contestTitle: {type: string, nullable: true}
         createdAt: {type: string, format: date-time}
         status: {type: string, enum: [queued, compiling, checking, measuring, accepted, compile_error, wrong_answer, runtime_error, time_limit, memory_limit, system_error, measurement_error]}
-        timeMs: {type: number, nullable: true, description: Для accepted - измеренное время; для остальных статусов null.}
+        timeMs: {type: number, nullable: true, description: Время принятого CUDA решения. Для guess и остальных статусов null.}
         comparable: {type: boolean, description: Результат может участвовать в текущих рекордах своего контекста.}
         passedTests: {type: integer, description: В детали посылки; число пройденных тестов.}
         totalTests: {type: integer, nullable: true, description: В детали посылки; null до подготовки тестов.}
@@ -539,12 +607,31 @@ components:
         environmentMarkdown: {type: string, description: В детали посылки; сохраненное оборудование и методика замера.}
         code: {type: string, description: 'Только автору в GET /submissions/{id}.'}
         diagnostic: {type: string, description: 'Только автору в GET /submissions/{id}.'}
+        guessResult:
+          allOf:
+            - {$ref: '#/components/schemas/GuessResult'}
+          description: Только автору попытки guess в детали и ответе submitGuess. В списках отсутствует.
+    GuessChoice:
+      type: string
+      enum: [first, second, equal]
+    GuessResult:
+      type: object
+      required: [choice, correctChoice, firstTimeMs, secondTimeMs, explanation]
+      properties:
+        choice: {$ref: '#/components/schemas/GuessChoice'}
+        correctChoice: {$ref: '#/components/schemas/GuessChoice'}
+        firstTimeMs: {type: number}
+        secondTimeMs: {type: number}
+        explanation: {type: string}
     Contest:
       type: object
       required: [id, title, startAt, endAt, authors, problemIds, problemCount, registered, gpu]
       properties:
         id: {type: string}
         title: {type: string}
+        format: {type: string, enum: [standard, duel], default: standard}
+        challengerId: {type: string, nullable: true, description: Инициатор дуэли; null у обычного контеста.}
+        opponentId: {type: string, nullable: true, description: Приглашенный соперник; null у обычного контеста.}
         startAt: {type: string, format: date-time}
         endAt: {type: string, format: date-time}
         authors: {type: array, items: {$ref: '#/components/schemas/User'}}
@@ -559,6 +646,8 @@ components:
       required: [title, startAt, endAt, authorIds, problemIds]
       properties:
         title: {type: string, minLength: 1, maxLength: 100}
+        format: {type: string, enum: [standard, duel], default: standard}
+        opponentId: {type: string, nullable: true, description: Для дуэли обязателен другой существующий пользователь.}
         startAt: {type: string, format: date-time}
         endAt: {type: string, format: date-time}
         authorIds: {type: array, minItems: 1, uniqueItems: true, items: {type: string}}

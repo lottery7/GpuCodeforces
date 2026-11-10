@@ -41,6 +41,27 @@ flowchart TB
 
 ## Путь посылки
 
+Обычные задачи и оптимизация используют путь через judge. Угадывание проверяется в backend
+по сохраненной версии пакета и создает завершенную посылку без замера GPU.
+Дуэль использует тот же контест, но регистрация доступна только двум выбранным участникам.
+Правила форматов: [backend/formats.md](backend/formats.md).
+
+```mermaid
+sequenceDiagram
+  participant U as Браузер
+  participant B as backend
+  participant DB as PostgreSQL
+  U->>B: GET /api/problems/{id}
+  B-->>U: Два кода без ответа и времен
+  U->>B: POST /api/problems/{id}/guess
+  B->>DB: Проверить контекст и сохранить один ответ
+  DB-->>B: Посылка accepted или wrong_answer
+  B-->>U: Свой ответ, времена и объяснение
+  U->>B: POST /api/problems/{id}/comparisons
+  B->>DB: Проверить две свои посылки и сохранить задачу guess
+  B-->>U: Новая задача в банке
+```
+
 ```mermaid
 sequenceDiagram
   participant U as Браузер (SPA)
@@ -122,6 +143,9 @@ classDiagram
     Instant startAt
     Instant endAt
     String gpu
+    String format
+    UUID challengerId
+    UUID opponentId
     Instant ratingAppliedAt
     phaseAt(now) ContestPhase
   }
@@ -136,6 +160,7 @@ classDiagram
   }
   class Problem {
     String id
+    String source
     Instant createdAt
   }
   class ProblemVersion {
@@ -146,6 +171,8 @@ classDiagram
     Boolean draft
     String statementMarkdown
     String starterCode
+    String format
+    JSON formatData
     String judgeSpec
     String contentHash
     String judgeHash
@@ -154,6 +181,7 @@ classDiagram
   class Submission {
     UUID id
     String code
+    String guessChoice
     SubmissionStatus status
     BigDecimal timeMs
     Int passedTests
@@ -203,6 +231,7 @@ classDiagram
     class ProblemsController
     class ProblemService
     class ProblemCatalog
+    class ComparisonService
     class ProblemSyncService {
       sync() SyncResult
     }
@@ -213,6 +242,7 @@ classDiagram
     class ContestService
   }
   namespace submission {
+    class GuessService
     class SubmissionsController
     class SubmissionService {
       submit() Submission
@@ -253,6 +283,11 @@ classDiagram
   ProblemsController ..> ProblemService
   ProblemsController ..> SubmissionStats
   ProblemsController ..> ExampleChecks
+  ProblemsController ..> GuessService
+  ProblemsController ..> ComparisonService
+  GuessService ..> ProblemService
+  GuessService ..> ProblemCatalog
+  GuessService ..> SubmissionService
   ProblemService ..> ProblemCatalog
   ProblemService ..> ContestService
   ProblemSyncService ..> ProblemPackageReader

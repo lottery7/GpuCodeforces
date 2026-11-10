@@ -2,12 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import { api, ApiError } from '../api/client';
-import type { Contest, ProblemDetail } from '../api/types';
+import type { Contest, GuessInput, ProblemDetail, Submission } from '../api/types';
 import { useSession } from '../auth';
 import CodeEditor from '../components/CodeEditor';
+import GuessResult from '../components/GuessResult';
+import DuelBoard from '../components/DuelBoard';
+import ComparisonBuilder from '../components/ComparisonBuilder';
 import { readDraft, rememberEditorLogin, writeDraft } from '../drafts';
 import { Empty, ErrorMessage, Markdown, PageHeader, QueryState, Tabs, TimeValue, UserLink, useFeedbackVisibility } from '../ui';
-import { contextFromSearch, difficultyLabels, problemPath } from '../utils';
+import { canJoinContest, contextFromSearch, difficultyLabels, formatLabels, guessLabels, problemPath } from '../utils';
 import { SubmissionList } from './Submissions';
 
 function phaseOf(contest: Contest | undefined, now: number) {
@@ -72,7 +75,7 @@ function EditorPane({ problem, context, contest, contestLoading, phase, onCloseO
   }
   function reset() {
     changeCode(problem.starterCode);
-    setUndo({ code, message: 'Шаблон восстановлен.' });
+    setUndo({ code, message: problem.format === 'optimization' ? 'Исходный код восстановлен.' : 'Шаблон восстановлен.' });
     setExample(null);
     check.reset();
   }
@@ -109,17 +112,61 @@ function EditorPane({ problem, context, contest, contestLoading, phase, onCloseO
         </div></section>}
       </div>}
       <div className="editor-actions">
-        <button type="button" className="text-link" onClick={reset} disabled={busy}>Восстановить шаблон</button>
+        <button type="button" className="text-link" onClick={reset} disabled={busy}>{problem.format === 'optimization' ? 'Восстановить исходный код' : 'Восстановить шаблон'}</button>
         <button type="button" className="btn secondary run-btn" onClick={() => { clearErrors(); setExample(null); check.mutate(code); }} disabled={busy || !code.trim()}>{check.isPending ? 'Проверяем пример...' : 'Проверить пример'}</button>
         {phase === 'finished' ? <button type="button" className="btn primary" onClick={practice}>Продолжить в практике</button>
           : phase === 'upcoming' ? <button type="button" className="btn primary" disabled>Отправка после начала</button>
           : !user ? <button type="button" className="btn primary" onClick={requestLogin}>Войти и отправить</button>
-          : context !== 'practice' && !contest?.registered ? <button type="button" className="btn primary" disabled={busy || contestLoading} onClick={() => { clearErrors(); join.mutate(); }}>{join.isPending ? 'Регистрируем...' : 'Участвовать'}</button>
+          : contest?.format === 'duel' && !canJoinContest(contest, user.id) ? <button type="button" className="btn primary" disabled>Только для участников дуэли</button>
+          : context !== 'practice' && !contest?.registered ? <button type="button" className="btn primary" disabled={busy || contestLoading} onClick={() => { clearErrors(); join.mutate(); }}>{join.isPending ? 'Регистрируем...' : contest?.format === 'duel' ? 'Принять дуэль' : 'Участвовать'}</button>
           : <button type="button" className="btn primary" disabled={busy || !code.trim() || contestLoading} onClick={() => { clearErrors(); submit.mutate(); }}>{submit.isPending ? 'Отправляем...' : 'Отправить'}</button>}
       </div>
       </div>
     </div>
     <a href="#statement" className="back-to-statement">К условию</a>
+  </section>;
+}
+
+function GuessPane({ problem, context, contest, phase, contestLoading }: { problem: ProblemDetail; context: string; contest?: Contest; phase: ReturnType<typeof phaseOf>; contestLoading: boolean }) {
+  const { user } = useSession();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [choice, setChoice] = useState<GuessInput['choice'] | ''>('');
+  const [answer, setAnswer] = useState<Submission | null>(null);
+  const previous = useQuery({
+    queryKey: ['submission', problem.guessSubmissionId, user?.id],
+    queryFn: ({ signal }) => api.getSubmission(problem.guessSubmissionId!, signal),
+    enabled: Boolean(user && problem.guessSubmissionId),
+  });
+  const saved = answer ?? previous.data;
+  const guess = useMutation({
+    mutationFn: (value: GuessInput['choice']) => api.submitGuess(problem.id, context, { choice: value }),
+    onSuccess: result => { setAnswer(result); void queryClient.invalidateQueries(); },
+    onError: error => { if (error instanceof ApiError && error.status === 401) navigate(`/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`); },
+  });
+  const join = useMutation({
+    mutationFn: () => api.registerForContest(context),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['contest', context] }),
+  });
+  const feedbackRef = useFeedbackVisibility(saved || guess.error || join.error);
+  const blocked = guess.isPending || join.isPending || Boolean(saved) || Boolean(user && problem.guessSubmissionId && !previous.data) || contestLoading || phase === 'upcoming' || phase === 'finished';
+  return <section className="guess-pane" id="editor" aria-label="Выберите более быстрый код">
+    <div className="guess-codes">{[problem.firstCode, problem.secondCode].map((code, index) => <section className="panel editor-panel" key={index}><div className="tool-window-head">Код {index + 1}</div><CodeEditor value={code ?? ''} readOnly label={`Код ${index + 1}`} /></section>)}</div>
+    <p>Выберите, какой код быстрее на указанном входе и GPU. Ответить можно один раз.</p>
+    <fieldset className="guess-choices" disabled={blocked}><legend>Ваш ответ</legend>{(Object.keys(guessLabels) as GuessInput['choice'][]).map(value => <label className="checkbox-label" key={value}><input type="radio" name="guess" value={value} checked={(saved?.guessResult?.choice ?? choice) === value} onChange={() => setChoice(value)} />{guessLabels[value]}</label>)}</fieldset>
+    {!user ? <Link className="btn primary" to={`/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`}>Войти и ответить</Link>
+      : phase === 'finished' ? <Link className="btn secondary" to={problemPath(problem.id)}>Продолжить в практике</Link>
+      : phase === 'upcoming' ? <p className="muted">Ответы принимаются после начала.</p>
+      : contest?.format === 'duel' && !canJoinContest(contest, user.id) ? <p className="muted">Ответить могут только участники дуэли.</p>
+      : context !== 'practice' && !contest?.registered ? <button className="btn primary" disabled={blocked} onClick={() => join.mutate()}>{join.isPending ? 'Регистрируем...' : contest?.format === 'duel' ? 'Принять дуэль' : 'Участвовать'}</button>
+      : !saved && <button className="btn primary" disabled={blocked || !choice} onClick={() => { if (choice) guess.mutate(choice); }}>{guess.isPending ? 'Проверяем ответ...' : 'Ответить'}</button>}
+    <div ref={feedbackRef}><ErrorMessage error={guess.error || join.error || previous.error} />
+      {previous.isFetching && !saved && <p role="status">Загрузка предыдущего ответа...</p>}
+      {previous.error && <button className="text-link" onClick={() => void previous.refetch()}>Повторить загрузку ответа</button>}
+      {saved?.guessResult && <GuessResult result={saved.guessResult} />}
+      {saved && <p><Link to={`/submission/${encodeURIComponent(saved.id)}`}>Посмотреть ответ</Link></p>}
+    </div>
   </section>;
 }
 
@@ -165,7 +212,7 @@ export default function Problem() {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [context]);
-  const tab = ['submissions', 'leaders'].includes(params.get('tab') || '') ? params.get('tab')! : 'statement';
+  const requestedTab = ['submissions', 'leaders'].includes(params.get('tab') || '') ? params.get('tab')! : 'statement';
   const problem = useQuery({
     queryKey: ['problem', id, context, user?.id],
     queryFn: ({ signal }) => api.getProblem(id, context, signal),
@@ -178,29 +225,35 @@ export default function Problem() {
     refetchInterval: q => q.state.data && Date.now() >= Date.parse(q.state.data.endAt) ? false : 5000,
   });
   const phase = phaseOf(contest.data, now);
+  const isGuess = problem.data?.format === 'guess';
+  const tab = isGuess && requestedTab === 'leaders' ? 'statement' : requestedTab;
   useEffect(() => {
     const previous = previousPhase.current;
     if (phase && previous?.context === context && previous.phase && previous.phase !== phase) {
       void queryClient.invalidateQueries({ queryKey: ['contest', context] });
       void queryClient.invalidateQueries({ queryKey: ['problem', id, context] });
       void queryClient.invalidateQueries({ queryKey: ['problem-leaders', id, context] });
+      void queryClient.invalidateQueries({ queryKey: ['duel-gpu', context] });
+      void queryClient.invalidateQueries({ queryKey: ['standings', context] });
     }
     previousPhase.current = { context, phase };
   }, [phase, context, id, queryClient]);
   return <QueryState query={problem}>{problem.data && <>
     <div className="breadcrumbs"><Link to={context === 'practice' ? '/problems' : `/contest/${encodeURIComponent(context)}`}>{context === 'practice' ? 'Практика' : contest.data?.title || 'Контест'}</Link></div>
-    <PageHeader title={`${problem.data.code}. ${problem.data.title}`} actions={tab === 'statement' ? <a className="text-link editor-anchor" href="#editor">К редактору</a> : undefined} />
-    <div className="problem-meta"><span>{difficultyLabels[problem.data.difficulty]}</span><span>Время: {problem.data.timeLimitSeconds} с</span><span>Память GPU: {problem.data.memoryLimitMb} MB</span></div>
+    <PageHeader title={`${problem.data.code}. ${problem.data.title}`} actions={tab === 'statement' ? <a className="text-link editor-anchor" href="#editor">{isGuess ? 'К вариантам ответа' : 'К редактору'}</a> : undefined} />
+    <div className="problem-meta"><span>{formatLabels[problem.data.format ?? 'standard']}</span><span>{difficultyLabels[problem.data.difficulty]}</span><span>Время: {problem.data.timeLimitSeconds} с</span><span>Память GPU: {problem.data.memoryLimitMb} MB</span></div>
     <Tabs selected={tab} items={[
-      { id: 'statement', label: 'Условие и решение', to: problemPath(id, context) },
-      { id: 'submissions', label: context === 'practice' ? 'Мои посылки' : 'Мои посылки в контесте', to: problemPath(id, context, 'submissions') },
-      { id: 'leaders', label: 'Лидеры', to: problemPath(id, context, 'leaders') },
+      { id: 'statement', label: isGuess ? 'Условие и ответ' : 'Условие и решение', to: problemPath(id, context) },
+      { id: 'submissions', label: isGuess ? 'Мой ответ' : context === 'practice' ? 'Мои посылки' : 'Мои посылки в контесте', to: problemPath(id, context, 'submissions') },
+      ...(!isGuess ? [{ id: 'leaders', label: 'Лидеры', to: problemPath(id, context, 'leaders') }] : []),
     ]} />
     {context !== 'practice' && contest.error && <ErrorMessage error={contest.error} />}
     {phase === 'finished' && <p className="notice">Соревнование завершено. Новые решения в практике не изменят его результаты.</p>}
-    {tab === 'statement' ? <div className="problem-workspace">
-      <section className="statement statement-pane" id="statement" ref={statementRef} tabIndex={-1} aria-label="Условие задачи"><div className="tool-window-head">Условие</div><div className="statement-body"><Markdown>{problem.data.statementMarkdown}</Markdown><details className="methodology"><summary>Среда и замер</summary><Markdown>{problem.data.environmentMarkdown}</Markdown></details></div></section>
-      <EditorPane key={`${user?.id || 'guest'}:${id}:${context}`} problem={problem.data} context={context} contest={contest.data} phase={phase} onCloseOutput={returnToStatement} contestLoading={context !== 'practice' && (contest.isPending || Boolean(contest.error))} />
+    {contest.data?.format === 'duel' && <><p className="notice">{phase === 'finished' ? 'Дуэль завершена.' : `${phase === 'upcoming' ? 'До начала' : 'До конца'} дуэли: ${Math.max(0, Math.ceil((Date.parse(phase === 'upcoming' ? contest.data.startAt : contest.data.endAt) - now) / 1000))} с.`}</p><DuelBoard contest={contest.data} commonProblem={problem.data} finished={phase === 'finished'} /></>}
+    {tab === 'statement' ? <div className={isGuess ? 'guess-workspace' : 'problem-workspace'}>
+      <section className="statement statement-pane" id="statement" ref={statementRef} tabIndex={-1} aria-label="Условие задачи"><div className="tool-window-head">Условие</div><div className="statement-body"><Markdown>{problem.data.statementMarkdown}</Markdown>{problem.data.format === 'optimization' && <div className="notice"><p>Сократите время исходного решения, сохранив корректность.</p>{problem.data.baselineTimeMs != null && <p>Исходное время: <TimeValue value={problem.data.baselineTimeMs} /> мс.{problem.data.bestTimeMs != null && problem.data.bestTimeMs > 0 && <> Ваше лучшее время: <TimeValue value={problem.data.bestTimeMs} /> мс. Ускорение: {(problem.data.baselineTimeMs / problem.data.bestTimeMs).toFixed(3)}x.</>}</p>}</div>}<details className="methodology"><summary>Среда и замер</summary><Markdown>{problem.data.environmentMarkdown}</Markdown></details></div></section>
+      {isGuess ? <GuessPane key={`${user?.id || 'guest'}:${id}:${context}:${problem.data.versionId ?? ''}`} problem={problem.data} context={context} contest={contest.data} phase={phase} contestLoading={context !== 'practice' && (contest.isPending || Boolean(contest.error))} /> : <EditorPane key={`${user?.id || 'guest'}:${id}:${context}`} problem={problem.data} context={context} contest={contest.data} phase={phase} onCloseOutput={returnToStatement} contestLoading={context !== 'practice' && (contest.isPending || Boolean(contest.error))} />}
     </div> : tab === 'submissions' ? <SubmissionList key={`${id}:${context}:${user?.id || 'guest'}`} problemId={id} context={context} /> : <Leaders problemId={id} context={context} finished={phase === 'finished'} />}
+    {!isGuess && tab === 'statement' && <ComparisonBuilder key={`${id}:${user?.id}`} problemId={id} />}
   </>}</QueryState>;
 }
