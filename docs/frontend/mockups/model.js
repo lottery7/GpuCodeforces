@@ -61,7 +61,7 @@
       {id:'new_cuda',handle:'new_cuda',email:'new@example.com',role:'participant',rating:null,ratingDelta:null,ratingContestId:null}
     ];
     const problemIds = ['vector-addition','matrix-multiplication','reduction'];
-    const contest = (id,title,start,end) => ({id,title,ownerId:'author_cuda',authorIds:['author_cuda'],gpuId:'a100',startAt:date(start),endAt:date(end),problemIds:problemIds.slice(),registrationOpen:end>0,scoring:'speedup',benchmarks:Object.fromEntries(problemIds.map(id=>[id,copy(baseProblem(id).benchmark)])),problemSnapshots:Object.fromEntries(problemIds.map(id=>[id,copy(baseProblem(id))]))});
+    const contest = (id,title,start,end) => ({id,title,ownerId:'author_cuda',authorIds:['author_cuda'],gpuId:'a100',startAt:date(start),endAt:date(end),problemIds:problemIds.slice(),registrationOpen:end>0,benchmarks:Object.fromEntries(problemIds.map(id=>[id,copy(baseProblem(id).benchmark)])),problemSnapshots:Object.fromEntries(problemIds.map(id=>[id,copy(baseProblem(id))]))});
     const contests = [contest('weekly-12','Weekly Contest #12',-hour,hour),contest('weekly-13','Weekly Contest #13',7*day,7*day+2*hour),contest('weekly-11','Weekly Contest #11',-2*day,-2*day+2*hour),contest('weekly-10','Weekly Contest #10',-9*day,-9*day+2*hour)];
     const records = [];
     const add = (id,userId,problemId,timeMs,contestId=null,createdAt=date(-hour)) => {
@@ -231,7 +231,7 @@
     }]));
     const problemSnapshots=Object.fromEntries(problems.map(problem=>[problem.id,{...copy(problem),benchmark:copy(benchmarks[problem.id])}]));
     const item=old||{id:contestId,ownerId:state.sessionId,createdAt:nowIso()};
-    Object.assign(item,{title,authorIds,startAt:new Date(startAt).toISOString(),endAt:new Date(endAt).toISOString(),durationMinutes,gpuId,problemIds,registrationOpen:true,scoring:'speedup',benchmarks,problemSnapshots,updatedAt:nowIso()});
+    Object.assign(item,{title,authorIds,startAt:new Date(startAt).toISOString(),endAt:new Date(endAt).toISOString(),durationMinutes,gpuId,problemIds,registrationOpen:true,benchmarks,problemSnapshots,updatedAt:nowIso()});
     if(!old)state.contests.push(item);
     persist();
     return {ok:true,contest:copy(item)};
@@ -266,19 +266,21 @@
     const item=findContest(contestId);
     if (!item) return [];
     const ids=Array.from(new Set([...state.registrations.filter(row=>row.contestId===contestId).map(row=>row.userId),...state.submissions.filter(row=>row.contestId===contestId).map(row=>row.userId)]));
+    const start=Date.parse(item.startAt);
     const rows=ids.map(userId=>{
       const user=findPerson(userId);
-      const results=Object.fromEntries(item.problemIds.map(problemId=>[problemId,best(problemId,{userId,contestId})]));
-      const accepted=Object.values(results).filter(Boolean);
-      const total=accepted.reduce((sum,submission)=>sum+item.benchmarks[submission.problemId].referenceMs/submission.timeMs,0);
-      return {rank:null,user,solved:accepted.length,score:item.scoring==='speedup'?Number(total.toFixed(9)):null,results};
+      const times={};
+      item.problemIds.forEach(problemId=>{
+        const accepted=state.submissions.filter(row=>row.userId===userId&&row.problemId===problemId&&row.contestId===contestId&&row.status==='accepted');
+        if(accepted.length)times[problemId]=Math.max(0,Math.floor((Math.min(...accepted.map(row=>Date.parse(row.createdAt)))-start)/1000));
+      });
+      return {rank:null,user,solved:Object.keys(times).length,totalSeconds:Object.values(times).reduce((sum,value)=>sum+value,0),times};
     }).filter(row=>row.user);
-    rows.sort((a,b)=>b.solved-a.solved||(item.scoring==='speedup'?b.score-a.score:0)||a.user.handle.localeCompare(b.user.handle));
+    rows.sort((a,b)=>b.solved-a.solved||a.totalSeconds-b.totalSeconds||a.user.handle.localeCompare(b.user.handle));
     let previous;
     let rank=0;
     return rows.map((row,index)=>{
-      if(item.scoring!=='speedup')return row;
-      const key=`${row.solved}|${row.score}`;
+      const key=`${row.solved}|${row.totalSeconds}`;
       if(key!==previous)rank=index+1;
       previous=key;
       return {...row,rank};
@@ -374,7 +376,6 @@
       persist();
       return {ok:true,contest:copy(item)};
     },
-    setContestScoring(mode){if(!['none','speedup'].includes(mode))return {ok:false,error:'Неизвестное правило.'};state.contests.forEach(item=>{item.scoring=mode;});persist();return {ok:true};},
     joined:(contestId,userId=state.sessionId)=>!!userId&&state.registrations.some(item=>item.contestId===contestId&&item.userId===userId),
     joinContest(id){if(!current())return {ok:false,error:'Войдите, чтобы участвовать.'};const item=findContest(id);if(!item)return {ok:false,error:'Соревнование не найдено.'};if(phase(id)==='finished'||!item.registrationOpen)return {ok:false,error:'Регистрация закрыта.'};if(!api.joined(id))state.registrations.push({contestId:id,userId:state.sessionId});persist();return {ok:true};},
     submissions:filters=>copy(filteredSubmissions(filters)),

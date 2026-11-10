@@ -33,11 +33,25 @@ interface SubmissionStatsRepository : Repository<Submission, UUID> {
 
     @Query(
         """
+        SELECT new dev.gpucodeforces.backend.submission.AcceptedSubmission(s.id, s.userId, s.problemId, s.contestId, s.judgeHash, s.gpuProfile, s.timeMs, s.createdAt)
+        FROM Submission s WHERE s.status = :status AND s.contestId = :contestId
+        """,
+    )
+    fun findWithStatusInContest(status: SubmissionStatus, contestId: UUID): List<AcceptedSubmission>
+
+    @Query(
+        """
         SELECT new dev.gpucodeforces.backend.submission.SubmissionHead(s.id, s.problemId, s.contestId, s.status, s.createdAt)
         FROM Submission s WHERE s.userId = :userId AND s.problemId IN :problemIds
         """,
     )
     fun findHeads(userId: UUID, problemIds: Collection<String>): List<SubmissionHead>
+
+    @Query("SELECT DISTINCT s.userId FROM Submission s WHERE s.contestId = :contestId")
+    fun findContestParticipants(contestId: UUID): List<UUID>
+
+    @Query("SELECT count(s) FROM Submission s WHERE s.contestId = :contestId AND s.status IN :statuses")
+    fun countInContestWithStatus(contestId: UUID, statuses: Collection<SubmissionStatus>): Long
 
     @Query("SELECT count(DISTINCT s.problemId) FROM Submission s WHERE s.userId = :userId AND s.status = :status")
     fun countProblemsWithStatus(userId: UUID, status: SubmissionStatus): Long
@@ -98,17 +112,17 @@ class SubmissionStats(private val repository: SubmissionStatsRepository) {
         return best.map { submission -> Leader(1 + best.count { it.timeMs < submission.timeMs }, submission) }
     }
 
-    /** Best time of every user for every problem of a contest. */
-    fun contestBestTimes(scope: ResultScope): Map<UUID, Map<String, BigDecimal>> =
-        accepted(scope.judgeHashes.keys).filter { scope.counts(it) }
+    /** When each participant sent the first accepted submission of each problem of a contest (submission time, not verdict time). */
+    fun firstAcceptedInContest(contestId: UUID): Map<UUID, Map<String, Instant>> =
+        repository.findWithStatusInContest(SubmissionStatus.ACCEPTED, contestId)
             .groupBy { it.userId }
-            .mapValues { (_, submissions) -> submissions.groupBy { it.problemId }.mapValues { (_, it) -> it.fastest()!!.timeMs } }
+            .mapValues { (_, submissions) -> submissions.groupBy { it.problemId }.mapValues { (_, it) -> it.minOf { s -> s.createdAt } } }
 
-    /** Practice record of a problem version before [before]: the contest baseline. */
-    fun practiceRecord(problemId: String, judgeHash: String, gpuProfile: String, before: Instant): BigDecimal? {
-        val scope = ResultScope(null, mapOf(problemId to judgeHash), gpuProfile)
-        return accepted(listOf(problemId)).filter { scope.counts(it) && it.createdAt.isBefore(before) }.minOfOrNull { it.timeMs }
-    }
+    /** Users who sent at least one submission to the contest: only they are rated. */
+    fun contestParticipants(contestId: UUID): Set<UUID> = repository.findContestParticipants(contestId).toSet()
+
+    /** Contest submissions still waiting for their verdict. */
+    fun pendingInContest(contestId: UUID): Long = repository.countInContestWithStatus(contestId, SubmissionStatus.PENDING)
 
     fun solvedProblemCount(userId: UUID): Int = repository.countProblemsWithStatus(userId, SubmissionStatus.ACCEPTED).toInt()
 

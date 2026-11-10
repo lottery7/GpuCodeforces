@@ -353,7 +353,7 @@ paths:
       summary: Контест; его задачи доступны через /problems?context=ID
       responses:
         '200':
-          description: Всегда включает rulesMarkdown с правилами; таблица эталонов скрыта до начала от обычных посетителей.
+          description: Всегда включает rulesMarkdown с правилами; список задач скрыт до начала от обычных посетителей.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Contest'}
@@ -392,7 +392,11 @@ paths:
     get:
       operationId: getContestStandings
       summary: Таблица контеста
-      description: Сначала число решенных задач, затем сумма ускорений относительно эталонов. Равные результаты имеют одинаковое место. До начала список пуст.
+      description: |
+        Сначала число решенных задач, затем меньшее суммарное время сдачи. Задача решена, если принята хотя бы одна
+        посылка (верный ответ в пределах лимита времени); время сдачи задачи — от начала контеста до первой принятой
+        посылки. Время работы решения на GPU и неверные попытки на место не влияют. Равные результаты имеют одинаковое
+        место. До начала список пуст.
       responses:
         '200':
           description: Только результаты этого контеста; обновление обычным GET
@@ -402,16 +406,16 @@ paths:
                 type: array
                 items:
                   type: object
-                  required: [rank, user, solved, speedup, times]
+                  required: [rank, user, solved, totalSeconds, times]
                   properties:
                     rank: {type: integer}
                     user: {$ref: '#/components/schemas/User'}
                     solved: {type: integer}
-                    speedup: {type: number}
+                    totalSeconds: {type: integer, description: Сумма времен сдачи решенных задач.}
                     times:
                       type: object
-                      description: ID задачи -> лучшее время GPU; нерешенных задач в объекте нет.
-                      additionalProperties: {type: number}
+                      description: ID задачи -> секунды от начала контеста до первой принятой посылки; нерешенных задач в объекте нет.
+                      additionalProperties: {type: integer}
         default: {$ref: '#/components/responses/Error'}
   /admin/console:
     post:
@@ -548,7 +552,7 @@ components:
         problemCount: {type: integer}
         registered: {type: boolean, description: Участие текущего пользователя; для гостя false.}
         gpu: {type: string, description: Одна доступная GPU назначается сервером для всего контеста.}
-        rulesMarkdown: {type: string, description: 'В детали контеста; правила и таблица эталонов. До начала обычным посетителям только общие правила без названий задач и эталонов.'}
+        rulesMarkdown: {type: string, description: 'В детали контеста; правила подсчета и список задач. До начала обычным посетителям только общие правила без названий задач.'}
     ContestInput:
       type: object
       description: startAt в будущем, endAt позже startAt. Только публичные задачи; их порядок задает problemIds.

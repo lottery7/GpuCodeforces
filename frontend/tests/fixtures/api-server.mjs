@@ -196,20 +196,22 @@ export function createApiServer() {
 
   function rulesMarkdown(contest) {
     const general = [
-      'Решения принимаются на C++/CUDA. Сначала проверяется корректность, затем измеряется время GPU.',
+      'Решения принимаются на C++/CUDA и проверяются на корректность в пределах лимита времени.',
       '', `Все задачи контеста проверяются на ${model.gpuProfiles().find(gpu => gpu.id === contest.gpuId)?.label ?? 'NVIDIA A100 80 GB'}.`,
-      '', 'Сначала сравнивается число решенных задач, затем сумма ускорений относительно эталонов. Одинаковые результаты получают одинаковое место.',
+      '', 'Сначала сравнивается число решенных задач, затем меньшее суммарное время сдачи: для каждой решенной задачи время от начала контеста до отправки первой принятой посылки. Время работы на GPU и неверные попытки не учитываются. Одинаковые результаты получают одинаковое место.',
       '', 'Конкурсная отправка доступна зарегистрированным участникам во время соревнования. После завершения задачи можно решать в практике без изменения результатов контеста.',
     ];
     if (model.phase(contest.id) === 'upcoming' && !model.isContestAuthor(contest.id)) return general.join('\n');
-    return [...general, '', '## Эталонные времена',
-      '| Задача | Размер входа | Эталон, мс |', '| --- | --- | --- |',
-      ...contest.problemIds.map((id, index) => {
-        const problem = problemById(id, contest.id);
-        const benchmark = contest.benchmarks[id];
-        return `| ${String.fromCharCode(65 + index)}. ${problem.title} | ${benchmark.caseLabel} | ${benchmark.referenceMs} |`;
-      }),
+    return [...general, '', '## Задачи',
+      ...contest.problemIds.map((id, index) => `- ${String.fromCharCode(65 + index)}. ${problemById(id, contest.id).title}`),
     ].join('\n');
+  }
+
+  /** Same rules as the backend: solved problems, then the total time from the start to the first accepted submission. */
+  function standings(contest) {
+    return model.standings(contest.id).map(row => ({
+      rank: row.rank, user: publicUser(row.user), solved: row.solved, totalSeconds: row.totalSeconds, times: row.times,
+    }));
   }
 
   function contestDto(contest, detail = false) {
@@ -500,11 +502,7 @@ export function createApiServer() {
           return send(response, 204);
         }
         if (method === 'GET' && action === 'standings') {
-          const rows = model.phase(id) === 'upcoming' ? [] : model.standings(id).map(row => ({
-            rank: row.rank, user: publicUser(row.user), solved: row.solved, speedup: row.score,
-            times: Object.fromEntries(Object.entries(row.results).filter(([, item]) => item && model.canCompare(item)).map(([problemId, item]) => [problemId, item.timeMs])),
-          }));
-          return send(response, 200, rows);
+          return send(response, 200, model.phase(id) === 'upcoming' ? [] : standings(model.contest(id)));
         }
       }
 

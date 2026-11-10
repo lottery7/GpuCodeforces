@@ -20,6 +20,11 @@ export function problemPath(id: string, context = 'practice', tab?: string) {
   return `/problem/${encodeURIComponent(id)}${query ? '?' + query : ''}`;
 }
 export const contextFromSearch = (params: URLSearchParams) => params.get('contest') || 'practice';
+/** Contest solve time: seconds from the start to the first accepted submission, as h:mm:ss. */
+export function solveTime(seconds: number) {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${Math.floor(seconds / 3600)}:${pad(Math.floor(seconds / 60) % 60)}:${pad(seconds % 60)}`;
+}
 export function phaseOf(contest: Pick<Contest, 'startAt' | 'endAt'>): 'upcoming' | 'live' | 'finished' {
   return Date.now() < Date.parse(contest.startAt) ? 'upcoming' : Date.now() < Date.parse(contest.endAt) ? 'live' : 'finished';
 }

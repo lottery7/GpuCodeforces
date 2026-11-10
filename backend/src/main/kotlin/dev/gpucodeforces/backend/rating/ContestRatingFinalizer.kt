@@ -13,8 +13,9 @@ class ContestRatingFinalizer(
     @Scheduled(fixedDelay = 60_000)
     fun finalizeDueContests() {
         val now = Instant.now()
-        contestRepository.findAll()
-            .filter { it.ratingAppliedAt == null && it.endAt.isBefore(now) }
-            .forEach { ratingFinalizationService.finalize(it.id, now) }
+        // In end order: a rating change has to include every contest that ended before it.
+        for (contest in contestRepository.findAll().filter { it.ratingAppliedAt == null && it.endAt.isBefore(now) }.sortedBy { it.endAt }) {
+            if (!ratingFinalizationService.finalize(contest.id, now)) break
+        }
     }
 }
