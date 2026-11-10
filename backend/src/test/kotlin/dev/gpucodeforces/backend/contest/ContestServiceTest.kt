@@ -5,6 +5,7 @@ import dev.gpucodeforces.backend.common.ForbiddenException
 import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.common.UnauthorizedException
 import dev.gpucodeforces.backend.problem.ProblemCatalog
+import dev.gpucodeforces.backend.submission.SubmissionStats
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.backend.user.UserRepository
 import org.assertj.core.api.Assertions.assertThat
@@ -35,6 +36,7 @@ class ContestServiceTest {
         userRepository,
         problemCatalog,
         GpuProperties(),
+        mock(SubmissionStats::class.java),
     )
 
     private fun user(handle: String = "author") = User(handle, "$handle@example.com", "hash")

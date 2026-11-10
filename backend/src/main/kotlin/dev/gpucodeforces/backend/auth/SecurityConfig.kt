@@ -50,6 +50,8 @@ class SecurityConfig(
                     .requestMatchers(HttpMethod.DELETE, "/api/session").authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/submissions/*/recheck").authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/submissions").authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/problems/*/example").authenticated()
+                    .requestMatchers("/api/admin/**").authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/contests").authenticated()
                     .requestMatchers(HttpMethod.PUT, "/api/contests/*").authenticated()
                     .requestMatchers(HttpMethod.PUT, "/api/contests/*/registration").authenticated()

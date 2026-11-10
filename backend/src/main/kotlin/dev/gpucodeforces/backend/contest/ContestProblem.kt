@@ -6,7 +6,6 @@ import jakarta.persistence.EmbeddedId
 import jakarta.persistence.Entity
 import jakarta.persistence.Table
 import java.io.Serializable
-import java.math.BigDecimal
 import java.util.UUID
 
 @Embeddable
@@ -22,15 +21,12 @@ class ContestProblem(
     val id: ContestProblemId,
     @Column(nullable = false)
     var position: Int,
-    // Snapshotted from the problem's global record time once the contest starts; see Contest.
-    @Column(name = "baseline_time_ms")
-    var baselineTimeMs: BigDecimal? = null,
     // Problem version the contest uses; see ContestProblemRepository.repinUpcoming.
     @Column(name = "problem_version_id")
     var problemVersionId: UUID? = null,
 ) {
     constructor(contestId: UUID, problemId: String, position: Int, problemVersionId: UUID? = null) :
-        this(ContestProblemId(contestId, problemId), position, problemVersionId = problemVersionId)
+        this(ContestProblemId(contestId, problemId), position, problemVersionId)
 
     override fun equals(other: Any?) = this === other || (other is ContestProblem && id == other.id)
 

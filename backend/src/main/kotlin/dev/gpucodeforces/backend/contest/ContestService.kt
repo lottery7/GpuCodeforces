@@ -9,12 +9,15 @@ import dev.gpucodeforces.backend.common.UnauthorizedException
 import dev.gpucodeforces.backend.common.toUuidOrBadRequest
 import dev.gpucodeforces.backend.common.toUuidOrNotFound
 import dev.gpucodeforces.backend.problem.ProblemCatalog
+import dev.gpucodeforces.backend.submission.ResultScope
+import dev.gpucodeforces.backend.submission.SubmissionStats
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.backend.user.UserRepository
 import dev.gpucodeforces.backend.user.toApiModel
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.Instant
 import java.util.UUID
 import dev.gpucodeforces.backend.api.model.ContestInput as ContestInputApi
@@ -27,6 +30,7 @@ class ContestService(
     private val userRepository: UserRepository,
     private val problemCatalog: ProblemCatalog,
     private val gpuProperties: GpuProperties,
+    private val submissionStats: SubmissionStats,
 ) {
     fun list(query: String?, phase: String?, mine: Boolean, viewer: User?): List<Contest> {
         if (mine && viewer == null) throw UnauthorizedException("Нужен вход")
@@ -99,15 +103,41 @@ class ContestService(
         }
     }
 
-    // No accepted-submission data exists yet (step 3 wires the submissions module in), so every
-    // registered participant is tied at rank 1 with nothing solved until then.
+    /**
+     * Registered participants by solved problems, then by the sum of speedups `baseline / time` over solved problems.
+     * The baseline of a problem is its practice record before the start; without one, the best time in the contest.
+     * Equal results share a place.
+     */
     fun standings(id: String): List<GetContestStandings200ResponseInner> {
         val contest = get(id)
         if (contest.phaseAt(Instant.now()) == ContestPhase.UPCOMING) return emptyList()
+        val versions = problemCatalog.versions(problemsOf(contest.id).mapNotNull { it.problemVersionId }).values
+        val times = submissionStats.contestBestTimes(
+            ResultScope(contest.id, versions.associate { it.problemId to it.judgeHash }, gpuProperties.profile),
+        )
+        val baselines = baselines(contest)
         val userIds = contestRegistrationRepository.findByIdContestId(contest.id).map { it.id.userId }
-        return userRepository.findAllById(userIds).map { participant ->
-            GetContestStandings200ResponseInner(1, participant.toApiModel(), 0, BigDecimal.ZERO, emptyMap())
+        val rows = userRepository.findAllById(userIds).map { participant ->
+            val solved = times[participant.id].orEmpty()
+            val speedup = solved.entries.sumOf { (problemId, time) ->
+                val baseline = baselines[problemId] ?: times.values.mapNotNull { it[problemId] }.min()
+                baseline.divide(time, SPEEDUP_SCALE, RoundingMode.HALF_UP)
+            }.setScale(SPEEDUP_SCALE, RoundingMode.HALF_UP)
+            Triple(participant, solved, speedup)
         }
+        val order = compareByDescending<Triple<User, Map<String, BigDecimal>, BigDecimal>> { it.second.size }.thenByDescending { it.third }
+        return rows.sortedWith(order.thenBy { it.first.handle.lowercase() }).map { row ->
+            val rank = 1 + rows.count { order.compare(it, row) < 0 }
+            GetContestStandings200ResponseInner(rank, row.first.toApiModel(), row.second.size, row.third, row.second)
+        }
+    }
+
+    /** Practice record of each contest problem version before the start, see [standings]. */
+    fun baselines(contest: Contest): Map<String, BigDecimal> {
+        val versions = problemCatalog.versions(problemsOf(contest.id).mapNotNull { it.problemVersionId }).values
+        return versions.mapNotNull { version ->
+            submissionStats.practiceRecord(version.problemId, version.judgeHash, gpuProperties.profile, contest.startAt)?.let { version.problemId to it }
+        }.toMap()
     }
 
     fun buildRulesMarkdown(contest: Contest, problems: List<ContestProblem>, viewer: User?): String {
@@ -116,8 +146,11 @@ class ContestService(
             "Равные результаты делят место."
         val isAuthor = viewer != null && contest.authors.any { it.id == viewer.id }
         if (contest.phaseAt(Instant.now()) == ContestPhase.UPCOMING && !isAuthor) return header
+        val started = contest.phaseAt(Instant.now()) != ContestPhase.UPCOMING
+        val baselines = if (started) baselines(contest) else emptyMap()
         val table = problems.sortedBy { it.position }.joinToString("\n") { problem ->
-            val baseline = problem.baselineTimeMs?.let { "$it мс" } ?: "будет определён при старте"
+            val baseline = baselines[problem.id.problemId]?.let { "${it.stripTrailingZeros().toPlainString()} мс" }
+                ?: if (started) "лучшее время в контесте" else "рекорд практики на момент старта"
             "- ${problem.id.problemId}: эталон $baseline"
         }
         return "$header\n\n## Эталоны\n\n$table"
@@ -145,3 +178,5 @@ class ContestService(
         )
     }
 }
+
+private const val SPEEDUP_SCALE = 3
