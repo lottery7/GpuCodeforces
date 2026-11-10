@@ -1,0 +1,4 @@
+# Test runs start in backend/: the judge's example packages are the problem bank of integration tests.
+platform:
+  problems:
+    directory: ../judge/problems/examples

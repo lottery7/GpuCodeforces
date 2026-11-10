@@ -12,3 +12,5 @@ class UnauthorizedException(message: String) : ApiException(message, HttpStatus.
 class ForbiddenException(message: String) : ApiException(message, HttpStatus.FORBIDDEN)
 
 class NotFoundApiException(message: String) : ApiException(message, HttpStatus.NOT_FOUND)
+
+class ServiceUnavailableException(message: String) : ApiException(message, HttpStatus.SERVICE_UNAVAILABLE)

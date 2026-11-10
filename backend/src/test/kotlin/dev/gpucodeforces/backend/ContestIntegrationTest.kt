@@ -52,7 +52,7 @@ class ContestIntegrationTest {
             startAt.atOffset(ZoneOffset.UTC),
             endAt.atOffset(ZoneOffset.UTC),
             setOf(author.id),
-            setOf("vector-addition", "matrix-multiply"),
+            setOf("vector_add", "matmul_host"),
         )
 
         val created = client.post().uri("/contests").contentType(MediaType.APPLICATION_JSON)
@@ -63,7 +63,7 @@ class ContestIntegrationTest {
             .expectBody(Contest::class.java)
             .returnResult()
             .responseBody!!
-        assertThat(created.problemIds).containsExactly("vector-addition", "matrix-multiply")
+        assertThat(created.problemIds).containsExactly("vector_add", "matmul_host")
         assertThat(created.registered).isFalse()
 
         // Anonymous visitors see no problem ids before the contest starts.
@@ -76,7 +76,7 @@ class ContestIntegrationTest {
         val authorView = client.get().uri("/contests/${created.id}")
             .cookie("session", authorCookie)
             .exchange().expectStatus().isOk.expectBody(Contest::class.java).returnResult().responseBody!!
-        assertThat(authorView.problemIds).containsExactly("vector-addition", "matrix-multiply")
+        assertThat(authorView.problemIds).containsExactly("vector_add", "matmul_host")
 
         // A non-author cannot update the contest.
         client.put().uri("/contests/${created.id}").contentType(MediaType.APPLICATION_JSON)
@@ -85,12 +85,12 @@ class ContestIntegrationTest {
             .exchange().expectStatus().isForbidden
 
         // The author can update it, e.g. reorder problems.
-        val reordered = input.problemIds(linkedSetOf("matrix-multiply", "vector-addition"))
+        val reordered = input.problemIds(linkedSetOf("matmul_host", "vector_add"))
         val updated = client.put().uri("/contests/${created.id}").contentType(MediaType.APPLICATION_JSON)
             .cookie("session", authorCookie)
             .body(reordered)
             .exchange().expectStatus().isOk.expectBody(Contest::class.java).returnResult().responseBody!!
-        assertThat(updated.problemIds).containsExactly("matrix-multiply", "vector-addition")
+        assertThat(updated.problemIds).containsExactly("matmul_host", "vector_add")
 
         // mine=true only returns contests authored by the caller.
         val mine = client.get().uri("/contests?mine=true")
