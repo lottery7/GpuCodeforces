@@ -108,8 +108,8 @@ class ProblemSyncService(
             }
         }
         val present = packages.map { it.id }.toSet() + failedIds
-        val removed = problemRepository.findAll().filter { it.id !in present && it.currentVersionId != null }
-        removed.forEach { it.currentVersionId = null }
+        val removed = problemRepository.findActiveIds().filter { it !in present }
+        if (removed.isNotEmpty()) problemRepository.unpublish(removed)
         return SyncResult(revision, imported, unchanged, removed.size, emptyMap())
     }
 

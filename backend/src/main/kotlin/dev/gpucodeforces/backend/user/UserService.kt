@@ -33,12 +33,24 @@ class UserService(
 
     fun search(query: String?, sortByRating: Boolean, offset: Int, limit: Int): UserPage {
         val trimmed = query?.trim() ?: ""
-        val items = if (sortByRating) {
-            userRepository.searchRated(trimmed, limit, offset)
-        } else {
-            userRepository.searchByHandle(trimmed, limit, offset)
+        if (trimmed.isEmpty()) {
+            val items = if (sortByRating) userRepository.pageRated(limit, offset) else userRepository.pageByHandle(limit, offset)
+            val total = if (sortByRating) userRepository.countByRatingIsNotNull() else userRepository.count()
+            return UserPage(items, total.toInt())
         }
-        val total = if (sortByRating) userRepository.countRated(trimmed) else userRepository.countByHandle(trimmed)
+        if (trimmed.length < 3) {
+            val items = if (sortByRating) userRepository.searchShortRated(trimmed, limit, offset)
+                else userRepository.searchShortByHandle(trimmed, limit, offset)
+            val total = if (sortByRating) userRepository.countShortRated(trimmed) else userRepository.countShortByHandle(trimmed)
+            return UserPage(items, total.toInt())
+        }
+        val pattern = "%${trimmed.lowercase().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")}%"
+        val items = if (sortByRating) {
+            userRepository.searchRated(pattern, limit, offset)
+        } else {
+            userRepository.searchByHandle(pattern, limit, offset)
+        }
+        val total = if (sortByRating) userRepository.countRated(pattern) else userRepository.countByHandle(pattern)
         return UserPage(items, total.toInt())
     }
 }

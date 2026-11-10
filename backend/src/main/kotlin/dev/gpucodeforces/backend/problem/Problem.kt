@@ -8,6 +8,7 @@ import org.hibernate.annotations.JdbcTypeCode
 import org.hibernate.type.SqlTypes
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Query
+import org.springframework.data.jpa.repository.Modifying
 import java.time.Instant
 import java.util.UUID
 
@@ -70,11 +71,16 @@ class ProblemVersion(
     override fun hashCode() = id.hashCode()
 }
 
-interface ProblemRepository : JpaRepository<Problem, String>
+interface ProblemRepository : JpaRepository<Problem, String> {
+    @Query("SELECT p.id FROM Problem p WHERE p.currentVersionId IS NOT NULL")
+    fun findActiveIds(): List<String>
+
+    @Modifying(flushAutomatically = true)
+    @Query("UPDATE Problem p SET p.currentVersionId = NULL WHERE p.id IN :ids")
+    fun unpublish(ids: Collection<String>): Int
+}
 
 interface ProblemVersionRepository : JpaRepository<ProblemVersion, UUID> {
     fun findByProblemIdAndContentHash(problemId: String, contentHash: String): ProblemVersion?
 
-    @Query("SELECT v FROM ProblemVersion v WHERE v.id IN (SELECT p.currentVersionId FROM Problem p)")
-    fun findCurrent(): List<ProblemVersion>
 }

@@ -13,8 +13,6 @@ class ProblemCatalog(
     private val problemRepository: ProblemRepository,
     private val jsonMapper: JsonMapper,
 ) {
-    fun currentVersions(): List<ProblemVersion> = versionRepository.findCurrent()
-
     fun currentVersion(problemId: String): ProblemVersion? =
         problemRepository.findById(problemId).orElse(null)?.currentVersionId?.let { versionRepository.findById(it).orElse(null) }
 

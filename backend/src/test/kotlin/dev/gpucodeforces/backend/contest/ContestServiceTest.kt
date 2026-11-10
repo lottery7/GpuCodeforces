@@ -61,20 +61,6 @@ class ContestServiceTest {
     }
 
     @Test
-    fun `list sorts ascending by default and descending for finished`() {
-        val now = Instant.now()
-        val earlyFinished = contestFixture(startAt = now.minus(2, ChronoUnit.DAYS), endAt = now.minus(1, ChronoUnit.DAYS))
-        val lateFinished = contestFixture(startAt = now.minus(1, ChronoUnit.DAYS), endAt = now.minusSeconds(60))
-        given(contestRepository.findAll()).willReturn(listOf(earlyFinished, lateFinished))
-
-        val ascending = service.list(null, null, mine = false, viewer = null)
-        val descending = service.list(null, "finished", mine = false, viewer = null)
-
-        assertThat(ascending).containsExactly(earlyFinished, lateFinished)
-        assertThat(descending).containsExactly(lateFinished, earlyFinished)
-    }
-
-    @Test
     fun `create rejects a start time that is not in the future`() {
         assertThatThrownBy {
             service.create(input(setOf(UUID.randomUUID().toString()), startAt = Instant.now().minusSeconds(1)), user())

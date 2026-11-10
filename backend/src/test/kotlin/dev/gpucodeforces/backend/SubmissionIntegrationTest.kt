@@ -125,6 +125,7 @@ class SubmissionIntegrationTest {
     )
 
     @Test
+    @AllowFullScan("problems", "FROM gpucodeforces\\.problems p", "Exact catalogue totals and tags inspect current ids; only page metadata reaches the application")
     fun `submit, judge events through RabbitMQ, history, results, recheck, contest, example and console`() {
         val (alice, aliceCookie) = register("alice")
         val (bob, bobCookie) = register("bob")
@@ -174,6 +175,13 @@ class SubmissionIntegrationTest {
         assertThat(vectorAdd.lastStatus).isEqualTo("wrong_answer")
         assertThat(vectorAdd.bestSubmissionId).isEqualTo(first.id)
         assertThat(vectorAdd.recordTimeMs).isEqualByComparingTo(BigDecimal("1.5"))
+        val solvedPage = client.get().uri("/problems?solved=true&sort=bestTime&limit=1").cookie("session", aliceCookie).exchange()
+            .expectStatus().isOk.expectBody(ListProblems200Response::class.java).returnResult().responseBody!!
+        assertThat(solvedPage.total).isEqualTo(1)
+        assertThat(solvedPage.items.map { it.id }).containsExactly("vector_add")
+        val unsolvedPage = client.get().uri("/problems?solved=false&limit=1").cookie("session", aliceCookie).exchange()
+            .expectStatus().isOk.expectBody(ListProblems200Response::class.java).returnResult().responseBody!!
+        assertThat(unsolvedPage.items.map { it.id }).containsExactly("matmul_host")
         val leaders = client.get().uri("/problems/vector_add/leaders").exchange()
             .expectBody(Array<ListProblemLeaders200ResponseInner>::class.java).returnResult().responseBody!!
         assertThat(leaders.map { it.user.handle to it.rank }).containsExactly("alice" to 1)

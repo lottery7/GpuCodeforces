@@ -49,6 +49,7 @@ class ContestRatingFinalizerIntegrationTest {
     lateinit var ratingHistoryRepository: RatingHistoryRepository
 
     @Test
+    @AllowFullScan("users", "UPDATE gpucodeforces\\.users u SET rank", "Finalization recomputes ranks for the entire rated population")
     fun `finalizing a past contest ties registered participants at the default rating, once`() {
         val alice = userRepository.save(User("alice_cuda", "alice_cuda@example.com", "hash"))
         val bob = userRepository.save(User("bob_cuda", "bob_cuda@example.com", "hash"))

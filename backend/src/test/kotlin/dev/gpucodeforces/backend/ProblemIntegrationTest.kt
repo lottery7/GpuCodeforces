@@ -33,6 +33,7 @@ import tools.jackson.databind.json.JsonMapper
 import java.math.BigDecimal
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.UUID
 import java.time.Instant
 import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
@@ -103,6 +104,8 @@ class ProblemIntegrationTest {
             .exchange()
 
     @Test
+    @AllowFullScan("problems", "select \\w+\\.id from gpucodeforces\\.problems .*current_version_id is not null", "Synchronization compares only active problem ids; failed packages remain present")
+    @AllowFullScan("problems", "FROM gpucodeforces\\.problems p", "Exact catalogue totals and context-wide tags inspect current ids, never historical version payloads")
     fun `bank, drafts, problem page, contest versions and resync`() {
         val (author, authorCookie) = register("problem_author")
         val (_, otherCookie) = register("problem_reader")
@@ -153,11 +156,18 @@ class ProblemIntegrationTest {
         val stalePins = jdbc.queryForObject(
             """
             SELECT count(*) FROM gpucodeforces.contest_problems cp JOIN gpucodeforces.problems p ON p.id = cp.problem_id
-            WHERE p.current_version_id IS NOT NULL AND cp.problem_version_id <> p.current_version_id
+            WHERE cp.contest_id = ? AND p.current_version_id IS NOT NULL AND cp.problem_version_id <> p.current_version_id
             """,
             Long::class.java,
+            UUID.fromString(contest.id),
         )
         assertThat(stalePins).isZero()
+
+        // A broken package remains present: failed validation must not unpublish its old version.
+        statement.writeText("invalid front matter")
+        val invalid = syncService.sync()
+        assertThat(invalid.failed).containsKey("vector_add")
+        assertThat(list().items.map { it.title }).containsExactly("Сумма векторов")
 
         // The real setup: a clone of the problem repository with the packages in problems/. A directory in a
         // foreign format is reported as invalid instead of being skipped silently.

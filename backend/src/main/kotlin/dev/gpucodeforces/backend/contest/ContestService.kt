@@ -16,12 +16,15 @@ import dev.gpucodeforces.backend.user.UserRepository
 import dev.gpucodeforces.backend.user.toApiModel
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import org.springframework.data.domain.Sort
+import org.springframework.data.jpa.domain.Specification
 import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.time.Instant
 import java.util.UUID
 import dev.gpucodeforces.backend.api.model.ContestInput as ContestInputApi
+import jakarta.persistence.criteria.Predicate
 
 @Service
 class ContestService(
@@ -39,16 +42,30 @@ class ContestService(
         if (mine && viewer == null) throw UnauthorizedException("Нужен вход")
         val now = Instant.now()
         val trimmed = query?.trim()?.lowercase().orEmpty()
-        val filtered = contestRepository.findAll().filter { contest ->
-            (phase == null || contest.phaseAt(now).value == phase) &&
-                (!mine || contest.authors.any { it.id == viewer!!.id }) &&
-                (
-                    trimmed.isEmpty() ||
-                        contest.title.lowercase().contains(trimmed) ||
-                        contest.authors.any { it.handle.lowercase().contains(trimmed) }
-                    )
+        if (phase != null && ContestPhase.entries.none { it.value == phase }) return emptyList()
+        val filter = Specification<Contest> { root, criteria, builder ->
+            val conditions = mutableListOf<Predicate>()
+            when (phase) {
+                "upcoming" -> conditions += builder.greaterThan(root.get("startAt"), now)
+                "live" -> {
+                    conditions += builder.lessThanOrEqualTo(root.get("startAt"), now)
+                    conditions += builder.greaterThan(root.get("endAt"), now)
+                }
+                "finished" -> conditions += builder.lessThanOrEqualTo(root.get("endAt"), now)
+            }
+            if (mine) conditions += builder.isMember(viewer!!, root.get("authors"))
+            if (trimmed.isNotEmpty()) {
+                val pattern = "%${trimmed.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")}%"
+                val authorMatches = criteria.subquery(Int::class.javaObjectType)
+                val authors = authorMatches.correlate(root).join<Contest, User>("authors")
+                authorMatches.select(builder.literal(1))
+                    .where(builder.like(builder.lower(authors.get("handle")), pattern, '\\'))
+                conditions += builder.or(builder.like(builder.lower(root.get("title")), pattern, '\\'), builder.exists(authorMatches))
+            }
+            builder.and(*conditions.toTypedArray())
         }
-        return if (phase == "finished") filtered.sortedByDescending { it.startAt } else filtered.sortedBy { it.startAt }
+        val direction = if (phase == "finished") Sort.Direction.DESC else Sort.Direction.ASC
+        return contestRepository.findAll(filter, Sort.by(direction, "startAt", "id"))
     }
 
     @Transactional
@@ -74,6 +91,9 @@ class ContestService(
             .orElseThrow { NotFoundApiException("Контест не найден") }
 
     fun problemsOf(contestId: UUID): List<ContestProblem> = contestProblemRepository.findByIdContestIdOrderByPosition(contestId)
+
+    fun problemOf(contestId: UUID, problemId: String): ContestProblem? =
+        contestProblemRepository.findById(ContestProblemId(contestId, problemId)).orElse(null)
 
     fun isRegistered(contestId: UUID, userId: UUID): Boolean =
         contestRegistrationRepository.existsByIdContestIdAndIdUserId(contestId, userId)

@@ -7,7 +7,6 @@ import dev.gpucodeforces.backend.api.model.GetProblem200Response
 import dev.gpucodeforces.backend.api.model.ListProblemLeaders200ResponseInner
 import dev.gpucodeforces.backend.api.model.ListProblems200Response
 import dev.gpucodeforces.backend.auth.CurrentUser
-import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.submission.ExampleChecks
 import dev.gpucodeforces.backend.submission.ProblemResult
@@ -30,6 +29,7 @@ class ProblemsController(
     private val userService: UserService,
     private val userRepository: UserRepository,
     private val gpuProperties: GpuProperties,
+    private val problemListing: ProblemListing,
 ) : ProblemsApi {
     override fun listProblems(
         context: String,
@@ -42,19 +42,21 @@ class ProblemsController(
         offset: Int,
         limit: Int,
     ): ResponseEntity<ListProblems200Response> {
-        if (sort !in SORTS) throw BadRequestException("Неизвестная сортировка")
         val viewer = CurrentUser.resolve()
         val subject = userId?.let { userService.getById(it) } ?: viewer
         val problemContext = problemService.context(context, viewer)
-        val pool = problemService.problems(problemContext, viewer)
-        val tags = pool.flatMap { it.version.tags }.distinct().sorted()
-        val filtered = problemService.filter(pool, q, difficulty, tag)
-        val results = submissionStats.problemResults(scope(problemContext, filtered), subject?.id)
-        val items = filtered
-            .map { it.version.toApiModel(results.getValue(it.version.problemId)) }
-            .filter { solved == null || it.solved == solved }
-            .let { if (problemContext == ProblemContext.Practice) sorted(it, sort) else it }
-        return ResponseEntity.ok(ListProblems200Response(items.drop(offset).take(limit), items.size, tags))
+        val page = problemListing.page(problemContext, viewer, subject?.id, q, difficulty, tag, solved, sort, gpuProperties.profile, offset, limit)
+        val results = submissionStats.problemResults(ResultScope(
+            (problemContext as? ProblemContext.InContest)?.contest?.id,
+            page.items.associate { it.problemId to it.judgeHash }, gpuProperties.profile,
+        ), subject?.id)
+        val items = page.items.map { metadata ->
+            val result = results.getValue(metadata.problemId)
+            ProblemApiModel(metadata.problemId, metadata.code, metadata.title, ProblemApiModel.DifficultyEnum.fromValue(metadata.difficulty),
+                metadata.tags, result.solved, result.solvedCount, result.last?.id?.toString(), result.last?.status?.value,
+                result.best?.id?.toString(), result.best?.timeMs, result.record?.timeMs)
+        }
+        return ResponseEntity.ok(ListProblems200Response(items, page.total, page.tags))
     }
 
     override fun getProblem(id: String, context: String): ResponseEntity<GetProblem200Response> {
@@ -107,17 +109,7 @@ class ProblemsController(
         gpuProperties.profile,
     )
 
-    private fun sorted(items: List<ProblemApiModel>, sort: String): List<ProblemApiModel> {
-        val byCode = compareBy<ProblemApiModel> { it.code }
-        return when (sort) {
-            "difficulty" -> items.sortedWith(compareBy<ProblemApiModel> { ProblemPackageReader.DIFFICULTIES.indexOf(it.difficulty.value) }.then(byCode))
-            "bestTime" -> items.sortedWith(compareBy<ProblemApiModel, BigDecimal?>(nullsLast()) { it.bestTimeMs }.then(byCode))
-            else -> items.sortedWith(byCode)
-        }
-    }
-
     companion object {
-        private val SORTS = setOf("code", "difficulty", "bestTime")
         private const val LEADERS_LIMIT = 20
     }
 }
