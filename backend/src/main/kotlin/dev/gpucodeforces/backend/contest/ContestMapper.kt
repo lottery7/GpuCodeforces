@@ -31,6 +31,9 @@ fun Contest.toApiModel(
         registered,
         gpu,
     ).rulesMarkdown(rulesMarkdown)
+        .format(ContestApiModel.FormatEnum.fromValue(format))
+        .challengerId(challengerId?.toString())
+        .opponentId(opponentId?.toString())
 }
 
 private fun Instant.toOffsetDateTime(): OffsetDateTime = atOffset(ZoneOffset.UTC)

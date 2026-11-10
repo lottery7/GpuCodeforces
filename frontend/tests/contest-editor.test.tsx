@@ -15,7 +15,7 @@ function user(id: string, handle: string): User {
 }
 
 function problem(id: string, code: string, title: string): Problem {
-  return { id, code, title, difficulty: 'easy', tags: ['Массивы'], solved: false, solvedCount: 0, lastSubmissionId: null, lastStatus: null, bestSubmissionId: null, bestTimeMs: null, recordTimeMs: null };
+  return { id, code, title, difficulty: 'easy', format: 'standard', tags: ['Массивы'], solved: false, solvedCount: 0, lastSubmissionId: null, lastStatus: null, bestSubmissionId: null, bestTimeMs: null, recordTimeMs: null };
 }
 
 const creator = user('creator', 'creator_cuda');
@@ -31,7 +31,7 @@ function futureStart(days = 1) {
 
 function contest(): Contest {
   const startAt = futureStart();
-  return { id: 'round', title: 'Исходный контест', startAt, endAt: new Date(Date.parse(startAt) + 120 * 60000).toISOString(), authors: [creator, zeta], problemIds: ['add', 'reduce'], problemCount: 2, registered: false, gpu: 'NVIDIA A100' };
+  return { id: 'round', title: 'Исходный контест', format: 'standard', startAt, endAt: new Date(Date.parse(startAt) + 120 * 60000).toISOString(), authors: [creator, zeta], problemIds: ['add', 'reduce'], problemCount: 2, registered: false, gpu: 'NVIDIA A100' };
 }
 
 function open(path = '/contests/new') {
@@ -105,7 +105,7 @@ describe('Создание контеста', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Создать контест' }));
 
     await waitFor(() => expect(create).toHaveBeenCalledWith({
-      title: 'GPU Round', startAt, endAt: new Date(Date.parse(startAt) + 90 * 60000).toISOString(),
+      title: 'GPU Round', format: 'standard', startAt, endAt: new Date(Date.parse(startAt) + 90 * 60000).toISOString(),
       authorIds: [zeta.id, alpha.id], problemIds: ['transpose', 'reduce', 'add'],
     }));
     expect(await screen.findByText('Контест сохранен')).toBeVisible();
@@ -136,7 +136,7 @@ describe('Создание контеста', () => {
     expect(duration).toHaveValue(75);
     await userEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
     await waitFor(() => expect(update).toHaveBeenCalledWith(original.id, {
-      title: 'Мои изменения', startAt: original.startAt, endAt: new Date(Date.parse(original.startAt) + 75 * 60000).toISOString(),
+      title: 'Мои изменения', format: 'standard', startAt: original.startAt, endAt: new Date(Date.parse(original.startAt) + 75 * 60000).toISOString(),
       authorIds: [creator.id, alpha.id], problemIds: ['reduce', 'transpose'],
     }));
   });

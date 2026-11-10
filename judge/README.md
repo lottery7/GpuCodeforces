@@ -121,6 +121,11 @@ Thrust, CUB, cuBLAS, cuDNN, CUTLASS, cuRAND, driver API (`cuda.h`) и inline PTX
 
 Executor при старте сверяет версии CUDA, g++ и torch (`judge.executor.toolchain.expected-*`). При расхождении он не запустится. Строка с версиями пишется в каждый `JudgeResult.toolchain`, хэш тулчейна входит в ключ кэша компиляции.
 
+Heartbeat передает ту же строку в `ExecutorHeartbeat.toolchain`. Backend включает ее в ключ окружения
+эталонных замеров и принимает результат только при точном совпадении. Старый executor без этого поля
+и профиль со смешанными версиями не дают готовых эталонных времен. Mock передает
+`mock (no compiler, no GPU)` в heartbeat и результате.
+
 ## Логирование
 
 Каждая строка лога executor содержит `submissionId`, номер попытки и GPU (MDC: `submissionId`, `attempt`, `problem`, `executor`, `gpu`):

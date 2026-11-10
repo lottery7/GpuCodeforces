@@ -97,6 +97,7 @@ export default function ContestEditor() {
   if (!user) return <><PageHeader title={id ? 'Настройки контеста' : 'Новый контест'} /><LoginRequired returnTo={location.pathname + location.search}>Войдите, чтобы создать или изменить контест.</LoginRequired></>;
   if (id && contest.isPending) return <p className="loading" role="status">Загрузка контеста...</p>;
   if (contest.error && id && contest.data === undefined) return <><PageHeader title="Настройки контеста" /><ErrorMessage error={contest.error} /><button className="text-link" onClick={() => void contest.refetch()}>Повторить</button></>;
+  if (contest.data?.format === 'duel') return <><PageHeader title="Дуэль" /><p>Участники и общая задача назначаются при подборе.</p><Link className="btn secondary" to={`/contest/${encodeURIComponent(id ?? '')}`}>Открыть дуэль</Link></>;
   if (id && contest.data && (phaseOf(contest.data) !== 'upcoming' || !contest.data.authors.some(author => author.id === user.id))) return <><PageHeader title="Настройки недоступны" /><Empty>Изменять контест могут его авторы до начала соревнования.</Empty><Link className="btn secondary" to={`/contest/${encodeURIComponent(id)}`}>К контесту</Link></>;
   if (pool.error && pool.data === undefined || id && snapshots.error && snapshots.data === undefined) return <><PageHeader title={id ? 'Настройки контеста' : 'Новый контест'} /><ErrorMessage error={pool.error && pool.data === undefined ? pool.error : snapshots.error} /><button className="text-link" onClick={() => { void pool.refetch(); if (id) void snapshots.refetch(); }}>Повторить</button></>;
   if (!values || initialized.current !== formKey || pool.isPending || id && snapshots.isPending) return <p className="loading" role="status">Загрузка задач...</p>;
@@ -148,6 +149,7 @@ export default function ContestEditor() {
       endAt: end.toISOString(),
       authorIds: values.authors.map(author => author.id),
       problemIds: values.problemIds,
+      format: 'standard',
     });
   };
 

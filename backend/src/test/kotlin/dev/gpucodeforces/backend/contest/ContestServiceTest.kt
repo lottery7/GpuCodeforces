@@ -45,7 +45,11 @@ class ContestServiceTest {
         startAt: Instant = Instant.now().plus(1, ChronoUnit.DAYS),
         endAt: Instant = startAt.plus(1, ChronoUnit.HOURS),
         authors: MutableSet<User> = mutableSetOf(),
-    ) = Contest(id = UUID.randomUUID(), title = "Контест", startAt = startAt, endAt = endAt, gpu = "NVIDIA GeForce RTX 4090", authors = authors)
+        format: String = "standard",
+        challengerId: UUID? = null,
+        opponentId: UUID? = null,
+    ) = Contest(id = UUID.randomUUID(), title = "Контест", startAt = startAt, endAt = endAt,
+        gpu = "NVIDIA GeForce RTX 4090", authors = authors, format = format, challengerId = challengerId, opponentId = opponentId)
 
     private fun input(
         authorIds: Set<String>,
@@ -161,5 +165,40 @@ class ContestServiceTest {
 
         assertThat(visitorMarkdown).doesNotContain("vector-addition")
         assertThat(authorMarkdown).contains("vector-addition")
+    }
+
+    @Test
+    fun `generic contest creation rejects scheduled duels`() {
+        val challenger = user("challenger")
+        val opponent = user("opponent")
+        assertThatThrownBy { service.create(
+            input(setOf(challenger.id.toString())).format(ContestInputApi.FormatEnum.DUEL).opponentId(opponent.id.toString()),
+            challenger,
+        ) }.isInstanceOf(BadRequestException::class.java).hasMessageContaining("поиск соперника")
+        verify(contestRepository, never()).save(any(Contest::class.java))
+    }
+
+    @Test
+    fun `a duel only admits its two participants`() {
+        val challenger = user("challenger")
+        val opponent = user("opponent")
+        val contest = contestFixture(format = "duel", challengerId = challenger.id, opponentId = opponent.id)
+        given(contestRepository.findById(contest.id)).willReturn(Optional.of(contest))
+        given(contestRepository.findForUpdate(contest.id)).willReturn(contest)
+
+        assertThatThrownBy { service.register(contest.id.toString(), user("outsider")) }.isInstanceOf(ForbiddenException::class.java)
+        service.register(contest.id.toString(), opponent)
+        verify(contestRegistrationRepository).save(ContestRegistration(contest.id, opponent.id))
+    }
+
+    @Test
+    fun `existing duels cannot be edited through the contest API`() {
+        val challenger = user()
+        val opponent = user("opponent")
+        val contest = contestFixture(authors = mutableSetOf(challenger), format = "duel", challengerId = challenger.id, opponentId = opponent.id)
+        given(contestRepository.findById(contest.id)).willReturn(Optional.of(contest))
+
+        assertThatThrownBy { service.update(contest.id.toString(), input(setOf(challenger.id.toString())), challenger) }
+            .isInstanceOf(ForbiddenException::class.java).hasMessageContaining("нельзя редактировать")
     }
 }
