@@ -103,6 +103,10 @@ class Submission(
     @Column(name = "finished_at")
     var finishedAt: Instant? = null
 
+    /** Last sign of life: creation, acceptance by the gateway or a judge event; see SubmissionService.reportStuck. */
+    @Column(name = "updated_at", nullable = false)
+    var updatedAt: Instant = createdAt
+
     /** Id of the current judge job; a recheck must not be deduplicated by the gateway as the original. */
     val judgeSubmissionId: String get() = if (recheckCount == 0) id.toString() else "$id$RECHECK_SEPARATOR$recheckCount"
 
@@ -137,6 +141,9 @@ interface SubmissionRepository : JpaRepository<Submission, UUID> {
 
     @Query("SELECT s FROM Submission s WHERE s.status = :status AND s.jobId IS NULL AND s.createdAt < :before ORDER BY s.createdAt")
     fun findUnsent(status: SubmissionStatus, before: Instant): List<Submission>
+
+    @Query("SELECT s FROM Submission s WHERE s.status IN :statuses AND s.jobId IS NOT NULL AND s.updatedAt < :before")
+    fun findStuck(statuses: Collection<SubmissionStatus>, before: Instant): List<Submission>
 
     fun countByUserIdAndStatusIn(userId: UUID, statuses: Collection<SubmissionStatus>): Long
 

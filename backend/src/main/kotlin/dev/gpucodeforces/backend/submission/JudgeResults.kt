@@ -22,8 +22,20 @@ fun JudgeResult.diagnostic(): String = buildList {
     compileLog?.takeIf { it.isNotBlank() }?.let(::add)
     tests.firstOrNull { it.verdict != Verdict.ACCEPTED }?.let { test ->
         val name = if (test.sample) "пример" else "тест ${test.index}"
-        add(listOfNotNull("${name.replaceFirstChar(Char::uppercase)}: ${test.verdict.name}", test.message, test.debug).joinToString("\n"))
+        add(listOfNotNull("${name.replaceFirstChar(Char::uppercase)}: ${test.verdict.label()}", test.message, test.debug).joinToString("\n"))
     }
 }.joinToString("\n\n").take(MAX_DIAGNOSTIC_LENGTH)
+
+private fun Verdict.label(): String = when (this) {
+    Verdict.ACCEPTED -> "пройден"
+    Verdict.WRONG_ANSWER -> "неверный ответ"
+    Verdict.TIME_LIMIT_EXCEEDED -> "превышен лимит времени"
+    Verdict.MEMORY_LIMIT_EXCEEDED -> "превышен лимит памяти"
+    Verdict.RUNTIME_ERROR -> "ошибка выполнения"
+    Verdict.COMPILATION_ERROR -> "ошибка компиляции"
+    Verdict.POLICY_VIOLATION -> "нарушены ограничения задачи"
+    Verdict.INTERNAL_ERROR -> "сбой проверки"
+    Verdict.CANCELLED -> "проверка отменена"
+}
 
 private const val MAX_DIAGNOSTIC_LENGTH = 16 * 1024

@@ -53,6 +53,30 @@
   практики этой версии задачи до начала контеста, без него — лучшее время в контесте.
 - До 5 непроверенных посылок на пользователя (`platform.judge.max-pending-per-user`).
 
+## Логи и зависания
+
+Каждая строка лога backend содержит `[sub=<ID посылки> user=<ник>]`. ID посылки — тот же, что в логах
+gateway и executor (у повторной проверки `<id>.r<n>`), поэтому путь одной посылки виден целиком:
+
+```
+INFO [sub=98cc… user=admin] SubmissionService : Submission created: problem=vector_add version=… contest=practice gpu=rtx3060
+INFO [sub=98cc… user=admin] SubmissionService : Judge gateway accepted 98cc… as job ebf4…
+INFO [sub=98cc… user=]      SubmissionService : Status queued -> compiling (judge COMPILING a1/#1 on gpu-node-1)
+INFO [sub=98cc… user=]      SubmissionService : Status compiling -> checking (judge TESTING a1/#2 on gpu-node-1)
+INFO [sub=98cc… user=]      SubmissionService : Verdict ACCEPTED -> accepted: passed 5/5 … judged in 2724 ms on NVIDIA GeForce RTX 3060
+```
+
+- Запросы к API: изменяющие, ошибочные и медленные (от 2 секунд) — INFO/WARN/ERROR с кодом и временем,
+  обычные чтения — DEBUG (`LOGGING_LEVEL_DEV_GPUCODEFORCES_BACKEND_COMMON=DEBUG`).
+- Gateway недоступен или отклонил посылку — WARN/ERROR с ответом gateway; `system_error` от судьи — ERROR.
+- Отброшенные события (старая проверка, чужое задание, повтор после вердикта) и перезапуск задания судьёй
+  пишутся с причиной; каждое событие целиком — DEBUG (`LOGGING_LEVEL_DEV_GPUCODEFORCES_BACKEND_SUBMISSION=DEBUG`).
+- Ошибка обработки события — ERROR со stack trace, событие возвращается в очередь.
+- Непредвиденные исключения в API — ERROR со stack trace, клиенту — только «Внутренняя ошибка сервера».
+- **Зависание:** раз в минуту backend ищет посылки, принятые gateway, о которых судья молчит дольше
+  `platform.judge.stuck-after` (10 минут), и пишет WARN со статусом, заданием и последним событием.
+  Дальше смотрите `GET /api/v1/queues` gateway (есть ли живой executor профиля) и лог executor по ID.
+
 ## Администрирование
 
 Администраторы — пользователи с никами из `ADMIN_HANDLES` (через запятую). Страница `/admin`

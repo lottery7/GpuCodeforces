@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
 import org.springframework.web.client.RestClientException
 import org.springframework.web.client.RestClientResponseException
+import tools.jackson.databind.json.JsonMapper
 import java.time.Duration
 
 @ConfigurationProperties("platform.judge")
@@ -19,6 +20,8 @@ data class JudgeProperties(
     val sendTimeout: Duration = Duration.ofMinutes(10),
     /** How long "check the example" waits for the verdict. */
     val exampleTimeout: Duration = Duration.ofMinutes(2),
+    /** A submission accepted by the gateway without any judge event for this long is reported as possibly stuck. */
+    val stuckAfter: Duration = Duration.ofMinutes(10),
     /** Unfinished submissions one user may have at a time. */
     val maxPendingPerUser: Int = 5,
 )
@@ -35,7 +38,7 @@ sealed interface SendOutcome {
 
 /** Client of the judge gateway `POST /api/v1/submissions` (judge/docs/openapi.yaml). Verdicts come back via RabbitMQ. */
 @Component
-class JudgeGateway(properties: JudgeProperties, builder: RestClient.Builder) {
+class JudgeGateway(properties: JudgeProperties, builder: RestClient.Builder, private val jsonMapper: JsonMapper) {
     private val client = builder
         .baseUrl(properties.gatewayUrl)
         .requestFactory(
@@ -49,7 +52,8 @@ class JudgeGateway(properties: JudgeProperties, builder: RestClient.Builder) {
     fun send(request: SubmissionRequest): SendOutcome = try {
         val accepted = client.post().uri("/api/v1/submissions")
             .contentType(MediaType.APPLICATION_JSON)
-            .body(request)
+            // As bytes: the gateway limits request size and answers 411 to a body without Content-Length.
+            .body(jsonMapper.writeValueAsBytes(request))
             .retrieve()
             .body(SubmissionAccepted::class.java)!!
         SendOutcome.Accepted(accepted.jobId)

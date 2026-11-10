@@ -260,6 +260,12 @@ class SubmissionIntegrationTest {
         /** Stands in for the judge gateway: records requests and accepts them as job `job-<submissionId>`. */
         private val gateway: HttpServer = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
             createContext("/api/v1/submissions") { exchange ->
+                // Like the real gateway, which limits the request size before reading it.
+                if (exchange.requestHeaders.getFirst("Content-Length") == null) {
+                    exchange.sendResponseHeaders(411, -1)
+                    exchange.close()
+                    return@createContext
+                }
                 val request = gatewayJson.readValue(exchange.requestBody.readAllBytes(), SubmissionRequest::class.java)
                 gatewayRequests += request
                 val body = gatewayJson.writeValueAsBytes(

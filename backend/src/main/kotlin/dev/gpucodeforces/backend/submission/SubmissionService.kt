@@ -17,10 +17,12 @@ import dev.gpucodeforces.judge.api.SpecValidator
 import dev.gpucodeforces.judge.api.SubmissionRequest
 import dev.gpucodeforces.judge.api.Verdict
 import org.slf4j.LoggerFactory
+import org.slf4j.MDC
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
 import java.math.BigDecimal
+import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 import dev.gpucodeforces.judge.api.SubmissionStatus as JudgeStatus
@@ -69,6 +71,13 @@ class SubmissionService(
                 ),
             )
         }!!
+        withSubmission(submission.id) {
+            log.info(
+                "Submission created: problem={} version={} contest={} gpu={} code={} bytes",
+                submission.problemId, submission.problemVersionId, submission.contestId ?: "practice", submission.gpuProfile,
+                code.toByteArray().size,
+            )
+        }
         return send(submission)
     }
 
@@ -80,7 +89,9 @@ class SubmissionService(
         val submission = transactionTemplate.execute {
             val submission = submissionRepository.findForUpdate(get(id).id)!!
             if (submission.userId != author.id) throw ForbiddenException("Повторить проверку может только автор посылки")
-            if (submission.status != SubmissionStatus.SYSTEM_ERROR && submission.status != SubmissionStatus.MEASUREMENT_ERROR) throw BadRequestException("Повторная проверка доступна только после сбоя проверки")
+            if (submission.status != SubmissionStatus.SYSTEM_ERROR && submission.status != SubmissionStatus.MEASUREMENT_ERROR) {
+                throw BadRequestException("Повторная проверка доступна только после сбоя проверки")
+            }
             submission.recheckCount++
             submission.status = SubmissionStatus.QUEUED
             submission.timeMs = null
@@ -91,40 +102,88 @@ class SubmissionService(
             submission.eventAttempt = 0
             submission.eventSeq = 0
             submission.finishedAt = null
+            submission.updatedAt = Instant.now()
             submission
         }!!
+        withSubmission(submission.id) { log.info("Recheck #{} requested, judge id {}", submission.recheckCount, submission.judgeSubmissionId) }
         return send(submission)
     }
 
     @Scheduled(fixedDelayString = "\${platform.judge.resend-interval:PT15S}")
     fun resendUnsent() {
-        submissionRepository.findUnsent(SubmissionStatus.QUEUED, Instant.now().minusSeconds(RESEND_AFTER_SECONDS)).forEach { send(it) }
+        val unsent = submissionRepository.findUnsent(SubmissionStatus.QUEUED, Instant.now().minusSeconds(RESEND_AFTER_SECONDS))
+        if (unsent.isNotEmpty()) log.info("Resending {} submission(s) the judge gateway has not accepted yet", unsent.size)
+        unsent.forEach { send(it) }
+    }
+
+    /**
+     * Hang detector: a submission the gateway accepted but the judge has not reported on for
+     * `platform.judge.stuck-after` is logged with what is known about it, on every check until it moves.
+     */
+    @Scheduled(initialDelayString = "PT1M", fixedDelayString = "\${platform.judge.stuck-check-interval:PT1M}")
+    fun reportStuck() {
+        submissionRepository.findStuck(SubmissionStatus.PENDING, Instant.now().minus(judgeProperties.stuckAfter)).forEach { submission ->
+            withSubmission(submission.id) {
+                log.warn(
+                    "No news from the judge for {} min: status={} job={} lastEvent=a{}/#{} judgeId={}. Check the gateway " +
+                        "(GET /api/v1/queues: live executors of profile {}) and the executor log for this judge id",
+                    Duration.between(submission.updatedAt, Instant.now()).toMinutes(), submission.status.value, submission.jobId,
+                    submission.eventAttempt, submission.eventSeq, submission.judgeSubmissionId, submission.gpuProfile,
+                )
+            }
+        }
     }
 
     /** Applies one judge event; events are unordered and may repeat, see [JudgeEvent]. */
     fun apply(event: JudgeEvent) {
         val id = event.submissionId.substringBefore(Submission.RECHECK_SEPARATOR)
-        val uuid = runCatching { UUID.fromString(id) }.getOrNull() ?: return log.warn("Judge event for unknown submission {}", event.submissionId)
-        transactionTemplate.executeWithoutResult {
-            val submission = submissionRepository.findForUpdate(uuid) ?: return@executeWithoutResult log.warn("Judge event for missing submission {}", uuid)
-            // Events of an earlier recheck, of a job the gateway did not answer us with, or after the verdict.
-            if (event.submissionId != submission.judgeSubmissionId || submission.status.terminal) return@executeWithoutResult
-            if (submission.jobId != null && submission.jobId != event.jobId) return@executeWithoutResult
-            submission.jobId = event.jobId
-            if (event.status == JudgeStatus.FINISHED) {
-                finish(submission, event)
-            } else if (compareValues(event.attempt, submission.eventAttempt).let { it > 0 || it == 0 && event.seq > submission.eventSeq }) {
-                submission.eventAttempt = event.attempt
-                submission.eventSeq = event.seq
-                submission.status = when (event.status) {
-                    JudgeStatus.QUEUED -> SubmissionStatus.QUEUED
-                    JudgeStatus.COMPILING, JudgeStatus.PREPARING -> SubmissionStatus.COMPILING
-                    JudgeStatus.TESTING, JudgeStatus.FINISHED -> SubmissionStatus.CHECKING
-                }
-                event.progress?.let {
-                    submission.totalTests = it.totalTests
-                    submission.passedTests = it.currentTest - 1
-                }
+        val uuid = runCatching { UUID.fromString(id) }.getOrNull()
+            ?: return log.warn("Judge event for an id the backend never issued: {} (job {}, {})", event.submissionId, event.jobId, event.status)
+        withSubmission(uuid) {
+            log.debug(
+                "Judge event {} a{}/#{} job={} from {} progress={}", event.status, event.attempt, event.seq, event.jobId, event.source,
+                event.progress?.let { "${it.currentTest}/${it.totalTests}" },
+            )
+            transactionTemplate.executeWithoutResult { applyLocked(uuid, event) }
+        }
+    }
+
+    private fun applyLocked(uuid: UUID, event: JudgeEvent) {
+        val submission = submissionRepository.findForUpdate(uuid)
+            ?: return log.warn("Judge event {} for a submission that does not exist", event.status)
+        when {
+            event.submissionId != submission.judgeSubmissionId ->
+                return log.info("Ignoring {} of an earlier check {} (current {})", event.status, event.submissionId, submission.judgeSubmissionId)
+            submission.status.terminal ->
+                return log.debug("Ignoring {} a{}/#{}: the verdict is already stored", event.status, event.attempt, event.seq)
+            submission.jobId != null && submission.jobId != event.jobId ->
+                return log.warn("Ignoring {} of job {}: the gateway accepted this submission as job {}", event.status, event.jobId, submission.jobId)
+        }
+        submission.jobId = event.jobId
+        submission.updatedAt = Instant.now()
+        if (event.status == JudgeStatus.FINISHED) {
+            finish(submission, event)
+        } else if (compareValues(event.attempt, submission.eventAttempt).let { it > 0 || it == 0 && event.seq > submission.eventSeq }) {
+            if (event.attempt > submission.eventAttempt && submission.eventAttempt > 0) {
+                log.warn("The judge restarted the job: attempt {} after {} (executor crash or retry)", event.attempt, submission.eventAttempt)
+            }
+            val previous = submission.status
+            submission.eventAttempt = event.attempt
+            submission.eventSeq = event.seq
+            submission.status = when (event.status) {
+                JudgeStatus.QUEUED -> SubmissionStatus.QUEUED
+                JudgeStatus.COMPILING, JudgeStatus.PREPARING -> SubmissionStatus.COMPILING
+                JudgeStatus.TESTING, JudgeStatus.FINISHED -> SubmissionStatus.CHECKING
+            }
+            event.progress?.let {
+                submission.totalTests = it.totalTests
+                submission.passedTests = it.currentTest - 1
+            }
+            if (previous != submission.status) {
+                log.info(
+                    "Status {} -> {} (judge {} a{}/#{} on {})",
+                    previous.value, submission.status.value, event.status, event.attempt, event.seq, event.source,
+                )
             }
         }
     }
@@ -140,9 +199,16 @@ class SubmissionService(
         }
         submission.diagnostic = result.diagnostic()
         submission.finishedAt = event.timestamp
+        val format = "Verdict {} -> {}: passed {}/{} failedTest={} time={} ms, judged in {} ms on {}: {}"
+        val args = arrayOf<Any?>(
+            result.verdict, submission.status.value, submission.passedTests, submission.totalTests ?: "?", result.failedTest,
+            result.maxTimeMs, result.judgeTimeMs, result.gpu?.name ?: event.source, result.message,
+        )
+        // A judge failure is not the contestant's fault: it has to stand out in the log.
+        if (submission.status == SubmissionStatus.SYSTEM_ERROR) log.error(format, *args) else log.info(format, *args)
     }
 
-    private fun send(submission: Submission): Submission {
+    private fun send(submission: Submission): Submission = withSubmission(submission.id) {
         val request = SubmissionRequest(
             submissionId = submission.judgeSubmissionId,
             problem = problemCatalog.spec(problemCatalog.versions(listOf(submission.problemVersionId)).getValue(submission.problemVersionId)),
@@ -150,24 +216,28 @@ class SubmissionService(
             gpuProfile = submission.gpuProfile,
         )
         val outcome = judgeGateway.send(request)
-        return transactionTemplate.execute {
+        transactionTemplate.execute {
             val current = submissionRepository.findForUpdate(submission.id)!!
             if (current.judgeSubmissionId != request.submissionId || current.status.terminal) return@execute current
             when (outcome) {
-                is SendOutcome.Accepted -> if (current.jobId == null) current.jobId = outcome.jobId
+                is SendOutcome.Accepted -> if (current.jobId == null) {
+                    current.jobId = outcome.jobId
+                    current.updatedAt = Instant.now()
+                    log.info("Judge gateway accepted {} as job {}", request.submissionId, outcome.jobId)
+                }
                 is SendOutcome.Rejected -> {
-                    log.error("Judge gateway rejected submission {}: {}", request.submissionId, outcome.reason)
+                    log.error("Judge gateway rejected {}: {}", request.submissionId, outcome.reason)
                     current.status = SubmissionStatus.SYSTEM_ERROR
                     current.diagnostic = "Проверяющая система отклонила посылку."
                     current.finishedAt = Instant.now()
                 }
                 is SendOutcome.Retry -> if (current.createdAt.isBefore(Instant.now().minus(judgeProperties.sendTimeout))) {
-                    log.error("Judge gateway did not accept submission {} in time: {}", request.submissionId, outcome.reason)
+                    log.error("Judge gateway did not accept {} within {}, giving up: {}", request.submissionId, judgeProperties.sendTimeout, outcome.reason)
                     current.status = SubmissionStatus.SYSTEM_ERROR
                     current.diagnostic = "Проверяющая система недоступна. Повторите проверку позже."
                     current.finishedAt = Instant.now()
                 } else {
-                    log.warn("Judge gateway is not available for submission {}, will retry: {}", request.submissionId, outcome.reason)
+                    log.warn("Judge gateway did not accept {}, will retry: {}", request.submissionId, outcome.reason)
                 }
             }
             current
@@ -183,7 +253,12 @@ class SubmissionService(
         return context
     }
 
+    /** Every line logged inside carries the submission id (`sub` in the log pattern). */
+    private fun <T> withSubmission(id: UUID, block: () -> T): T = MDC.putCloseable(SUBMISSION_MDC, id.toString()).use { block() }
+
     companion object {
+        const val SUBMISSION_MDC = "submission"
+
         /** Submissions younger than this are still being sent by the request that created them. */
         private const val RESEND_AFTER_SECONDS = 10L
 
