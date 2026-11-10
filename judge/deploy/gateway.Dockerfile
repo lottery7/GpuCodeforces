@@ -7,6 +7,8 @@ COPY gradlew settings.gradle.kts build.gradle.kts gradle.properties ./
 COPY gradle gradle
 # warm the Gradle/plugin cache in its own layer (project dirs must exist for settings.gradle.kts)
 RUN mkdir -p backend judge/judge-api judge/judge-gateway judge/judge-executor && ./gradlew --no-daemon -q help
+# the controllers are generated from the API spec at build time
+COPY judge/docs/openapi.yaml judge/docs/openapi.yaml
 COPY judge/judge-api judge/judge-api
 COPY judge/judge-gateway judge/judge-gateway
 COPY judge/judge-executor judge/judge-executor
