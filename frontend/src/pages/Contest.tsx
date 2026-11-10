@@ -4,8 +4,8 @@ import { Link, useLocation, useParams, useSearchParams } from 'react-router';
 import { api } from '../api/client';
 import type { Problem } from '../api/types';
 import { useSession } from '../auth';
-import { Empty, ErrorMessage, Markdown, PageHeader, Status, Tabs, TimeValue, UserLink } from '../ui';
-import { dateTime, difficultyLabels, phaseOf, problemPath, statusLabels } from '../utils';
+import { Empty, ErrorMessage, Markdown, PageHeader, Status, Tabs, UserLink } from '../ui';
+import { dateTime, difficultyLabels, phaseOf, problemPath, solveTime, statusLabels } from '../utils';
 
 function countdown(value: string, now: number) {
   const seconds = Math.max(0, Math.ceil((Date.parse(value) - now) / 1000));
@@ -117,20 +117,19 @@ export default function Contest() {
       {tasks.error && <div><ErrorMessage error={tasks.error} /><button className="text-link" onClick={() => void tasks.refetch()}>Повторить</button></div>}
       {selected === 'tasks' && tasks.data && <>
         {phase === 'finished' && <p className="notice">Контест завершен. На странице задачи можно перейти к решению в практике.</p>}
-        {tasks.data.length ? <div className="table-wrap"><table className="data-table" aria-label="Задачи соревнования"><thead><tr><th>Задача</th><th>Сложность</th>{user && <><th>Ваш статус</th><th>Ваше лучшее время, мс</th></>}<th>Рекорд контеста, мс</th></tr></thead><tbody>{tasks.data.map((problem, index) => <tr key={problem.id}>
+        {tasks.data.length ? <div className="table-wrap"><table className="data-table" aria-label="Задачи соревнования"><thead><tr><th>Задача</th><th>Сложность</th>{user && <th>Ваш статус</th>}</tr></thead><tbody>{tasks.data.map((problem, index) => <tr key={problem.id}>
           <td><Link to={problemPath(problem.id, id)}>{taskLabel(index)}. {problem.title}</Link></td>
           <td>{difficultyLabels[problem.difficulty]}</td>
-          {user && <><td><PersonalStatus problem={problem} /></td><td>{problem.bestSubmissionId && problem.bestTimeMs !== null ? <Link to={`/submission/${encodeURIComponent(problem.bestSubmissionId)}`}><TimeValue value={problem.bestTimeMs} /></Link> : '-'}</td></>}
-          <td><TimeValue value={problem.recordTimeMs} /></td>
+          {user && <td><PersonalStatus problem={problem} /></td>}
         </tr>)}</tbody></table></div> : <Empty>В контесте пока нет задач.</Empty>}
       </>}
       {selected === 'standings' && <>
         <p className="small muted">{phase === 'finished' ? 'Итоговая таблица.' : 'Результаты обновляются после проверки посылок.'}</p>
         {standings.isPending && <p className="loading" role="status">Загрузка таблицы...</p>}
         {standings.error && <div><ErrorMessage error={standings.error} /><button className="text-link" onClick={() => void standings.refetch()}>Повторить</button></div>}
-        {standings.data && (standings.data.length ? <div className="table-wrap"><table className="data-table" aria-label="Таблица контеста"><thead><tr><th>Место</th><th>Участник</th><th>Решено</th><th>Сумма ускорений</th>{columns.map((problem, index) => <th key={problem.id}><Link title={problem.title} to={problemPath(problem.id, id)}>{taskLabel(index)}, мс</Link></th>)}</tr></thead><tbody>{standings.data.map(row => <tr key={row.user.id} className={row.user.id === user?.id ? 'own-row' : undefined}>
-          <td>{row.rank}</td><td><UserLink user={row.user} />{row.user.id === user?.id && <span className="small muted"> вы</span>}</td><td>{row.solved}</td><td>{row.speedup.toFixed(3)}x</td>
-          {columns.map(problem => <td key={problem.id}>{row.user.id === user?.id && problem.bestSubmissionId && row.times[problem.id] !== undefined ? <Link to={`/submission/${encodeURIComponent(problem.bestSubmissionId)}`}><TimeValue value={row.times[problem.id]} /></Link> : <TimeValue value={row.times[problem.id]} />}</td>)}
+        {standings.data && (standings.data.length ? <div className="table-wrap"><table className="data-table" aria-label="Таблица контеста"><thead><tr><th>Место</th><th>Участник</th><th>Решено</th><th>Время</th>{columns.map((problem, index) => <th key={problem.id}><Link title={problem.title} to={problemPath(problem.id, id)}>{taskLabel(index)}</Link></th>)}</tr></thead><tbody>{standings.data.map(row => <tr key={row.user.id} className={row.user.id === user?.id ? 'own-row' : undefined}>
+          <td>{row.rank}</td><td><UserLink user={row.user} />{row.user.id === user?.id && <span className="small muted"> вы</span>}</td><td>{row.solved}</td><td className="mono">{solveTime(row.totalSeconds)}</td>
+          {columns.map(problem => <td key={problem.id} className="mono">{row.times[problem.id] === undefined ? '-' : solveTime(row.times[problem.id])}</td>)}
         </tr>)}</tbody></table></div> : <Empty>Результатов пока нет.</Empty>)}
       </>}
     </>}

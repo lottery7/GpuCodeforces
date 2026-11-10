@@ -100,7 +100,24 @@ describe('Личные результаты контеста', () => {
     const table = await screen.findByRole('table', { name: 'Задачи соревнования' });
     expect(within(table).getByRole('link', { name: 'A. Сложение векторов' })).toHaveAttribute('href', '/problem/vector-add?contest=cuda-round');
     expect(within(table).getByRole('link', { name: 'Принято' })).toHaveAttribute('href', '/submission/best');
-    expect(within(table).getByRole('link', { name: '0.1234' })).toHaveAttribute('href', '/submission/best');
+    // GPU time does not count in a contest, so the task list does not show it.
+    expect(within(table).queryByText('0.1234')).not.toBeInTheDocument();
     expect(within(table).getByRole('link', { name: `Последняя: ${label}` })).toHaveAttribute('href', '/submission/latest');
+  });
+});
+
+describe('Таблица контеста', () => {
+  it('ранжирует по решенным задачам и времени сдачи без времени GPU', async () => {
+    vi.spyOn(api, 'getContest').mockResolvedValue(contest('live'));
+    vi.spyOn(api, 'allProblems').mockResolvedValue([problem]);
+    vi.spyOn(api, 'contestStandings').mockResolvedValue([{
+      rank: 1, user: { id: 'alice', handle: 'alice', rating: null, rank: null, ratingDelta: null, ratingContestId: null },
+      solved: 1, totalSeconds: 4512, times: { 'vector-add': 4512 },
+    }]);
+    open('/contest/cuda-round?tab=standings');
+    const table = await screen.findByRole('table', { name: 'Таблица контеста' });
+    expect(within(table).getByRole('columnheader', { name: 'Время' })).toBeVisible();
+    expect(within(table).queryByText(/ускорен/i)).not.toBeInTheDocument();
+    expect(within(table).getAllByText('1:15:12')).toHaveLength(2);
   });
 });

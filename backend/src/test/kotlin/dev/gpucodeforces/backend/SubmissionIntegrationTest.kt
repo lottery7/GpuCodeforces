@@ -205,7 +205,7 @@ class SubmissionIntegrationTest {
         assertThat(exampleResult.diagnostic).contains("Неверный ответ")
         assertThat(gatewayRequests).isEmpty()
 
-        // Contest: registration and a live contest are required; the practice record is the baseline.
+        // Contest: registration and a live contest are required.
         val startAt = Instant.now().plusSeconds(2)
         val contest = client.post().uri("/contests").contentType(MediaType.APPLICATION_JSON).cookie("session", aliceCookie)
             .body(ContestInput("Раунд", startAt.atOffset(ZoneOffset.UTC), startAt.plus(1, ChronoUnit.HOURS).atOffset(ZoneOffset.UTC), setOf(alice.id), setOf("vector_add")))
@@ -221,8 +221,10 @@ class SubmissionIntegrationTest {
             .expectBody(Array<GetContestStandings200ResponseInner>::class.java).returnResult().responseBody!!
         assertThat(standings.map { it.user.id }).containsExactly(bob.id)
         assertThat(standings.single().solved).isEqualTo(1)
-        assertThat(standings.single().speedup).isEqualByComparingTo(BigDecimal("0.75"))
-        assertThat(standings.single().times["vector_add"]).isEqualByComparingTo(BigDecimal("2.0"))
+        // Solve time runs from the start to when the accepted submission was sent, not to its verdict.
+        val sentAfterStart = Duration.between(contest.startAt.toInstant(), contestSubmission.createdAt.toInstant()).seconds.toInt()
+        assertThat(standings.single().times).containsExactlyEntriesOf(mapOf("vector_add" to sentAfterStart))
+        assertThat(standings.single().totalSeconds).isEqualTo(sentAfterStart)
 
         val profile = client.get().uri("/users/${alice.id}").exchange()
             .expectBody(GetUserProfile200Response::class.java).returnResult().responseBody!!

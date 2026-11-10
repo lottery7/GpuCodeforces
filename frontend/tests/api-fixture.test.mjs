@@ -100,13 +100,12 @@ describe('Fixture HTTP API', () => {
     })).status).toBe(200);
   });
 
-  it('hides upcoming tasks and reference times from ordinary visitors', async () => {
+  it('hides upcoming tasks from ordinary visitors', async () => {
     const author = await login('author_cuda');
     const hidden = (await request('/contests/weekly-13')).body;
     expect(hidden.problemCount).toBe(3);
     expect(hidden.problemIds).toEqual([]);
     expect(hidden.rulesMarkdown).not.toContain('Сложение векторов');
-    expect(hidden.rulesMarkdown).not.toContain('0.065');
     expect((await request('/problems?context=weekly-13')).status).toBe(403);
     expect((await request('/problems/vector-addition?context=weekly-13')).status).toBe(403);
     expect((await request('/problems/vector-addition/leaders?context=weekly-13')).status).toBe(403);
@@ -178,7 +177,10 @@ describe('Fixture HTTP API', () => {
     });
     expect(accepted.timeMs).toBeGreaterThan(0);
     const standings = (await request('/contests/weekly-12/standings')).body;
-    expect(standings.find(row => row.user.id === 'new_cuda').times['vector-addition']).toBe(accepted.timeMs);
+    // Solve time counts from the start to when the submission was sent, not to its (re)check.
+    const contest = (await request('/contests/weekly-12')).body;
+    expect(standings.find(row => row.user.id === 'new_cuda').times['vector-addition'])
+      .toBe(Math.floor((Date.parse(failed.createdAt) - Date.parse(contest.startAt)) / 1000));
     expect((await request(`/submissions/${accepted.id}/recheck`, { method: 'POST', cookie: newcomer })).status).toBe(400);
   }, 10000);
 

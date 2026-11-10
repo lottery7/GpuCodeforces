@@ -179,40 +179,34 @@
       const problem = ctx.M.problem(id, contest.id);
       if (!problem) return '';
       const path = `/problem/${encodeURIComponent(id)}${phase === 'live' || !ctx.M.problem(id) ? `?contest=${encodeURIComponent(contest.id)}` : ''}`;
-      const best = ctx.M.leaderboard(id, contest.id)[0]?.submission;
       const own = ctx.user ? contestResult(ctx, id, contest.id) : null;
-      return `<tr><td>${ctx.link(path, `${String.fromCharCode(65 + index)}. ${problem.title}`)}</td><td>${difficultyLabels[problem.difficulty] || ctx.escape(problem.difficulty)}</td>${own ? `<td>${own.status}</td><td>${own.time}</td>` : ''}<td>${best && ctx.M.canCompare(best) ? number(best.timeMs) : '-'}</td></tr>`;
+      return `<tr><td>${ctx.link(path, `${String.fromCharCode(65 + index)}. ${problem.title}`)}</td><td>${difficultyLabels[problem.difficulty] || ctx.escape(problem.difficulty)}</td>${own ? `<td>${own.status}</td>` : ''}</tr>`;
     });
-    return `${phase === 'finished' ? '<p class="notice">Соревнование завершено. Публичные задачи можно решать в практике.</p>' : ''}${table(['Задача', 'Сложность', ...(ctx.user ? ['Ваш статус', 'Ваше лучшее время, мс'] : []), 'Рекорд контеста, мс'], rows, 'Задачи соревнования')}`;
+    return `${phase === 'finished' ? '<p class="notice">Соревнование завершено. Публичные задачи можно решать в практике.</p>' : ''}${table(['Задача', 'Сложность', ...(ctx.user ? ['Ваш статус'] : [])], rows, 'Задачи соревнования')}`;
+  }
+
+  function solveTime(seconds) {
+    const pad = value => String(value).padStart(2, '0');
+    return `${Math.floor(seconds / 3600)}:${pad(Math.floor(seconds / 60) % 60)}:${pad(seconds % 60)}`;
   }
 
   function contestStandings(ctx, contest, phase) {
     if (phase === 'upcoming') return empty('Таблица появится после начала', 'Результатов соревнования пока нет.');
-    const ranked = contest.scoring === 'speedup';
     const people = ctx.M.standings(contest.id);
     if (!people.length) return empty('Результатов пока нет', 'Таблица обновится после первых посылок.');
-    const headings = [...(ranked ? ['Место'] : []), 'Участник', 'Решено', ...(ranked ? ['Сумма ускорений'] : []), ...contest.problemIds.map((id, index) => {
+    const headings = ['Место', 'Участник', 'Решено', 'Время', ...contest.problemIds.map((id, index) => {
       const problem = ctx.M.problem(id, contest.id);
       const path = `/problem/${encodeURIComponent(id)}${phase === 'live' || !ctx.M.problem(id) ? `?contest=${encodeURIComponent(contest.id)}` : ''}`;
-      return `<a href="#${ctx.escape(path)}" title="${ctx.escape(problem?.title || id)}">${String.fromCharCode(65 + index)}, мс</a>`;
+      return `<a href="#${ctx.escape(path)}" title="${ctx.escape(problem?.title || id)}">${String.fromCharCode(65 + index)}</a>`;
     })];
-    const rows = people.map(row => `<tr${ctx.user?.id === row.user.id ? ' class="own-row"' : ''}>${ranked ? `<td>${row.rank ?? '-'}</td>` : ''}<td>${userLink(ctx, row.user)}${ctx.user?.id === row.user.id ? ' <span class="small muted">вы</span>' : ''}</td><td>${row.solved}</td>${ranked ? `<td${row.score === null || row.score === undefined ? '' : ` title="Сумма ускорений: ${Number(row.score).toFixed(9)}x"`}>${row.score === null || row.score === undefined ? '-' : `${number(row.score)}x`}</td>` : ''}${contest.problemIds.map(id => {
-      const submission = row.results[id];
-      const comparable = submission && ctx.M.canCompare(submission);
-      const value = comparable ? number(submission.timeMs) : '-';
-      return `<td>${comparable && ctx.user?.id === row.user.id ? ctx.link(`/submission/${submission.id}`, value) : value}</td>`;
-    }).join('')}</tr>`);
+    const rows = people.map(row => `<tr${ctx.user?.id === row.user.id ? ' class="own-row"' : ''}><td>${row.rank}</td><td>${userLink(ctx, row.user)}${ctx.user?.id === row.user.id ? ' <span class="small muted">вы</span>' : ''}</td><td>${row.solved}</td><td class="mono">${solveTime(row.totalSeconds)}</td>${contest.problemIds.map(id => `<td class="mono">${row.times[id] === undefined ? '-' : solveTime(row.times[id])}</td>`).join('')}</tr>`);
     return `<p class="small muted">${phase === 'finished' ? 'Итоговая таблица.' : 'Результаты обновляются после проверки посылок.'}</p>${table(headings, rows, phase === 'finished' ? 'Итоговая таблица соревнования' : 'Текущая таблица соревнования')}`;
   }
 
   function contestRules(ctx, contest) {
     const problems = contest.problemIds.map(id => ctx.M.problem(id, contest.id)).filter(Boolean);
     const gpu = [...new Set(problems.map(problem => (contest.benchmarks?.[problem.id] || problem.benchmark).gpu))].join(', ');
-    const references = contest.scoring === 'speedup' && ctx.M.phase(contest.id) !== 'upcoming' ? table(['Задача', 'Размер входа', 'Эталон, мс'], problems.map(problem => {
-      const benchmark = contest.benchmarks?.[problem.id] || problem.benchmark;
-      return `<tr><td>${ctx.escape(problem.title)}</td><td>${ctx.escape(benchmark.caseLabel)}</td><td>${number(benchmark.referenceMs)}</td></tr>`;
-    }), 'Эталонные времена соревнования') : '';
-    return `<div class="stack"><p>Решения принимаются на C++/CUDA. Сначала проверяется корректность, затем измеряется время выполнения.</p><p>Конфигурация: ${ctx.escape(gpu)}. Для каждой задачи указаны размер входа, версия проверки и методика замера. Результаты разных конфигураций не сравниваются.</p>${contest.scoring === 'speedup' ? '<p>Демо-правило: выше участник с большим числом решенных задач. При равенстве сравнивается сумма ускорений относительно эталона: эталонное время / лучшее время участника. Одинаковые результаты получают одинаковое место.</p>' : '<p>Формула мест не задана. Таблица показывает число решенных задач и лучшее время по каждой задаче.</p>'}${references}<p>Конкурсная отправка доступна зарегистрированным участникам во время соревнования. После завершения публичные задачи можно решать в практике; эти посылки не меняют итоговую таблицу.</p><p class="small muted">Изменение рейтинга показывается после расчета результатов соревнования.</p></div>`;
+    return `<div class="stack"><p>Решения принимаются на C++/CUDA. Задача решена, если принята хотя бы одна посылка: верный ответ на всех тестах в пределах лимита времени.</p><p>Конфигурация: ${ctx.escape(gpu)}.</p><p>Выше участник с большим числом решенных задач. При равенстве — меньшее суммарное время сдачи: для каждой решенной задачи время от начала соревнования до отправки первой принятой посылки. Время работы на GPU и неверные попытки не учитываются. Одинаковые результаты получают одинаковое место.</p><p>Конкурсная отправка доступна зарегистрированным участникам во время соревнования. После завершения публичные задачи можно решать в практике; эти посылки не меняют итоговую таблицу.</p><p class="small muted">Изменение рейтинга показывается после расчета результатов соревнования.</p></div>`;
   }
 
   function contest(ctx, id) {
