@@ -11,6 +11,10 @@ spring:
       ddl-auto: validate
   flyway:
     enabled: true
+    # The history table lives in public. Without this, Flyway takes the current schema from search_path
+    # ("$user", public): once V1 has created the gpucodeforces schema for the gpucodeforces user, a restart
+    # looks there, finds tables but no history and refuses to start.
+    default-schema: public
   rabbitmq:
     host: ${RABBITMQ_HOST:localhost}
     port: ${RABBITMQ_PORT:5672}
@@ -33,6 +37,11 @@ platform:
     git-url: ${PROBLEMS_GIT_URL:}
     git-branch: ${PROBLEMS_GIT_BRANCH:master}
     sync-interval: ${PROBLEMS_SYNC_INTERVAL:PT1M}
+
+logging:
+  pattern:
+    # Every line carries the submission and the user it concerns (see SubmissionService, RequestLogFilter).
+    level: "%5p [sub=%X{submission:-} user=%X{user:-}]"
 
 management:
   endpoints:

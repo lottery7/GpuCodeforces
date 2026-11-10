@@ -22,7 +22,7 @@ services:
   # Executors on other machines (one per GPU type) use judge/deploy/compose.executor.yaml and connect to this broker:
   # set RABBITMQ_BIND=0.0.0.0, real RABBITMQ_USER/RABBITMQ_PASSWORD, and list every type in JUDGE_GPU_PROFILES.
   rabbitmq:
-    profiles: [judge, gpu, mock]
+    profiles: [judge, gpu, mock, app]
     image: rabbitmq:4.1.8-management@sha256:e1763bfb4a15f9646f9bad2fbae857f4499614577d1165450331189efdb6ea3b
     hostname: rabbitmq
     environment:
@@ -44,7 +44,7 @@ services:
       retries: 20
 
   judge-gateway:
-    profiles: [judge, gpu, mock]
+    profiles: [judge, gpu, mock, app]
     build:
       context: .
       dockerfile: judge/deploy/gateway.Dockerfile
@@ -122,6 +122,54 @@ services:
       SPRING_PROFILES_ACTIVE: mock
     depends_on:
       rabbitmq:
+        condition: service_healthy
+
+  # The whole platform (README "Running the whole system"): backend + frontend on top of the judge.
+  #   docker compose --profile app --profile mock up -d --wait --build   # no GPU: mock executor
+  #   docker compose --profile app --profile gpu up -d --wait --build    # real executor on an NVIDIA GPU
+  backend:
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      DATABASE_URL: jdbc:postgresql://postgres:5432/gpucodeforces
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      JUDGE_GATEWAY_URL: http://judge-gateway:8090
+      GPU_PROFILE: ${JUDGE_GPU_PROFILE:-rtx3060}
+      GPU_NAME: ${JUDGE_GPU_NAME:-NVIDIA GeForce RTX 3060}
+      PROBLEMS_DIRECTORY: /problems
+      ADMIN_HANDLES: ${ADMIN_HANDLES:-admin}
+    volumes:
+      # local problem bank; set PROBLEMS_GIT_URL instead to import the shared problem repository
+      - ./judge/problems/examples:/problems:ro
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      # the JRE image has no curl; bash's /dev/tcp is enough for the actuator
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3 && grep -q UP <&3"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      judge-gateway:
+        condition: service_started
+
+  frontend:
+    profiles: [app]
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "127.0.0.1:3000:80"
+    depends_on:
+      backend:
         condition: service_healthy
 
 volumes:

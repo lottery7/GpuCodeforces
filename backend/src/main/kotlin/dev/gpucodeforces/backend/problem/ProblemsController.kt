@@ -73,7 +73,8 @@ class ProblemsController(
                 version.statementMarkdown,
                 version.starterCode,
                 BigDecimal.valueOf(spec.limits.timeLimitMs).movePointLeft(3),
-                spec.limits.memoryLimitMb.toInt(),
+                // The page shows it as GPU memory; without a GPU limit the solution is bounded by its RAM limit.
+                (spec.limits.gpuMemoryLimitMb ?: spec.limits.memoryLimitMb).toInt(),
                 environmentMarkdown(spec, gpuName),
             ),
         )

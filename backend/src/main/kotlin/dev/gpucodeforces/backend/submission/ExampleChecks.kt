@@ -10,6 +10,7 @@ import dev.gpucodeforces.judge.api.JudgeResult
 import dev.gpucodeforces.judge.api.SubmissionRequest
 import dev.gpucodeforces.judge.api.Verdict
 import org.intellij.lang.annotations.Language
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
@@ -31,6 +32,7 @@ class ExampleChecks(
     private val judgeProperties: JudgeProperties,
     private val gpuProperties: GpuProperties,
 ) {
+    private val log = LoggerFactory.getLogger(javaClass)
     private val pending = ConcurrentHashMap<String, CompletableFuture<JudgeResult>>()
     private val runningUsers = ConcurrentHashMap.newKeySet<UUID>()
 
@@ -38,6 +40,7 @@ class ExampleChecks(
         SubmissionService.validateSource(code)
         if (!runningUsers.add(author.id)) throw BadRequestException("Дождитесь окончания предыдущей проверки примера")
         val judgeId = "$EXAMPLE_PREFIX${UUID.randomUUID()}"
+        log.info("Example check {} of {} for {}", judgeId, problem.version.problemId, author.handle)
         val verdict = CompletableFuture<JudgeResult>()
         pending[judgeId] = verdict
         try {
@@ -50,14 +53,22 @@ class ExampleChecks(
             )
             when (val outcome = judgeGateway.send(request)) {
                 is SendOutcome.Accepted -> Unit
-                is SendOutcome.Rejected -> throw BadRequestException("Проверяющая система отклонила решение")
-                is SendOutcome.Retry -> throw ServiceUnavailableException("Проверяющая система недоступна, попробуйте позже")
+                is SendOutcome.Rejected -> {
+                    log.error("Judge gateway rejected example check {}: {}", judgeId, outcome.reason)
+                    throw BadRequestException("Проверяющая система отклонила решение")
+                }
+                is SendOutcome.Retry -> {
+                    log.warn("Judge gateway did not accept example check {}: {}", judgeId, outcome.reason)
+                    throw ServiceUnavailableException("Проверяющая система недоступна, попробуйте позже")
+                }
             }
             val result = try {
                 verdict.get(judgeProperties.exampleTimeout.toMillis(), TimeUnit.MILLISECONDS)
             } catch (_: TimeoutException) {
+                log.warn("Example check {} got no verdict within {}", judgeId, judgeProperties.exampleTimeout)
                 return ExampleOutcome(false, "Проверка примера не завершилась вовремя: очередь проверки занята.")
             }
+            log.info("Example check {}: {} in {} ms", judgeId, result.verdict, result.judgeTimeMs)
             return ExampleOutcome(result.verdict == Verdict.ACCEPTED, result.diagnostic())
         } finally {
             pending.remove(judgeId)
@@ -69,6 +80,7 @@ class ExampleChecks(
 
     fun complete(judgeSubmissionId: String, result: JudgeResult) {
         pending[judgeSubmissionId]?.complete(result)
+            ?: log.info("Verdict of example check {} arrived after its request gave up", judgeSubmissionId)
     }
 
     companion object {

@@ -48,10 +48,17 @@ class JudgeEventListener(
             log.error("Dropping malformed judge event: {}", exception.originalMessage)
             throw AmqpRejectAndDontRequeueException("Malformed judge event", exception)
         }
-        if (exampleChecks.isExample(event.submissionId)) {
-            if (event.status == SubmissionStatus.FINISHED) exampleChecks.complete(event.submissionId, event.result!!)
-        } else {
-            submissionService.apply(event)
+        try {
+            if (exampleChecks.isExample(event.submissionId)) {
+                if (event.status == SubmissionStatus.FINISHED) exampleChecks.complete(event.submissionId, event.result!!)
+            } else {
+                submissionService.apply(event)
+            }
+        } catch (exception: Exception) {
+            // The broker redelivers the event; the log says which one keeps failing.
+            log.error("Failed to apply judge event {} a{}/#{} of {} (job {}), it will be redelivered",
+                event.status, event.attempt, event.seq, event.submissionId, event.jobId, exception)
+            throw exception
         }
     }
 }

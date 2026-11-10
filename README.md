@@ -60,6 +60,22 @@ Integration tests use a separate disposable database with random ports, independ
 of Docker Compose. Docker must be available; these tests fail rather than silently
 skip when it is unavailable. The executable jar is under `backend/build/libs/`.
 
+## Running the whole system
+
+```sh
+docker compose --profile app --profile mock up -d --wait --build   # no GPU: mock executor
+docker compose --profile app --profile gpu up -d --wait --build    # real executor on an NVIDIA GPU
+```
+
+| Service | Address |
+|---|---|
+| Frontend | <http://localhost:3000> |
+| Backend API, admin page | <http://localhost:8080/api>, <http://localhost:3000/admin> |
+
+The backend imports `judge/problems/examples` as the problem bank and treats users with handles from
+`ADMIN_HANDLES` (default `admin`) as administrators. With the mock executor the verdict is chosen by a
+comment in the solution, see [Testing system](#testing-system).
+
 ## Testing system
 
 The judge accepts `.cu` submissions, compiles them, runs them on a GPU in an nsjail

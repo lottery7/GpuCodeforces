@@ -1,6 +1,7 @@
 package dev.gpucodeforces.backend.auth
 
 import dev.gpucodeforces.backend.api.model.ErrorResponse
+import dev.gpucodeforces.backend.common.RequestLogFilter
 import jakarta.servlet.http.HttpServletResponse
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -59,6 +60,7 @@ class SecurityConfig(
             }
             .addFilterBefore(originCheckFilter, UsernamePasswordAuthenticationFilter::class.java)
             .addFilterBefore(sessionCookieAuthenticationFilter, UsernamePasswordAuthenticationFilter::class.java)
+            .addFilterAfter(RequestLogFilter(), SessionCookieAuthenticationFilter::class.java)
         return http.build()
     }
 

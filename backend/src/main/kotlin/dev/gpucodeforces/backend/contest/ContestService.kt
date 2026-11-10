@@ -14,6 +14,7 @@ import dev.gpucodeforces.backend.submission.SubmissionStats
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.backend.user.UserRepository
 import dev.gpucodeforces.backend.user.toApiModel
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
@@ -32,6 +33,8 @@ class ContestService(
     private val gpuProperties: GpuProperties,
     private val submissionStats: SubmissionStats,
 ) {
+    private val log = LoggerFactory.getLogger(javaClass)
+
     fun list(query: String?, phase: String?, mine: Boolean, viewer: User?): List<Contest> {
         if (mine && viewer == null) throw UnauthorizedException("Нужен вход")
         val now = Instant.now()
@@ -62,6 +65,7 @@ class ContestService(
             ),
         )
         saveProblems(contest.id, input.problemIds)
+        log.info("Contest {} created by {}: {} - {}, problems {}", contest.id, creator.handle, contest.startAt, contest.endAt, input.problemIds)
         return contest
     }
 
@@ -89,6 +93,7 @@ class ContestService(
         contest.endAt = input.endAt.toInstant()
         contest.authors = resolveAuthors(input.authorIds).toMutableSet()
         saveProblems(contest.id, input.problemIds)
+        log.info("Contest {} updated by {}: {} - {}, problems {}", contest.id, currentUser.handle, contest.startAt, contest.endAt, input.problemIds)
         return contestRepository.save(contest)
     }
 
@@ -100,6 +105,7 @@ class ContestService(
         }
         if (!isRegistered(contest.id, currentUser.id)) {
             contestRegistrationRepository.save(ContestRegistration(contest.id, currentUser.id))
+            log.info("{} registered for contest {}", currentUser.handle, contest.id)
         }
     }
 
