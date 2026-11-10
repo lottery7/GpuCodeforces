@@ -18,11 +18,13 @@ import kotlin.io.path.listDirectoryEntries
 
 @ConfigurationProperties("platform.problems")
 data class ProblemsProperties(
-    /** Directory with one sub-directory per problem package. Empty: the bank stays empty. */
+    /** Problem repository checkout. Empty: the bank stays empty. */
     val directory: String = "",
     /** If set, [directory] is a clone of this repository, updated before every sync. */
     val gitUrl: String = "",
     val gitBranch: String = "master",
+    /** Sub-directory of the repository with one directory per problem package (`problems` in GpuCodeforcesProblems). */
+    val path: String = "",
 )
 
 data class SyncResult(val revision: String?, val imported: Int, val unchanged: Int, val removed: Int, val failed: Map<String, String>)
@@ -59,14 +61,16 @@ class ProblemSyncService(
             log.warn("platform.problems.directory is not set, the problem bank is empty")
             return SyncResult(null, 0, 0, 0, emptyMap())
         }
-        val root = Path.of(properties.directory).toAbsolutePath().normalize()
-        val revision = if (properties.gitUrl.isNotBlank()) checkout(root) else null
+        val checkoutDirectory = Path.of(properties.directory).toAbsolutePath().normalize()
+        val revision = if (properties.gitUrl.isNotBlank()) checkout(checkoutDirectory) else null
+        val root = checkoutDirectory.resolve(properties.path).normalize()
         check(root.isDirectory()) { "Problem directory $root does not exist" }
 
         val packages = mutableListOf<ProblemPackage>()
         val failed = mutableMapOf<String, String>()
         root.listDirectoryEntries()
-            .filter { it.isDirectory() && Files.isRegularFile(it.resolve(ProblemPackageReader.STATEMENT_FILE)) }
+            // Every directory is a package: one in a wrong format is reported, not silently skipped.
+            .filter { it.isDirectory() && !it.fileName.toString().startsWith(".") }
             .sortedBy { it.fileName.toString() }
             .forEach { directory ->
                 try {

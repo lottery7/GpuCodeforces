@@ -35,12 +35,14 @@ PostgreSQL instance. The default credentials are for local development.
 Flyway manages migrations in `backend/src/main/resources/db/migration`;
 Hibernate validates the schema rather than modifying it.
 
-The problem bank is imported from `PROBLEMS_DIRECTORY` (or a clone of `PROBLEMS_GIT_URL`);
-without it the bank is empty. The package format is described (in Russian) in
-[docs/backend/problem-package.md](docs/backend/problem-package.md). The judge examples are valid packages:
+The problem bank follows the problem repository
+[lottery7/GpuCodeforcesProblems](https://github.com/lottery7/GpuCodeforcesProblems): the backend clones it
+into `PROBLEMS_DIRECTORY`, pulls it every minute and imports `PROBLEMS_PATH`; without a directory the bank
+is empty. The package format is described (in Russian) in
+[docs/backend/problem-package.md](docs/backend/problem-package.md).
 
 ```sh
-PROBLEMS_DIRECTORY=../judge/problems/examples ./gradlew :backend:bootRun
+PROBLEMS_GIT_URL=https://github.com/lottery7/GpuCodeforcesProblems.git PROBLEMS_DIRECTORY=build/problems   PROBLEMS_PATH=problems ./gradlew :backend:bootRun
 ```
 
 Submissions go to the judge gateway (`JUDGE_GATEWAY_URL`, default <http://localhost:8090>) and
@@ -72,7 +74,7 @@ docker compose --profile app --profile gpu up -d --wait --build    # real execut
 | Frontend | <http://localhost:3000> |
 | Backend API, admin page | <http://localhost:8080/api>, <http://localhost:3000/admin> |
 
-The backend imports `judge/problems/examples` as the problem bank and treats users with handles from
+The backend imports the problem repository (branch `PROBLEMS_GIT_BRANCH`, default `master`) and treats users with handles from
 `ADMIN_HANDLES` (default `admin`) as administrators. With the mock executor the verdict is chosen by a
 comment in the solution, see [Testing system](#testing-system).
 

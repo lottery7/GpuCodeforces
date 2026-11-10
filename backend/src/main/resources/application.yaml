@@ -31,11 +31,13 @@ platform:
     profile: ${GPU_PROFILE:rtx3060}
     name: ${GPU_NAME:NVIDIA GeForce RTX 3060}
   problems:
-    # Problem packages, one directory each (docs/backend/problem-package.md). Empty: the bank stays empty.
+    # Problem repository checkout (docs/backend/problem-package.md). Empty: the bank stays empty.
     directory: ${PROBLEMS_DIRECTORY:}
-    # Optional: keep the directory as a clone of this repository.
+    # Keep the directory as a clone of this repository (lottery7/GpuCodeforcesProblems in compose.yaml).
     git-url: ${PROBLEMS_GIT_URL:}
     git-branch: ${PROBLEMS_GIT_BRANCH:master}
+    # Sub-directory with one directory per problem package.
+    path: ${PROBLEMS_PATH:}
     sync-interval: ${PROBLEMS_SYNC_INTERVAL:PT1M}
 
 logging:

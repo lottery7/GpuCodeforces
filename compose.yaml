@@ -140,11 +140,14 @@ services:
       JUDGE_GATEWAY_URL: http://judge-gateway:8090
       GPU_PROFILE: ${JUDGE_GPU_PROFILE:-rtx3060}
       GPU_NAME: ${JUDGE_GPU_NAME:-NVIDIA GeForce RTX 3060}
-      PROBLEMS_DIRECTORY: /problems
+      # the problem bank follows the problem repository (cloned into the volume, pulled every minute)
+      PROBLEMS_GIT_URL: ${PROBLEMS_GIT_URL:-https://github.com/lottery7/GpuCodeforcesProblems.git}
+      PROBLEMS_GIT_BRANCH: ${PROBLEMS_GIT_BRANCH:-master}
+      PROBLEMS_DIRECTORY: /var/lib/gpucodeforces/problems
+      PROBLEMS_PATH: problems
       ADMIN_HANDLES: ${ADMIN_HANDLES:-admin}
     volumes:
-      # local problem bank; set PROBLEMS_GIT_URL instead to import the shared problem repository
-      - ./judge/problems/examples:/problems:ro
+      - problems-repo:/var/lib/gpucodeforces/problems
     ports:
       - "127.0.0.1:8080:8080"
     healthcheck:
@@ -176,3 +179,4 @@ volumes:
   postgres-data:
   rabbitmq-data:
   judge-data:
+  problems-repo:
