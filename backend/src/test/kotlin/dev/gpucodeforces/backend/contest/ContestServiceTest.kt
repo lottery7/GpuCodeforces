@@ -2,7 +2,9 @@ package dev.gpucodeforces.backend.contest
 
 import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.common.ForbiddenException
+import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.common.UnauthorizedException
+import dev.gpucodeforces.backend.problem.ProblemCatalog
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.backend.user.UserRepository
 import org.assertj.core.api.Assertions.assertThat
@@ -25,7 +27,15 @@ class ContestServiceTest {
     private val contestProblemRepository = mock(ContestProblemRepository::class.java)
     private val contestRegistrationRepository = mock(ContestRegistrationRepository::class.java)
     private val userRepository = mock(UserRepository::class.java)
-    private val service = ContestService(contestRepository, contestProblemRepository, contestRegistrationRepository, userRepository)
+    private val problemCatalog = mock(ProblemCatalog::class.java)
+    private val service = ContestService(
+        contestRepository,
+        contestProblemRepository,
+        contestRegistrationRepository,
+        userRepository,
+        problemCatalog,
+        GpuProperties(),
+    )
 
     private fun user(handle: String = "author") = User(handle, "$handle@example.com", "hash")
 

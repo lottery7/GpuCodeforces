@@ -2,11 +2,13 @@ package dev.gpucodeforces.backend.contest
 
 import dev.gpucodeforces.backend.api.model.GetContestStandings200ResponseInner
 import dev.gpucodeforces.backend.common.BadRequestException
+import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.common.ForbiddenException
 import dev.gpucodeforces.backend.common.NotFoundApiException
 import dev.gpucodeforces.backend.common.UnauthorizedException
 import dev.gpucodeforces.backend.common.toUuidOrBadRequest
 import dev.gpucodeforces.backend.common.toUuidOrNotFound
+import dev.gpucodeforces.backend.problem.ProblemCatalog
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.backend.user.UserRepository
 import dev.gpucodeforces.backend.user.toApiModel
@@ -17,19 +19,14 @@ import java.time.Instant
 import java.util.UUID
 import dev.gpucodeforces.backend.api.model.ContestInput as ContestInputApi
 
-/**
- * Stand-in until the testing-system module exposes which GPU profiles are actually available to
- * assign from (today `JUDGE_GPU_PROFILES`/`JUDGE_GPU_NAME` are deploy-time env vars on their side,
- * not something this module can query). Matches their own rtx4090 example profile name.
- */
-private const val PLACEHOLDER_GPU = "NVIDIA GeForce RTX 4090"
-
 @Service
 class ContestService(
     private val contestRepository: ContestRepository,
     private val contestProblemRepository: ContestProblemRepository,
     private val contestRegistrationRepository: ContestRegistrationRepository,
     private val userRepository: UserRepository,
+    private val problemCatalog: ProblemCatalog,
+    private val gpuProperties: GpuProperties,
 ) {
     fun list(query: String?, phase: String?, mine: Boolean, viewer: User?): List<Contest> {
         if (mine && viewer == null) throw UnauthorizedException("Нужен вход")
@@ -56,7 +53,7 @@ class ContestService(
                 title = input.title,
                 startAt = input.startAt.toInstant(),
                 endAt = input.endAt.toInstant(),
-                gpu = PLACEHOLDER_GPU,
+                gpu = gpuProperties.name,
                 authors = resolveAuthors(input.authorIds).toMutableSet(),
             ),
         )
@@ -140,9 +137,11 @@ class ContestService(
     }
 
     private fun saveProblems(contestId: UUID, problemIds: Set<String>) {
+        val versions = problemCatalog.publishedVersions(problemIds)
         contestProblemRepository.deleteByIdContestId(contestId)
+        contestProblemRepository.flush()
         contestProblemRepository.saveAll(
-            problemIds.mapIndexed { index, problemId -> ContestProblem(contestId, problemId, index) },
+            versions.mapIndexed { index, version -> ContestProblem(contestId, version.problemId, index, version.id) },
         )
     }
 }

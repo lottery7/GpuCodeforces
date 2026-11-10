@@ -35,6 +35,14 @@ PostgreSQL instance. The default credentials are for local development.
 Flyway manages migrations in `backend/src/main/resources/db/migration`;
 Hibernate validates the schema rather than modifying it.
 
+The problem bank is imported from `PROBLEMS_DIRECTORY` (or a clone of `PROBLEMS_GIT_URL`);
+without it the bank is empty. The package format is described (in Russian) in
+[docs/backend/problem-package.md](docs/backend/problem-package.md). The judge examples are valid packages:
+
+```sh
+PROBLEMS_DIRECTORY=../judge/problems/examples ./gradlew :backend:bootRun
+```
+
 ```sh
 ./gradlew test
 ./gradlew :backend:integrationTest # Starts and removes its own PostgreSQL container
