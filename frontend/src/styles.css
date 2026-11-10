@@ -297,7 +297,10 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
 .editor-status { flex-shrink: 0; }
 .editor-footer { position: sticky; z-index: 20; bottom: 0; min-height: 0; background: var(--chrome); border-radius: 0 0 4px 4px; }
 .editor-actions { flex-shrink: 0; border-radius: 0 0 4px 4px; }
-.editor-feedback { display: flex; flex-direction: column; gap: 6px; max-height: min(32dvh, 230px); padding: 8px 12px; border-top: 1px solid var(--border); overflow: auto; overscroll-behavior: contain; }
+.editor-feedback { position: relative; display: flex; flex-direction: column; gap: 6px; max-height: min(32dvh, 230px); padding: 8px 12px; border-top: 1px solid var(--border); overflow: auto; overscroll-behavior: contain; }
+.editor-feedback > .close-output { position: absolute; z-index: 1; top: 4px; right: 6px; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 3px; background: transparent; color: var(--muted); }
+.editor-feedback > .close-output:hover { background: #383b40; color: var(--text-strong); }
+.editor-feedback:has(> .close-output) > .small, .editor-feedback:has(> .close-output) > .notice, .editor-feedback:has(> .close-output) .tool-window-body > p { min-height: 28px; padding-right: 32px; }
 .editor-feedback .notice { padding: 4px 8px; }
 .editor-feedback .run-console { margin: 0; border: 0; background: transparent; }
 .editor-feedback .tool-window-body { padding: 0; font: 13px/1.6 var(--font); }
@@ -415,6 +418,8 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
   .page-head p { font-size: 13px; }
   .page-head > .inline, .page-head > .actions { flex-shrink: 1; }
   .btn, button.text-link, button.danger-link, button.filter-reset, .file-button { min-height: 40px; }
+  .editor-feedback > .close-output { width: 40px; height: 40px; }
+  .editor-feedback:has(> .close-output) > .small, .editor-feedback:has(> .close-output) > .notice, .editor-feedback:has(> .close-output) .tool-window-body > p { min-height: 40px; padding-right: 44px; }
   .btn { padding: 8px 11px; }
   input, select, textarea { min-height: 40px; }
   .toolbar { gap: 8px; }

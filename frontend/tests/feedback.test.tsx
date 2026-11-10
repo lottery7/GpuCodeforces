@@ -1,4 +1,4 @@
-import { fireEvent, render, renderHook, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, ApiError } from '../src/api/client';
 import type { ProblemDetail, User } from '../src/api/types';
 import Problem from '../src/pages/Problem';
+import { readDraft } from '../src/drafts';
 import { ErrorMessage, useFeedbackVisibility } from '../src/ui';
 
 const session = vi.hoisted(() => ({ user: null as User | null }));
@@ -80,6 +81,43 @@ describe('Видимость ответа на действие', () => {
 });
 
 describe('Ответы редактора', () => {
+  it.each(['error', 'example'] as const)('закрывает %s, сохраняет черновик и возвращает фокус к условию', async output => {
+    vi.spyOn(api, 'getProblem').mockResolvedValue(problem);
+    vi.spyOn(api, 'submitSolution').mockRejectedValue(new ApiError(503, 'Проверка временно недоступна.'));
+    let finish!: (value: { passed: boolean; diagnostic: string }) => void;
+    vi.spyOn(api, 'checkExample').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/problem/vector-add']}><Routes><Route path="/problem/:id" element={<Problem />} /></Routes></MemoryRouter></QueryClientProvider>);
+    const editor = await screen.findByLabelText('Код решения на C++ и CUDA');
+    const code = 'void solve() { keep_my_solution(); }';
+    fireEvent.change(editor, { target: { value: code } });
+    const statement = screen.getByRole('region', { name: 'Условие задачи' });
+    statement.getBoundingClientRect = () => output === 'error' ? new DOMRect(0, 100, 400, 300) : new DOMRect(0, -306, 400, 687);
+    const scroll = vi.fn();
+    statement.scrollIntoView = scroll;
+    expect(screen.queryByRole('button', { name: 'Закрыть вывод' })).not.toBeInTheDocument();
+
+    if (output === 'error') {
+      await userEvent.click(screen.getByRole('button', { name: 'Отправить' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent('Проверка временно недоступна.');
+    } else {
+      await userEvent.click(screen.getByRole('button', { name: 'Проверить пример' }));
+      expect(screen.queryByRole('button', { name: 'Закрыть вывод' })).not.toBeInTheDocument();
+      await act(async () => finish({ passed: false, diagnostic: 'Результат не совпадает с ожидаемым.' }));
+      expect(await screen.findByLabelText('Диагностика примера')).toBeVisible();
+    }
+    await userEvent.click(await screen.findByRole('button', { name: 'Закрыть вывод' }));
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Вывод проверки' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Закрыть вывод' })).not.toBeInTheDocument();
+    expect(editor).toHaveValue(code);
+    expect(readDraft('owner', problem.id, 'practice', problem.starterCode)).toBe(code);
+    await waitFor(() => expect(statement).toHaveFocus());
+    if (output === 'error') expect(scroll).not.toHaveBeenCalled();
+    else expect(scroll).toHaveBeenCalledExactlyOnceWith({ block: 'start', inline: 'nearest', behavior: 'instant' });
+  });
+
   it.each(['edit', 'check'] as const)('убирает старую ошибку отправки после %s и показывает новый результат рядом с кнопками', async action => {
     vi.spyOn(api, 'getProblem').mockResolvedValue(problem);
     vi.spyOn(api, 'submitSolution').mockRejectedValue(new ApiError(503, 'Проверка временно недоступна.'));

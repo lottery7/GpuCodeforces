@@ -1,7 +1,13 @@
 import { useMemo, useState } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
 import { cpp } from '@codemirror/lang-cpp';
-import { EditorView } from '@codemirror/view';
+import { redo, undo } from '@codemirror/commands';
+import { EditorView, keymap } from '@codemirror/view';
+
+const historyShortcuts = keymap.of([
+  { key: 'Ctrl-z', run: undo, preventDefault: true },
+  { key: 'Ctrl-Shift-z', run: redo, preventDefault: true },
+]);
 
 const editorTheme = EditorView.theme({
   '&': { backgroundColor: '#1e1f22', color: '#bcbec4', fontSize: '13px' },
@@ -23,7 +29,7 @@ export default function CodeEditor({ value, onChange, readOnly = false, label = 
   fit?: boolean;
 }) {
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
-  const extensions = useMemo(() => [cpp(), editorTheme, EditorView.contentAttributes.of({ 'aria-label': label, spellcheck: 'false' })], [label]);
+  const extensions = useMemo(() => [cpp(), editorTheme, historyShortcuts, EditorView.contentAttributes.of({ 'aria-label': label, spellcheck: 'false' })], [label]);
   return <>
     <div className={`code-editor${fit ? ' code-editor-fit' : ''}`}>
     <CodeMirror

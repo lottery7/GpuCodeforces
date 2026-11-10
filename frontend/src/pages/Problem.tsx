@@ -15,7 +15,7 @@ function phaseOf(contest: Contest | undefined, now: number) {
   return now < Date.parse(contest.startAt) ? 'upcoming' : now >= Date.parse(contest.endAt) ? 'finished' : 'live';
 }
 
-function EditorPane({ problem, context, contest, contestLoading, phase }: { problem: ProblemDetail; context: string; contest?: Contest; contestLoading: boolean; phase: ReturnType<typeof phaseOf> }) {
+function EditorPane({ problem, context, contest, contestLoading, phase, onCloseOutput }: { problem: ProblemDetail; context: string; contest?: Contest; contestLoading: boolean; phase: ReturnType<typeof phaseOf>; onCloseOutput: () => void }) {
   const { user } = useSession();
   const navigate = useNavigate();
   const location = useLocation();
@@ -63,6 +63,13 @@ function EditorPane({ problem, context, contest, contestLoading, phase }: { prob
   const error = localError || submit.error || join.error || check.error;
   const feedback = useMemo(() => ({ error, example, undo, pending: check.isPending }), [error, example, undo, check.isPending]);
   const feedbackRef = useFeedbackVisibility(feedback, Boolean(error || example || undo || check.isPending));
+  function closeOutput() {
+    clearErrors();
+    setExample(null);
+    setUndo(null);
+    check.reset();
+    onCloseOutput();
+  }
   function reset() {
     changeCode(problem.starterCode);
     setUndo({ code, message: 'Шаблон восстановлен.' });
@@ -94,6 +101,7 @@ function EditorPane({ problem, context, contest, contestLoading, phase }: { prob
       <CodeEditor fit value={code} onChange={changeCode} status={saved ? 'Черновик сохранен' : 'Хранилище недоступно. Скачайте код.'} />
       <div className="editor-footer" ref={feedbackRef}>
       {(undo || error || check.isPending || example) && <div className="editor-feedback">
+        {!busy && Boolean(error || example) && <button type="button" className="close-output" aria-label="Закрыть вывод" title="Закрыть вывод" onClick={closeOutput}><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg></button>}
         {undo !== null && <div className="small">{undo.message} <button type="button" className="text-link" onClick={() => changeCode(undo.code)}>Отменить</button></div>}
         <ErrorMessage error={error} />
         {(check.isPending || example) && <section className="run-console" aria-label="Вывод проверки"><div className="tool-window-body">
@@ -133,9 +141,24 @@ export default function Problem() {
   const [params] = useSearchParams();
   const { user, isLoading } = useSession();
   const queryClient = useQueryClient();
+  const statementRef = useRef<HTMLElement>(null);
   const [now, setNow] = useState(Date.now);
   const previousPhase = useRef<{ context: string; phase: ReturnType<typeof phaseOf> } | null>(null);
   const context = contextFromSearch(params);
+  function returnToStatement() {
+    requestAnimationFrame(() => {
+      const statement = statementRef.current;
+      if (!statement) return;
+      statement.focus({ preventScroll: true });
+      const rect = statement.getBoundingClientRect();
+      const viewport = window.visualViewport;
+      const top = (viewport?.offsetTop ?? 0) + 8;
+      const bottom = (viewport?.offsetTop ?? 0) + (viewport?.height ?? window.innerHeight) - 8;
+      if (rect.height > 0 && (rect.top < top || rect.top >= bottom)) {
+        statement.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' });
+      }
+    });
+  }
   useEffect(() => {
     if (context === 'practice') return;
     setNow(Date.now());
@@ -176,8 +199,8 @@ export default function Problem() {
     {context !== 'practice' && contest.error && <ErrorMessage error={contest.error} />}
     {phase === 'finished' && <p className="notice">Соревнование завершено. Новые решения в практике не изменят его результаты.</p>}
     {tab === 'statement' ? <div className="problem-workspace">
-      <section className="statement statement-pane" id="statement" aria-label="Условие задачи"><div className="tool-window-head">Условие</div><div className="statement-body"><Markdown>{problem.data.statementMarkdown}</Markdown><details className="methodology"><summary>Среда и замер</summary><Markdown>{problem.data.environmentMarkdown}</Markdown></details></div></section>
-      <EditorPane key={`${user?.id || 'guest'}:${id}:${context}`} problem={problem.data} context={context} contest={contest.data} phase={phase} contestLoading={context !== 'practice' && (contest.isPending || Boolean(contest.error))} />
+      <section className="statement statement-pane" id="statement" ref={statementRef} tabIndex={-1} aria-label="Условие задачи"><div className="tool-window-head">Условие</div><div className="statement-body"><Markdown>{problem.data.statementMarkdown}</Markdown><details className="methodology"><summary>Среда и замер</summary><Markdown>{problem.data.environmentMarkdown}</Markdown></details></div></section>
+      <EditorPane key={`${user?.id || 'guest'}:${id}:${context}`} problem={problem.data} context={context} contest={contest.data} phase={phase} onCloseOutput={returnToStatement} contestLoading={context !== 'practice' && (contest.isPending || Boolean(contest.error))} />
     </div> : tab === 'submissions' ? <SubmissionList key={`${id}:${context}:${user?.id || 'guest'}`} problemId={id} context={context} /> : <Leaders problemId={id} context={context} finished={phase === 'finished'} />}
   </>}</QueryState>;
 }

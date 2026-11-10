@@ -19,6 +19,7 @@
     "dev:demo": "pnpm generate:api && vite --mode demo"
   },
   "dependencies": {
+    "@codemirror/commands": "6.11.1",
     "@codemirror/lang-cpp": "6.0.3",
     "@codemirror/view": "6.43.15",
     "@tanstack/react-query": "5.107.1",
