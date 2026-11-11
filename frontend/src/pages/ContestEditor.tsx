@@ -63,7 +63,8 @@ export default function ContestEditor() {
     staleTime: 30000,
   });
   useEffect(() => {
-    if (!user || initialized.current === formKey || id && !contest.data) return;
+    // a new contest starts on a processor the platform offers, so its form waits for the catalogue
+    if (!user || initialized.current === formKey || (id ? !contest.data : catalog.isPending)) return;
     const item = id ? contest.data : undefined;
     initialized.current = formKey;
     setValues({
@@ -71,7 +72,7 @@ export default function ContestEditor() {
       startAt: moscowInput(item?.startAt ?? new Date(Date.now() + 3600000).toISOString()),
       duration: String(item ? Math.round((Date.parse(item.endAt) - Date.parse(item.startAt)) / 60000) : 120),
       hackDuration: String(item?.hackEndAt ? Math.round((Date.parse(item.hackEndAt) - Date.parse(item.endAt)) / 60000) : 0),
-      processor: item?.processor ?? GPU_CUDA,
+      processor: item?.processor ?? catalog.find(GPU_CUDA)?.id ?? catalog.processors[0]?.id ?? GPU_CUDA,
       authors: item?.authors ?? [user],
       problemIds: [...(item?.problemIds ?? [])],
     });
@@ -82,7 +83,7 @@ export default function ContestEditor() {
     setTag('all');
     setSelectedOnly(false);
     setFormError(null);
-  }, [contest.data, id, user, formKey]);
+  }, [contest.data, id, user, formKey, catalog.isPending]);
   const save = useMutation({
     mutationFn: (body: ContestInput) => id ? api.updateContest(id, body) : api.createContest(body),
     onSuccess: saved => {
@@ -181,8 +182,8 @@ export default function ContestEditor() {
         <label className="field"><span>Процессор</span><select name="processor" aria-label="Процессор" value={values.processor} disabled={save.isPending} onChange={event => changeProcessor(event.target.value)}>
           {(catalog.processors.some(item => item.id === values.processor) ? catalog.processors : [...catalog.processors, { id: values.processor, title: values.processor, model: '' }]).map(item => <option key={item.id} value={item.id}>{item.title}{item.model && ` (${item.model})`}</option>)}
         </select><span className="small muted">Все посылки контеста проверяются на нём; в списке задач остаются только задачи, которые можно сдавать на этом процессоре.</span></label>
+        <label className="field"><span>Период взломов, минут (0 — отключён)</span><input name="hackDuration" type="number" min={0} max={10080} step={1} required value={values.hackDuration} disabled={save.isPending} onChange={event => update({ hackDuration: event.target.value })} /></label>
         <fieldset className="contest-authors" disabled={save.isPending}>
-          <label className="field"><span>Период взломов, минут (0 — отключён)</span><input type="number" min={0} max={10080} step={1} required value={values.hackDuration} onChange={event => update({ hackDuration: event.target.value })} /></label>
           <legend>Авторы</legend>
           <p className="small muted">{values.authors.some(author => author.id === user.id) ? 'Авторы могут изменять контест до начала.' : 'После сохранения вы потеряете право редактирования.'}</p>
           <div className="contest-selected-authors">{values.authors.map(author => <div className="contest-selected-author" key={author.id}><UserLink user={author} /><button type="button" className="text-link" aria-label={`Убрать ${author.handle}`} disabled={values.authors.length === 1} title={values.authors.length === 1 ? 'Нужен хотя бы один автор' : undefined} onClick={() => update({ authors: values.authors.filter(person => person.id !== author.id) })}>Убрать</button></div>)}</div>

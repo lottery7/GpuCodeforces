@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, ApiError } from '../src/api/client';
 import type { Contest, Problem, User } from '../src/api/types';
 import ContestEditor from '../src/pages/ContestEditor';
+import { testProcessors } from './setup';
 
 const session = vi.hoisted(() => ({ user: null as User | null }));
 vi.mock('../src/auth', () => ({ useSession: () => ({ user: session.user, isLoading: false, error: null }) }));
@@ -139,6 +140,17 @@ describe('Создание контеста', () => {
       title: 'Мои изменения', format: 'standard', startAt: original.startAt, endAt: new Date(Date.parse(original.startAt) + 75 * 60000).toISOString(),
       authorIds: [creator.id, alpha.id], problemIds: ['reduce', 'transpose'], processor: 'gpu-cuda', hackDurationMinutes: 0,
     }));
+  });
+
+  it('новый контест начинается на процессоре, который есть на платформе', async () => {
+    const onRtl = { ...problem('chip', '400', 'Сумматор'), processors: [{ id: 'rtl', languages: ['systemverilog'], bestSubmissionId: null, bestScore: null, recordScore: null }] };
+    vi.spyOn(api, 'allProblems').mockResolvedValue([...tasks, onRtl]);
+    // a platform without the real GPU: only the emulated processor is offered
+    vi.spyOn(api, 'listProcessors').mockResolvedValue(testProcessors.filter(item => item.id === 'rtl'));
+    open();
+    expect(await screen.findByRole('combobox', { name: 'Процессор' })).toHaveValue('rtl');
+    expect(await screen.findByRole('checkbox', { name: /400\. Сумматор/ })).toBeVisible();
+    expect(screen.queryByRole('checkbox', { name: /100\. Сложение векторов/ })).not.toBeInTheDocument();
   });
 
   it('берет в контест на процессоре только задачи, которые на нем сдаются', async () => {
