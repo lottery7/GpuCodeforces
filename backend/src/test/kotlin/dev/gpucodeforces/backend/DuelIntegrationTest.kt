@@ -129,6 +129,7 @@ class DuelIntegrationTest {
     ).statusCode()
 
     @Test
+    @AllowFullScan("contests", "select count\\(\\*\\) from gpucodeforces\\.contests", "The test counts every contest to verify concurrent matches")
     fun `concurrent queues are idempotent and the same players can have multiple live rooms`() {
         val first = player()
         val second = player()
@@ -158,11 +159,15 @@ class DuelIntegrationTest {
             assertThat(own.items.all { it.creator.id == person.user.id }).isTrue()
             assertThat(list(person, offset = 1, limit = 1).items).hasSize(1)
         }
+        val ordinary = client.get().uri("/contests").cookie("session", first.cookie).exchange().expectStatus().isOk
+            .expectBody(Array<Contest>::class.java).returnResult().responseBody!!
+        assertThat(ordinary.none { it.format == Contest.FormatEnum.DUEL }).isTrue()
         assertThat(list(outsider).total).isZero()
         client.get().uri("/duels/${queued.id}").cookie("session", outsider.cookie).exchange().expectStatus().isForbidden
     }
 
     @Test
+    @AllowFullScan("contests", "select count\\(\\*\\) from gpucodeforces\\.contests", "The test counts every contest to verify idempotent acceptance")
     fun `selected invitations pin their published version and use difficulty durations without cancelling other invitations`() {
         val inviter = player()
         val recipient = player()
@@ -249,6 +254,8 @@ class DuelIntegrationTest {
         assertThat(list(first).total).isZero()
         assertThat(list(first, "finished").total).isEqualTo(1)
         assertThat(notifications(opponent).items.count { it.type == NotificationType.DUEL_SURRENDERED }).isEqualTo(1)
+        client.post().uri("/contests/$id/virtual").cookie("session", first.cookie).exchange().expectStatus().isBadRequest
+        client.get().uri("/problems?context=upsolve:$id").cookie("session", first.cookie).exchange().expectStatus().isBadRequest
         create(first, "random")
         assertThat(create(second, "random").status).isEqualTo(DuelStatus.MATCHED)
     }

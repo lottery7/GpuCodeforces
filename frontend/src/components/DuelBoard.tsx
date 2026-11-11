@@ -7,11 +7,12 @@ import { useProcessors } from '../processors';
 import { ErrorMessage, ScoreValue, UserLink } from '../ui';
 import { solveTime } from '../utils';
 
-export default function DuelBoard({ contest, finished, contestUpdatedAt, showHeading = true }: { contest: Contest; finished: boolean; contestUpdatedAt?: number; showHeading?: boolean }) {
+export default function DuelBoard({ contest, finished, contestUpdatedAt, clockOffset = 0, showHeading = true }: { contest: Contest; finished: boolean; contestUpdatedAt?: number; clockOffset?: number; showHeading?: boolean }) {
   const { user } = useSession();
   const processors = useProcessors();
   const cache = useQueryClient();
-  const [now, setNow] = useState(Date.now);
+  const [localNow, setNow] = useState(Date.now);
+  const now = localNow + clockOffset;
   const [confirm, setConfirm] = useState(false);
   const [surrendered, setSurrendered] = useState<string | null>(null);
   const [finalized, setFinalized] = useState<string | null>(null);
@@ -34,7 +35,7 @@ export default function DuelBoard({ contest, finished, contestUpdatedAt, showHea
     onSuccess: async (_, id) => {
       setSurrendered(id);
       setConfirm(false);
-      cache.setQueriesData<Contest>({ queryKey: ['contest', id] }, value => value ? { ...value, endAt: new Date().toISOString(), surrenderedUserId: user?.id, resultsPending: false } : value);
+      cache.setQueriesData<Contest>({ queryKey: ['contest', id] }, value => value ? { ...value, endAt: new Date(Date.now() + clockOffset).toISOString(), surrenderedUserId: user?.id, resultsPending: false } : value);
       cache.setQueryData<Standing[]>(['standings', id], value => value?.map(row => ({ ...row, rank: row.user.id === user?.id ? 2 : 1, surrendered: row.user.id === user?.id })).sort((a, b) => a.rank - b.rank));
       await Promise.all([cache.invalidateQueries({ queryKey: ['contest', id] }), cache.invalidateQueries({ queryKey: ['standings', id] }), cache.invalidateQueries({ queryKey: ['duels'] })]);
     },

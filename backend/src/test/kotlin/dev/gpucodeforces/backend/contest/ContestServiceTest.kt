@@ -109,15 +109,6 @@ class ContestServiceTest {
     }
 
     @Test
-    fun `contests are filtered by processor`() {
-        val gpu = contestFixture()
-        val rtl = contestFixture(processor = "rtl")
-        given(contestRepository.findAll()).willReturn(listOf(gpu, rtl))
-
-        assertThat(service.list(null, null, mine = false, processor = "rtl", viewer = null)).containsExactly(rtl)
-    }
-
-    @Test
     fun `rules name the processor and its limit`() {
         val rules = service.buildRulesMarkdown(contestFixture(processor = "rtl"), emptyList(), viewer = null)
         assertThat(rules).contains("`rtl`").contains("лимит тактов × глубины × транзисторов")
@@ -128,20 +119,6 @@ class ContestServiceTest {
     fun `list with mine=true but no viewer requires login`() {
         assertThatThrownBy { service.list(null, null, mine = true, processor = null, viewer = null) }
             .isInstanceOf(UnauthorizedException::class.java)
-    }
-
-    @Test
-    fun `list sorts ascending by default and descending for finished`() {
-        val now = Instant.now()
-        val earlyFinished = contestFixture(startAt = now.minus(2, ChronoUnit.DAYS), endAt = now.minus(1, ChronoUnit.DAYS))
-        val lateFinished = contestFixture(startAt = now.minus(1, ChronoUnit.DAYS), endAt = now.minusSeconds(60))
-        given(contestRepository.findAll()).willReturn(listOf(earlyFinished, lateFinished))
-
-        val ascending = service.list(null, null, mine = false, processor = null, viewer = null)
-        val descending = service.list(null, "finished", mine = false, processor = null, viewer = null)
-
-        assertThat(ascending).containsExactly(earlyFinished, lateFinished)
-        assertThat(descending).containsExactly(lateFinished, earlyFinished)
     }
 
     @Test
@@ -355,15 +332,6 @@ class ContestServiceTest {
         assertThat(rows.first().rank).isEqualTo(1)
         assertThat(rows.first().solved).isZero()
         assertThat(rows.last().rank).isEqualTo(2)
-    }
-
-    @Test
-    fun `the ordinary contest list excludes duels`() {
-        val standard = contestFixture()
-        val duel = contestFixture(format = "duel", challengerId = UUID.randomUUID(), opponentId = UUID.randomUUID())
-        given(contestRepository.findAll()).willReturn(listOf(standard, duel))
-
-        assertThat(service.list(null, null, mine = false, processor = null, viewer = null)).containsExactly(standard)
     }
 
     @Test

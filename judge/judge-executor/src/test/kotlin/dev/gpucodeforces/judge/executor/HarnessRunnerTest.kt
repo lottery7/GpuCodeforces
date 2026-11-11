@@ -96,7 +96,7 @@ class HarnessRunnerTest {
         @Language("Python")
         val source = """
             #!/usr/bin/env python3
-            import os, signal, struct, sys, time
+            import os, struct, sys, time
             print("ready garbage that must be ignored", flush=True)
             mode = "$behaviour"
             nonce = None; tests = []; cur = None
@@ -113,7 +113,8 @@ class HarnessRunnerTest {
                 st("load %d 0" % i); st("run %d 0" % i)
                 behaviour = mode.split(",")[i - 1] if "," in mode else mode
                 if behaviour == "hang": time.sleep(60)
-                if behaviour == "crash": os.kill(os.getpid(), signal.SIGSEGV)
+                # The runner consumes the exit status; a real signal also triggers desktop crash reports.
+                if behaviour == "crash": os._exit(128 + 11)
                 if behaviour == "exit": sys.exit(0)
                 if behaviour == "cuda_error": st("test %d runtime_error cudaErrorIllegalAddress (an illegal memory access was encountered)" % i); sys.exit(0)
                 if behaviour == "replay": st("test 1 ok runs 1 time_ns 1 wall_ns 1"); time.sleep(60)

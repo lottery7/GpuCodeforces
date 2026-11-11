@@ -13,11 +13,12 @@ class ContestRatingFinalizer(
     @Scheduled(fixedDelay = 60_000)
     fun finalizeDueContests() {
         val now = Instant.now()
-        val due = contestRepository.findAll().filter { it.ratingAppliedAt == null && it.endAt.isBefore(now) }
-        // In end order within a processor: a rating change has to include every contest of that rating that ended
-        // before it. Ratings of different processors are independent, so one waiting contest holds back only its own.
+        val due = contestRepository.findByFinalizedAtIsNullAndEndAtLessThanEqual(now)
+        // In the order the results become final within a processor: a rating change has to include every contest of
+        // that rating whose results came before it. Ratings of different processors are independent, so one waiting
+        // contest holds back only its own.
         for ((_, contests) in due.groupBy { it.processor }) {
-            for (contest in contests.sortedBy { it.endAt }) {
+            for (contest in contests.sortedBy { it.resultsAt }) {
                 if (!ratingFinalizationService.finalize(contest.id, now)) break
             }
         }

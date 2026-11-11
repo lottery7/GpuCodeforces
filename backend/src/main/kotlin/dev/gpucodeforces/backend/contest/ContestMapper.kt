@@ -37,6 +37,9 @@ fun Contest.toApiModel(
         .opponentId(opponentId?.toString())
         .surrenderedUserId(surrenderedUserId?.toString())
         .resultsPending(resultsPending)
+        .hackEndAt(hackEndAt?.toOffsetDateTime())
+        .finalized(finalizedAt != null)
+        .serverNow(now.toOffsetDateTime())
 }
 
 private fun Instant.toOffsetDateTime(): OffsetDateTime = atOffset(ZoneOffset.UTC)

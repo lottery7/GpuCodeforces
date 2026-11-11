@@ -19,6 +19,8 @@ import dev.gpucodeforces.backend.submission.SubmissionStats
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.backend.user.UserRepository
 import dev.gpucodeforces.backend.user.toApiModel
+import org.springframework.data.domain.Sort
+import org.springframework.data.jpa.domain.Specification
 import dev.gpucodeforces.judge.api.Processors
 import java.math.BigDecimal
 import java.time.Duration
@@ -28,6 +30,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import dev.gpucodeforces.backend.api.model.ContestInput as ContestInputApi
+import jakarta.persistence.criteria.Predicate
 
 @Service
 class ContestService(
@@ -47,17 +50,32 @@ class ContestService(
         processor?.let(processorCatalog::require)
         val now = Instant.now()
         val trimmed = query?.trim()?.lowercase().orEmpty()
-        val filtered = contestRepository.findAll().filter { contest ->
-            contest.format == "standard" && (phase == null || contest.phaseAt(now).value == phase) &&
-                (processor == null || contest.processor == processor) &&
-                (!mine || contest.authors.any { it.id == viewer!!.id }) &&
-                (
-                    trimmed.isEmpty() ||
-                        contest.title.lowercase().contains(trimmed) ||
-                        contest.authors.any { it.handle.lowercase().contains(trimmed) }
-                    )
+        if (phase != null && ContestPhase.entries.none { it.value == phase }) return emptyList()
+        val filter = Specification<Contest> { root, criteria, builder ->
+            val conditions = mutableListOf<Predicate>()
+            conditions += builder.equal(root.get<String>("format"), "standard")
+            when (phase) {
+                "upcoming" -> conditions += builder.greaterThan(root.get("startAt"), now)
+                "live" -> {
+                    conditions += builder.lessThanOrEqualTo(root.get("startAt"), now)
+                    conditions += builder.greaterThan(root.get("endAt"), now)
+                }
+                "finished" -> conditions += builder.lessThanOrEqualTo(root.get("endAt"), now)
+            }
+            if (processor != null) conditions += builder.equal(root.get<String>("processor"), processor)
+            if (mine) conditions += builder.isMember(viewer!!, root.get("authors"))
+            if (trimmed.isNotEmpty()) {
+                val pattern = "%${trimmed.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")}%"
+                val authorMatches = criteria.subquery(Int::class.javaObjectType)
+                val authors = authorMatches.correlate(root).join<Contest, User>("authors")
+                authorMatches.select(builder.literal(1))
+                    .where(builder.like(builder.lower(authors.get("handle")), pattern, '\\'))
+                conditions += builder.or(builder.like(builder.lower(root.get("title")), pattern, '\\'), builder.exists(authorMatches))
+            }
+            builder.and(*conditions.toTypedArray())
         }
-        return if (phase == "finished") filtered.sortedByDescending { it.startAt } else filtered.sortedBy { it.startAt }
+        val direction = if (phase == "finished") Sort.Direction.DESC else Sort.Direction.ASC
+        return contestRepository.findAll(filter, Sort.by(direction, "startAt", "id"))
     }
 
     @Transactional
@@ -74,6 +92,7 @@ class ContestService(
                 authors = resolveAuthors(input.authorIds).toMutableSet(),
             ),
         )
+        contest.hackEndAt = hackEnd(input, contest.endAt)
         saveProblems(contest.id, versions)
         log.info(
             "Contest {} created by {}: {} - {} on {}, problems {}",
@@ -87,6 +106,9 @@ class ContestService(
             .orElseThrow { NotFoundApiException("Контест не найден") }
 
     fun problemsOf(contestId: UUID): List<ContestProblem> = contestProblemRepository.findByIdContestIdOrderByPosition(contestId)
+
+    fun problemOf(contestId: UUID, problemId: String): ContestProblem? =
+        contestProblemRepository.findById(ContestProblemId(contestId, problemId)).orElse(null)
 
     fun isRegistered(contestId: UUID, userId: UUID): Boolean =
         contestRegistrationRepository.existsByIdContestIdAndIdUserId(contestId, userId)
@@ -106,6 +128,7 @@ class ContestService(
         contest.title = input.title
         contest.startAt = input.startAt.toInstant()
         contest.endAt = input.endAt.toInstant()
+        contest.hackEndAt = hackEnd(input, contest.endAt)
         // Only before the start, checked above: once it runs, submissions are judged on this processor.
         contest.processor = input.processor
         contest.authors = resolveAuthors(input.authorIds).toMutableSet()
@@ -214,6 +237,7 @@ class ContestService(
     }
 
     private fun validate(input: ContestInputApi) {
+        if ((input.hackDurationMinutes ?: 0) !in 0..MAX_HACK_MINUTES) throw BadRequestException("Недопустимая длительность периода взломов")
         processorCatalog.require(input.processor)
         val format = input.format?.value ?: "standard"
         if (format != "standard" || input.opponentId != null) throw BadRequestException("Для дуэли используйте поиск соперника")
@@ -223,6 +247,10 @@ class ContestService(
             throw BadRequestException("Конец контеста должен быть позже начала")
         }
     }
+
+    /** End of the hack period: `hackDurationMinutes` after the end, null when there is none. */
+    private fun hackEnd(input: ContestInputApi, endAt: Instant): Instant? =
+        input.hackDurationMinutes?.takeIf { it > 0 }?.let { endAt.plus(Duration.ofMinutes(it.toLong())) }
 
     private fun resolveAuthors(authorIds: Set<String>): List<User> = authorIds.map { id ->
         val uuid = id.toUuidOrBadRequest("Автор не найден")
@@ -244,6 +272,11 @@ class ContestService(
         contestProblemRepository.saveAll(
             versions.mapIndexed { index, version -> ContestProblem(contestId, version.problemId, index, version.id) },
         )
+    }
+
+    companion object {
+        /** A week. */
+        private const val MAX_HACK_MINUTES = 10080
     }
 }
 

@@ -32,7 +32,8 @@ import org.slf4j.LoggerFactory
  *
  * Every key is optional; without the comment the submission is accepted. The mock does not run the problem's
  * generator, so the number of tests comes from the directive too: test 1 is a sample, the rest are hidden.
- * `score` is in the units of the submission's processor; `time-ms` is its older name.
+ * `score` is in the units of the submission's processor; `time-ms` is its older name. `custom-verdict` is the verdict
+ * on a custom test (a hack), for a solution that the pretended tests accept.
  */
 data class MockDirective(
     val verdict: Verdict = Verdict.ACCEPTED,
@@ -42,7 +43,17 @@ data class MockDirective(
     val score: Double = 1.0,
     /** Number of tests the problem is pretended to have. */
     val tests: Int = 3,
+    /** Verdict on the first custom test of the problem (`custom-verdict`); null accepts it. */
+    val customVerdict: Verdict? = null,
 ) {
+    /** What the directive means for [problem]: its custom tests follow the pretended ones, or are the only test. */
+    fun forProblem(problem: ProblemSpec): MockDirective = when {
+        problem.customOnly -> copy(verdict = customVerdict ?: Verdict.ACCEPTED, test = 1, tests = 1)
+        problem.customTests.isNotEmpty() && verdict == Verdict.ACCEPTED ->
+            copy(verdict = customVerdict ?: Verdict.ACCEPTED, test = tests + 1, tests = tests + problem.customTests.size)
+        else -> this
+    }
+
     companion object {
         private val LINE = Regex("""judge-mock:(.*)""")
         private const val MAX_TESTS = 200
@@ -54,7 +65,7 @@ data class MockDirective(
                 require('=' in it) { "judge-mock: expected key=value, got '$it'" }
                 it.substringBefore('=') to it.substringAfter('=')
             }
-            val unknown = values.keys - setOf("verdict", "test", "score", "time-ms", "tests")
+            val unknown = values.keys - setOf("verdict", "test", "score", "time-ms", "tests", "custom-verdict")
             require(unknown.isEmpty()) { "judge-mock: unknown keys $unknown" }
             require("score" !in values || "time-ms" !in values) { "judge-mock: score and time-ms are the same key, give one" }
             return MockDirective(
@@ -67,6 +78,9 @@ data class MockDirective(
                 tests = values["tests"]?.let { v ->
                     v.toIntOrNull()?.takeIf { it in 1..MAX_TESTS } ?: throw IllegalArgumentException("judge-mock: tests must be in 1..$MAX_TESTS")
                 } ?: 3,
+                customVerdict = values["custom-verdict"]?.let { name ->
+                    Verdict.entries.find { it.name == name } ?: throw IllegalArgumentException("judge-mock: unknown custom verdict '$name'")
+                },
             )
         }
     }
@@ -173,7 +187,7 @@ class MockJudge(
             return JudgeResult(Verdict.INTERNAL_ERROR, message = "Invalid judge job")
         }
         val directive = try {
-            MockDirective.parse(job.source)
+            MockDirective.parse(job.source).forProblem(job.problem)
         } catch (e: IllegalArgumentException) {
             log.warn("Bad mock directive: {}", e.message)
             return JudgeResult(Verdict.INTERNAL_ERROR, message = e.message)

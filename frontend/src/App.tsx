@@ -20,6 +20,7 @@ const NewDuel = lazy(() => import('./pages/NewDuel'));
 const Auth = lazy(() => import('./pages/Auth'));
 const Profile = lazy(() => import('./pages/Profile'));
 const Rating = lazy(() => import('./pages/Rating'));
+const Virtual = lazy(() => import('./pages/Virtual'));
 
 const navigation = [
   ['/problems', 'Задачи'], ['/contests', 'Соревнования'], ['/duels', 'Дуэли'],
@@ -39,7 +40,8 @@ export default function App() {
   const session = useSession();
   const location = useLocation();
   const navigate = useNavigate();
-  const contestId = /^\/contest\/([^/]+)/.exec(location.pathname)?.[1] ?? (location.pathname.startsWith('/problem/') ? new URLSearchParams(location.search).get('contest') ?? undefined : undefined);
+  const context = location.pathname.startsWith('/problem/') ? new URLSearchParams(location.search).get('contest') : null;
+  const contestId = /^\/contest\/([^/]+)/.exec(location.pathname)?.[1] ?? (context?.startsWith('upsolve:') ? context.slice(8) : context && context !== 'practice' && !context.startsWith('virtual:') ? context : undefined);
   const room = useQuery({ queryKey: ['contest', contestId, session.user?.id], queryFn: ({ signal }) => api.getContest(contestId ?? '', signal), enabled: Boolean(contestId) && !session.isLoading });
   const duelRoom = room.data?.format === 'duel';
   const menu = useRef<HTMLDetailsElement>(null);
@@ -103,6 +105,8 @@ export default function App() {
           <Route path="/login" element={<Auth key="login" mode="login" />} />
           <Route path="/register" element={<Auth key="register" mode="register" />} />
           <Route path="/rating" element={<Rating />} />
+          <Route path="/virtual" element={<Virtual />} />
+          <Route path="/virtual/:id" element={<Virtual />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="*" element={<><PageHeader title="Страница не найдена" /><Link to="/problems">Перейти к задачам</Link></>} />
         </Routes>

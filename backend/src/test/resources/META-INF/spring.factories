@@ -1,0 +1,2 @@
+org.springframework.test.context.ContextCustomizerFactory=dev.gpucodeforces.backend.QueryPlanContextCustomizerFactory
+org.springframework.test.context.TestExecutionListener=dev.gpucodeforces.backend.QueryPlanTestExecutionListener

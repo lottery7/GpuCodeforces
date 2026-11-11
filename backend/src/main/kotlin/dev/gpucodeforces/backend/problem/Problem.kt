@@ -5,9 +5,11 @@ import jakarta.persistence.Entity
 import jakarta.persistence.Id
 import jakarta.persistence.Table
 import org.hibernate.annotations.JdbcTypeCode
+import org.intellij.lang.annotations.Language
 import org.hibernate.type.SqlTypes
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Query
+import org.springframework.data.jpa.repository.Modifying
 import java.time.Instant
 import java.util.UUID
 
@@ -83,11 +85,27 @@ class ProblemVersion(
     override fun hashCode() = id.hashCode()
 }
 
-interface ProblemRepository : JpaRepository<Problem, String>
+interface ProblemRepository : JpaRepository<Problem, String> {
+    /** Published problems that come from the problem repository; comparisons are created on the platform. */
+    @Query("SELECT p.id FROM Problem p WHERE p.currentVersionId IS NOT NULL AND p.source = 'package'")
+    fun findActivePackageIds(): List<String>
+
+    @Modifying(flushAutomatically = true)
+    @Query("UPDATE Problem p SET p.currentVersionId = NULL WHERE p.id IN :ids")
+    fun unpublish(ids: Collection<String>): Int
+}
 
 interface ProblemVersionRepository : JpaRepository<ProblemVersion, UUID> {
     fun findByProblemIdAndContentHash(problemId: String, contentHash: String): ProblemVersion?
 
-    @Query("SELECT v FROM ProblemVersion v WHERE v.id IN (SELECT p.currentVersionId FROM Problem p)")
+    /** The lateral lookup reads each current version by its key: a join would go through the whole version history. */
+    @Query(value = CURRENT_VERSIONS, nativeQuery = true)
     fun findCurrent(): List<ProblemVersion>
 }
+
+@Language("SQL")
+private const val CURRENT_VERSIONS = """
+    SELECT v.* FROM gpucodeforces.problems p
+    JOIN LATERAL (SELECT * FROM gpucodeforces.problem_versions WHERE id = p.current_version_id LIMIT 1) v ON true
+    WHERE p.current_version_id IS NOT NULL
+"""

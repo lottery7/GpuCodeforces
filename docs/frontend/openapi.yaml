@@ -487,7 +487,7 @@ paths:
       parameters:
         - {name: userId, in: query, description: По умолчанию текущий пользователь; гостю нужно указать userId., schema: {type: string}}
         - {name: problemId, in: query, schema: {type: string}}
-        - {name: context, in: query, description: 'all - все посылки, practice - практика, иначе ID контеста.', schema: {type: string, default: all}}
+        - {name: context, in: query, description: 'all, practice, ID контеста, upsolve:ID контеста или virtual:ID собственной попытки.', schema: {type: string, default: all}}
         - {name: status, in: query, description: Статус из Submission., schema: {type: string}}
         - {$ref: '#/components/parameters/Offset'}
         - {$ref: '#/components/parameters/Limit'}
@@ -517,6 +517,7 @@ paths:
               properties:
                 problemId: {type: string}
                 contestId: {type: string, description: Не указан - практика.}
+                context: {type: string, description: 'practice, ID контеста, upsolve:ID или virtual:ID попытки. При указании contestId должен соответствовать контексту.'}
                 code: {type: string}
                 processor: {type: string, description: 'Процессор задачи; в контесте - процессор контеста.'}
                 language: {type: string, description: 'Язык, разрешённый задачей на этом процессоре.'}
@@ -538,7 +539,9 @@ paths:
           description: |
             Всегда содержит passedTests, totalTests, previousBestScore, metrics и environmentMarkdown.
             Автору также возвращаются code и diagnostic; diagnostic может быть пустой строкой.
-            Для остальных пользователей code и diagnostic отсутствуют.
+            После окончания приёма решений официальный исходник доступен другим посетителям,
+            кроме пользователей с активной виртуальной попыткой. sourcePublic отражает доступ.
+            Чужие виртуальные отправки недоступны. diagnostic возвращается только автору.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Submission'}
@@ -549,7 +552,7 @@ paths:
     post:
       operationId: recheckSubmission
       summary: Повторить проверку после сбоя
-      description: Только автору после system_error или measurement_error. Сохраняет исходные код, контекст, версии и время отправки; доступно после завершения контеста.
+      description: Только автору после system_error или measurement_error. Сохраняет код, контекст, версии и время отправки. После окончательного завершения контеста официальные отправки перепроверять нельзя; recheckAllowed отражает доступность.
       security: [{session: []}]
       responses:
         '202':
@@ -684,6 +687,92 @@ paths:
                       description: ID задачи -> секунды от начала контеста до первой принятой посылки; нерешенных задач в объекте нет.
                       additionalProperties: {type: integer}
         default: {$ref: '#/components/responses/Error'}
+  /contests/{id}/virtual:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      operationId: startVirtual
+      security: [{session: []}]
+      responses:
+        '201':
+          description: Новая или уже активная попытка этого контеста
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/VirtualParticipation'}
+        default: {$ref: '#/components/responses/Error'}
+  /virtual:
+    get:
+      operationId: listVirtual
+      security: [{session: []}]
+      responses:
+        '200':
+          description: Собственные попытки, новые первыми
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/VirtualParticipation'}
+        default: {$ref: '#/components/responses/Error'}
+  /virtual/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      operationId: getVirtual
+      security: [{session: []}]
+      responses:
+        '200':
+          description: Собственная попытка с результатами; таймер задаёт сервер
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/VirtualParticipation'}
+        default: {$ref: '#/components/responses/Error'}
+  /hacks/{id}/retry:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      operationId: retryHack
+      security: [{session: []}]
+      responses:
+        '202':
+          description: Повтор после сбоя, только автору
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Hack'}
+        default: {$ref: '#/components/responses/Error'}
+  /hacks:
+    post:
+      operationId: createHack
+      security: [{session: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [submissionId, testJson]
+              properties:
+                submissionId: {type: string}
+                testJson: {type: string, maxLength: 65536, description: 'JSON с scalars и inputs. Только данные, без ожидаемого ответа и исполняемого кода.'}
+      responses:
+        '202':
+          description: Взлом принят в очередь
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Hack'}
+        default: {$ref: '#/components/responses/Error'}
+    get:
+      operationId: listHacks
+      parameters:
+        - {name: contestId, in: query, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: Взломы контеста
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Hack'}
+        default: {$ref: '#/components/responses/Error'}
   /admin/console:
     post:
       operationId: runAdminScript
@@ -744,7 +833,7 @@ components:
   parameters:
     Id: {name: id, in: path, required: true, schema: {type: string}}
     Query: {name: q, in: query, description: 'Подстрока названия, номера задачи или ника без учета регистра и пробелов по краям.', schema: {type: string}}
-    Context: {name: context, in: query, description: 'practice - практика, иначе ID контеста. Определяет версию задачи и результаты; до начала доступ только авторам.', schema: {type: string, default: practice}}
+    Context: {name: context, in: query, description: 'practice, ID контеста, upsolve:ID контеста, virtual:ID собственной попытки.', schema: {type: string, default: practice}}
     Offset: {name: offset, in: query, schema: {type: integer, minimum: 0, default: 0}}
     Limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
   responses:
@@ -759,6 +848,37 @@ components:
             properties:
               message: {type: string}
   schemas:
+    VirtualParticipation:
+      type: object
+      description: |
+        Виртуальная попытка контеста. Результат считается как строка таблицы контеста, от начала попытки: число
+        решённых задач и время сдачи каждой.
+      required: [id, contestId, startedAt, endsAt, serverNow, pending, solved, totalSeconds, times]
+      properties:
+        id: {type: string}
+        contestId: {type: string}
+        startedAt: {type: string, format: date-time}
+        endsAt: {type: string, format: date-time}
+        serverNow: {type: string, format: date-time}
+        pending: {type: boolean, description: 'Есть посылки попытки, которые ещё проверяются.'}
+        solved: {type: integer}
+        totalSeconds: {type: integer, description: Сумма времен сдачи решенных задач.}
+        times:
+          type: object
+          description: ID задачи -> секунды от начала попытки до первой принятой посылки; нерешенных задач в объекте нет.
+          additionalProperties: {type: integer}
+    Hack:
+      type: object
+      required: [id, contestId, userId, submissionId, problemId, status, diagnostic, createdAt]
+      properties:
+        id: {type: string}
+        contestId: {type: string}
+        userId: {type: string}
+        submissionId: {type: string}
+        problemId: {type: string}
+        status: {type: string, enum: [queued, successful, unsuccessful, invalid, system_error]}
+        diagnostic: {type: string}
+        createdAt: {type: string, format: date-time}
     DuelMode:
       type: string
       enum: [random, invite]
@@ -1006,8 +1126,12 @@ components:
         score:
           allOf: [{$ref: '#/components/schemas/Score'}]
           nullable: true
-          description: Для accepted - score посылки (максимум по замерным тестам); для остальных статусов null.
+          description: Для accepted - результат по метрике формата задачи; для остальных статусов null.
         comparable: {type: boolean, description: Результат может участвовать в текущих рекордах своего контекста.}
+        context: {type: string, description: Контекст отправки для ссылок и фильтров.}
+        hackable: {type: boolean, description: 'В детали посылки; текущий пользователь может взломать это решение (POST /hacks).'}
+        sourcePublic: {type: boolean, description: Официальный исходник опубликован после окончания приёма решений.}
+        recheckAllowed: {type: boolean, description: 'В детали посылки; автор может повторить проверку после сбоя.'}
         passedTests: {type: integer, description: В детали посылки; число пройденных тестов.}
         totalTests: {type: integer, nullable: true, description: В детали посылки; null до подготовки тестов.}
         previousBestScore:
@@ -1020,7 +1144,7 @@ components:
           additionalProperties: {type: number}
         environmentMarkdown: {type: string, description: В детали посылки; сохраненное оборудование и методика замера.}
         measurement: {$ref: '#/components/schemas/MeasurementSummary'}
-        code: {type: string, description: 'Только автору в GET /submissions/{id}.'}
+        code: {type: string, description: 'Автору или при sourcePublic=true в GET /submissions/{id}.'}
         diagnostic: {type: string, description: 'Только автору в GET /submissions/{id}.'}
         guessResult:
           allOf:
@@ -1059,6 +1183,9 @@ components:
         registered: {type: boolean, description: Участие текущего пользователя; для гостя false.}
         processor: {type: string, description: 'Процессор всех посылок контеста; выбирается при создании, после начала не меняется.'}
         rulesMarkdown: {type: string, description: 'В детали контеста; правила подсчета и список задач. До начала обычным посетителям только общие правила без названий задач.'}
+        hackEndAt: {type: string, format: date-time, nullable: true, description: Конец периода взломов; null - взломов нет.}
+        finalized: {type: boolean, description: 'Результаты окончательные: взломы разобраны, рейтинг применён; открыты дорешивание и виртуальное участие.'}
+        serverNow: {type: string, format: date-time, description: Время сервера для таймеров.}
     ContestInput:
       type: object
       description: |
@@ -1074,3 +1201,4 @@ components:
         authorIds: {type: array, minItems: 1, uniqueItems: true, items: {type: string}}
         problemIds: {type: array, minItems: 1, uniqueItems: true, items: {type: string}}
         processor: {type: string, description: Процессор контеста из GET /processors.}
+        hackDurationMinutes: {type: integer, minimum: 0, maximum: 10080, default: 0, description: Длительность периода взломов после endAt; 0 отключает взломы.}

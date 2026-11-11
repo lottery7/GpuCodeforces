@@ -47,6 +47,7 @@ import org.assertj.core.api.Assertions.within
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
+import org.intellij.lang.annotations.Language
 import org.mockito.ArgumentMatchers.any
 import org.mockito.BDDMockito.given
 import org.mockito.Mockito.mock
@@ -58,6 +59,7 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 import org.springframework.test.context.bean.override.mockito.MockitoBean
+import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.transaction.support.TransactionTemplate
 import org.springframework.test.web.servlet.client.RestTestClient
 import org.testcontainers.junit.jupiter.Container
@@ -73,6 +75,7 @@ import java.util.UUID
 @Tag("integration")
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@AllowFullScan("reference_jobs", "from gpucodeforces\\.reference_jobs rj1_0\\s*$", "Every test starts without reference jobs: its setup deletes them all")
 class ReferenceMeasurementsIntegrationTest {
     @LocalServerPort var port: Int = 0
     @Autowired lateinit var references: ReferenceMeasurements
@@ -86,6 +89,7 @@ class ReferenceMeasurementsIntegrationTest {
     @Autowired lateinit var json: JsonMapper
     @Autowired lateinit var submissions: SubmissionRepository
     @Autowired lateinit var submissionService: SubmissionService
+    @Autowired lateinit var jdbc: JdbcTemplate
     @Autowired lateinit var contests: ContestRepository
     @Autowired lateinit var contestProblems: ContestProblemRepository
     @Autowired lateinit var users: UserRepository
@@ -100,7 +104,9 @@ class ReferenceMeasurementsIntegrationTest {
 
     @BeforeEach
     fun setup() {
-        submissions.deleteAll()
+        @Language("SQL")
+        val cleanup = "TRUNCATE TABLE gpucodeforces.judging_runs, gpucodeforces.hacks, gpucodeforces.submissions"
+        jdbc.execute(cleanup)
         Files.list(root).use { children -> children.forEach { directory ->
             Files.walk(directory).use { paths -> paths.sorted(Comparator.reverseOrder()).forEach(Files::delete) }
         } }
@@ -202,6 +208,7 @@ class ReferenceMeasurementsIntegrationTest {
     }
 
     @Test
+    @AllowFullScan("submissions", "select count\\(\\*\\) from gpucodeforces\\.submissions", "The test checks that reference runs create no submissions at all")
     fun `baseline is measured through full judge and refreshed for actual hardware and changed tests`() {
         val (directory, original) = importProblem("optimization")
         assertThat(references.view(original, GPU)!!.baselineScore).isNull()

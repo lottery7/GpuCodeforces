@@ -50,7 +50,7 @@ data class PreparedProblem(val hash: String, val dir: Path, val inputsDir: Path,
  * @param problemFault true if the problem's generator/reference is broken (retrying will not help),
  * false for infrastructure failures.
  */
-class ProblemPreparationException(msg: String, val problemFault: Boolean) : RuntimeException(msg)
+class ProblemPreparationException(msg: String, val problemFault: Boolean, val invalidInput: Boolean = false) : RuntimeException(msg)
 
 /**
  * Generates the tests a problem's generator declares for one processor, their inputs and reference answers, once per
@@ -94,7 +94,9 @@ class ProblemStore(
      * upgrade of any of them must not keep serving reference answers computed by the old one.
      */
     fun hash(spec: ProblemSpec, processor: String): String = Hashing.sha256(
-        canonical.writeValueAsString(mapOf("signature" to spec.signature, "generator" to spec.generator)),
+        canonical.writeValueAsString(
+            mapOf("signature" to spec.signature, "generator" to spec.generator, "customTests" to spec.customTests, "customOnly" to spec.customOnly),
+        ),
         declaredIds(spec).joinToString(","), processor,
         pytoolsHash, runtime.torchVersion ?: "", device, PREP_FORMAT,
     )
@@ -168,8 +170,17 @@ class ProblemStore(
         } catch (e: JacksonException) {
             broken("$TESTS is not a list of tests: ${e.originalMessage}")
         }
-        val errors = GeneratedTest.validate(spec.signature, tests, limits, declaredIds(spec), processor)
+        val errors = GeneratedTest.validate(
+            spec.signature, tests, limits.copy(maxTests = limits.maxTests + spec.customTests.size), declaredIds(spec), processor,
+            requireMeasured = !spec.customOnly,
+        )
         if (errors.isNotEmpty()) broken("invalid tests: ${errors.take(20).joinToString("; ")}")
+        // custom tests come last, for every processor and unmeasured: the generator's own tests keep their numbers
+        val custom = tests.takeLast(spec.customTests.size)
+        if (custom.size != spec.customTests.size || custom.any { it.measure || it.processors != null }) {
+            broken("the custom tests are not the last ${spec.customTests.size} tests, unmeasured")
+        }
+        if (spec.customOnly && tests.size != 1) broken("customOnly: ${tests.size} tests were generated instead of one")
         return tests
     }
 
@@ -182,7 +193,12 @@ class ProblemStore(
             val specFile = tmp.resolve("spec.json")
             val prepareLimits = mapOf("maxTests" to limits.maxTests, "maxTestBytes" to limits.maxTestBytes)
             specFile.writeText(
-                canonical.writeValueAsString(mapOf("signature" to spec.signature, "processors" to declaredIds(spec), "limits" to prepareLimits)),
+                canonical.writeValueAsString(
+                    mapOf(
+                        "signature" to spec.signature, "processors" to declaredIds(spec), "limits" to prepareLimits,
+                        "customTests" to spec.customTests, "customOnly" to spec.customOnly,
+                    ),
+                ),
             )
             val source = tmp.resolve("problem.py")
             source.writeText(spec.generator.source)
@@ -216,6 +232,7 @@ class ProblemStore(
                 if (slot != null) gpus.release(slot)
             }
             if (!res.ok) {
+                if (res.exitCode == 3) throw ProblemPreparationException("Invalid custom test", true, true)
                 val problemFault = res.exitCode == 2 && !res.timedOut
                 log.error("Problem {} preparation failed: {}; sandbox log: {}", spec.id, res.describe(), Sandbox.logTail(tmp) ?: "-")
                 throw ProblemPreparationException(

@@ -8,7 +8,7 @@ import { GPU_CUDA, useProcessors } from '../processors';
 import { Empty, ErrorMessage, LoginRequired, PageHeader, UserLink, useFeedbackVisibility } from '../ui';
 import { difficultyLabels, phaseOf } from '../utils';
 
-type Values = { title: string; startAt: string; duration: string; processor: string; authors: User[]; problemIds: string[] };
+type Values = { title: string; startAt: string; duration: string; hackDuration: string; processor: string; authors: User[]; problemIds: string[] };
 
 function moscowInput(date: string) {
   return new Date(Date.parse(date) + 3 * 3600000).toISOString().slice(0, 16);
@@ -70,6 +70,7 @@ export default function ContestEditor() {
       title: item?.title ?? '',
       startAt: moscowInput(item?.startAt ?? new Date(Date.now() + 3600000).toISOString()),
       duration: String(item ? Math.round((Date.parse(item.endAt) - Date.parse(item.startAt)) / 60000) : 120),
+      hackDuration: String(item?.hackEndAt ? Math.round((Date.parse(item.hackEndAt) - Date.parse(item.endAt)) / 60000) : 0),
       processor: item?.processor ?? GPU_CUDA,
       authors: item?.authors ?? [user],
       problemIds: [...(item?.problemIds ?? [])],
@@ -162,6 +163,7 @@ export default function ContestEditor() {
       endAt: end.toISOString(),
       authorIds: values.authors.map(author => author.id),
       problemIds: values.problemIds,
+      hackDurationMinutes: Number(values.hackDuration),
       processor: values.processor,
       format: 'standard',
     });
@@ -180,6 +182,7 @@ export default function ContestEditor() {
           {(catalog.processors.some(item => item.id === values.processor) ? catalog.processors : [...catalog.processors, { id: values.processor, title: values.processor, model: '' }]).map(item => <option key={item.id} value={item.id}>{item.title}{item.model && ` (${item.model})`}</option>)}
         </select><span className="small muted">Все посылки контеста проверяются на нём; в списке задач остаются только задачи, которые можно сдавать на этом процессоре.</span></label>
         <fieldset className="contest-authors" disabled={save.isPending}>
+          <label className="field"><span>Период взломов, минут (0 — отключён)</span><input type="number" min={0} max={10080} step={1} required value={values.hackDuration} onChange={event => update({ hackDuration: event.target.value })} /></label>
           <legend>Авторы</legend>
           <p className="small muted">{values.authors.some(author => author.id === user.id) ? 'Авторы могут изменять контест до начала.' : 'После сохранения вы потеряете право редактирования.'}</p>
           <div className="contest-selected-authors">{values.authors.map(author => <div className="contest-selected-author" key={author.id}><UserLink user={author} /><button type="button" className="text-link" aria-label={`Убрать ${author.handle}`} disabled={values.authors.length === 1} title={values.authors.length === 1 ? 'Нужен хотя бы один автор' : undefined} onClick={() => update({ authors: values.authors.filter(person => person.id !== author.id) })}>Убрать</button></div>)}</div>

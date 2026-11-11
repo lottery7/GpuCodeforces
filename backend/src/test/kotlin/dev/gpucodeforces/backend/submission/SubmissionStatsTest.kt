@@ -17,7 +17,7 @@ class SubmissionStatsTest {
         val contest = UUID.randomUUID()
         val start = Instant.parse("2026-01-01T12:00:00Z")
         val end = start.plusSeconds(3600)
-        given(repository.countInContestWithStatus(contest, SubmissionStatus.PENDING)).willReturn(9)
+        given(repository.countInContextWithStatus(contest.toString(), SubmissionStatus.PENDING)).willReturn(9)
         given(repository.countInContestWithStatusDuring(contest, SubmissionStatus.PENDING, start, end)).willReturn(2)
 
         assertThat(stats.pendingInContest(contest, start, end)).isEqualTo(2)
@@ -32,7 +32,7 @@ class SubmissionStatsTest {
         val start = Instant.parse("2026-01-01T12:00:00Z")
         val end = start.plusSeconds(3600)
         val cutoff = end.plusSeconds(1800)
-        val scope = ResultScope(contest, mapOf("task" to "hash"), "environment", start, end, cutoff)
+        val scope = ResultScope(contest, mapOf("task" to "hash"), "environment", startAt = start, endAt = end, finishedBefore = cutoff)
         fun accepted(score: String, finishedAt: Instant?, author: UUID = user) = AcceptedSubmission(
             UUID.randomUUID(), author, "task", contest, "hash", GPU, BigDecimal(score), start.plusSeconds(10), "environment", finishedAt = finishedAt,
         )
@@ -44,6 +44,10 @@ class SubmissionStatsTest {
         assertThat(stats.bestScore(user, "task", scope, GPU)).isEqualByComparingTo("4")
         assertThat(stats.leaders("task", scope, GPU, 20).map { it.submission }).containsExactly(legacy, atCutoff)
         assertThat(stats.bestScore(user, "task", scope.copy(finishedBefore = null), GPU)).isEqualByComparingTo("1")
+        given(repository.findWithStatus(SubmissionStatus.ACCEPTED, scope.judgeHashes.keys)).willReturn(listOf(after, atCutoff, legacy))
+        assertThat(stats.problemResults(scope, legacyUser, listOf(GPU)).getValue("task").solved).isTrue()
+        given(repository.findWithStatus(SubmissionStatus.ACCEPTED, scope.judgeHashes.keys)).willReturn(listOf(after))
+        assertThat(stats.problemResults(scope, user, listOf(GPU)).getValue("task").solved).isFalse()
     }
 
     @Test
@@ -52,7 +56,7 @@ class SubmissionStatsTest {
         val contest = UUID.randomUUID()
         val start = Instant.parse("2026-01-01T12:00:00Z")
         val end = start.plusSeconds(3600)
-        val scope = ResultScope(contest, mapOf("task" to "hash"), "original-environment", start, end)
+        val scope = ResultScope(contest, mapOf("task" to "hash"), "original-environment", startAt = start, endAt = end)
         fun accepted(time: String, at: Instant, environment: String) = AcceptedSubmission(
             UUID.randomUUID(), user, "task", contest, "hash", GPU, BigDecimal(time), at, environment,
         )
@@ -106,7 +110,7 @@ class SubmissionStatsTest {
         val accepted = AcceptedSubmission(UUID.randomUUID(), user, "guess", contest, "hash", GPU, null, Instant.now())
         given(repository.findWithStatus(SubmissionStatus.ACCEPTED, scope.judgeHashes.keys)).willReturn(listOf(accepted))
         given(repository.findWithStatus(SubmissionStatus.ACCEPTED, listOf("guess"))).willReturn(listOf(accepted))
-        given(repository.findWithStatusInContest(SubmissionStatus.ACCEPTED, contest)).willReturn(listOf(accepted))
+        given(repository.findWithStatusInContext(SubmissionStatus.ACCEPTED, contest.toString())).willReturn(listOf(accepted))
 
         assertThat(stats.firstAcceptedInContest(contest)).containsEntry(user, mapOf("guess" to accepted.createdAt))
         assertThat(stats.bestScore(user, "guess", contest, "hash", GPU)).isNull()
@@ -125,7 +129,7 @@ class SubmissionStatsTest {
         val coding = AcceptedSubmission(UUID.randomUUID(), user, "coding", contest, "hash", GPU, BigDecimal("2.5"), start.plusSeconds(60))
         val later = AcceptedSubmission(UUID.randomUUID(), user, "coding", contest, "hash", GPU, BigDecimal("1.25"), start.plusSeconds(120))
         val guess = AcceptedSubmission(UUID.randomUUID(), user, "guess", contest, "hash", GPU, null, start.plusSeconds(90))
-        given(repository.findWithStatusInContest(SubmissionStatus.ACCEPTED, contest)).willReturn(listOf(later, coding, guess))
+        given(repository.findWithStatusInContext(SubmissionStatus.ACCEPTED, contest.toString())).willReturn(listOf(later, coding, guess))
 
         assertThat(stats.firstAcceptedInContest(contest))
             .containsEntry(user, mapOf("coding" to coding.createdAt, "guess" to guess.createdAt))
@@ -142,7 +146,7 @@ class SubmissionStatsTest {
         fun submission(
             time: String?, at: Instant = start.plusSeconds(60), environment: String? = "captured",
             versionId: UUID = version, problem: String = "coding", hash: String = "hash", contestId: UUID = contest, processor: String = GPU,
-        ) = AcceptedSubmission(UUID.randomUUID(), user, problem, contestId, hash, processor, time?.let(::BigDecimal), at, environment, versionId)
+        ) = AcceptedSubmission(UUID.randomUUID(), user, problem, contestId, hash, processor, time?.let(::BigDecimal), at, environment, problemVersionId = versionId)
         val early = submission("4", at = start)
         val later = submission("2", at = start.plusSeconds(300))
         val lastInstant = submission("1.5", at = end.minusNanos(1))
@@ -152,7 +156,7 @@ class SubmissionStatsTest {
             submission("0.05", problem = "other"), submission("0.06", hash = "other"),
             submission("0.07", contestId = UUID.randomUUID()), submission("0.08", processor = "rtl"), submission(null),
         )
-        given(repository.findWithStatusInContest(SubmissionStatus.ACCEPTED, contest)).willReturn(ignored + early + later + lastInstant)
+        given(repository.findWithStatusInContext(SubmissionStatus.ACCEPTED, contest.toString())).willReturn(ignored + early + later + lastInstant)
 
         assertThat(stats.duelBestScores(scope, version, GPU, start, end)).containsExactlyEntriesOf(mapOf(user to BigDecimal("1.5")))
     }

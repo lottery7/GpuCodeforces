@@ -54,6 +54,19 @@ class Contest(
     @Column(name = "final_duel_results", columnDefinition = "jsonb")
     var finalDuelResults: List<FinalDuelResult>? = null,
 ) {
+    /** End of the hack period after [endAt]; null when the contest has none. */
+    @Column(name = "hack_end_at")
+    var hackEndAt: Instant? = null
+
+    /** When the official results became final: hacks are over, everything is rejudged and the rating is applied. */
+    @Column(name = "finalized_at")
+    var finalizedAt: Instant? = null
+
+    /** When the results can become final at the earliest. */
+    val resultsAt: Instant get() = hackEndAt ?: endAt
+
+    fun hacksOpen(now: Instant): Boolean = !now.isBefore(endAt) && hackEndAt?.isAfter(now) == true && finalizedAt == null
+
     constructor(title: String, startAt: Instant, endAt: Instant, processor: String) :
         this(UUID.randomUUID(), title, startAt, endAt, processor)
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useLocation, useParams, useSearchParams } from 'react-router';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import { api } from '../api/client';
 import DuelBoard from '../components/DuelBoard';
 import type { Problem } from '../api/types';
@@ -8,6 +8,7 @@ import { useSession } from '../auth';
 import { GPU_CUDA, useProcessors } from '../processors';
 import { Empty, ErrorMessage, Markdown, PageHeader, Status, Tabs, UserLink } from '../ui';
 import { canJoinContest, dateTime, difficultyLabels, formatLabels, phaseOf, problemPath, solveTime, statusLabels } from '../utils';
+import { HackList } from '../components/Hacks';
 
 function countdown(value: string, now: number) {
   const seconds = Math.max(0, Math.ceil((Date.parse(value) - now) / 1000));
@@ -44,6 +45,8 @@ function PersonalStatus({ problem }: { problem: Problem }) {
 export default function Contest() {
   const { id = '' } = useParams();
   const [params] = useSearchParams();
+  const navigate = useNavigate();
+  const requestedUpsolving = params.get('mode') === 'upsolving';
   const { user, isLoading } = useSession();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -58,32 +61,41 @@ export default function Contest() {
   const contest = useQuery({
     queryKey: ['contest', id, user?.id],
     queryFn: async ({ signal }) => {
-      const startedAt = Date.now();
+      const requestedAt = Date.now();
       const result = await api.getContest(id, signal);
+      const startedAt = result.serverNow ? Date.parse(result.serverNow) - Math.max(0, Date.now() - requestedAt) : requestedAt;
       contestSnapshot.current = { id, userId: user?.id, startedAt };
       return result;
     },
     enabled: Boolean(id) && !isLoading,
     refetchInterval: query => {
       const snapshot = contestSnapshot.current;
-      return query.state.data && !query.state.data.resultsPending && snapshot?.id === id && snapshot.userId === user?.id && snapshot.startedAt >= Date.parse(query.state.data.endAt) ? false : 5000;
+      const data = query.state.data;
+      if (data?.format !== 'duel' && data?.finalized !== undefined) return data.finalized ? false : 5000;
+      return data && data.finalized !== false && !data.resultsPending && snapshot?.id === id && snapshot.userId === user?.id && snapshot.startedAt >= Date.parse(data.endAt) ? false : 5000;
     },
+
   });
   const item = contest.data;
-  const phase = item ? phaseOf(item) : 'upcoming';
+  const upsolving = requestedUpsolving && item?.format !== 'duel';
+  const context = upsolving ? `upsolve:${id}` : id;
+  const clockOffset = item?.serverNow ? Date.parse(item.serverNow) - contest.dataUpdatedAt : 0;
+  const serverNow = now + clockOffset;
+  const phase = item ? phaseOf(item, serverNow) : 'upcoming';
   const author = Boolean(user && item?.authors.some(person => person.id === user.id));
-  const selected = ['tasks', 'standings', 'rules'].find(tab => tab === params.get('tab')) ?? 'tasks';
+  const selected = ['tasks', 'standings', 'rules', 'hacks'].find(tab => tab === params.get('tab')) ?? 'tasks';
   const tasks = useQuery({
-    queryKey: ['contest-tasks', id, user?.id],
-    queryFn: ({ signal }) => api.allProblems({ context: id }, signal),
+    queryKey: ['contest-tasks', id, context, user?.id],
+    queryFn: ({ signal }) => api.allProblems({ context }, signal),
     enabled: Boolean(item) && (phase !== 'upcoming' || author),
-    refetchInterval: phase === 'live' ? 5000 : false,
+    refetchInterval: item?.finalized && !upsolving ? false : 5000,
   });
   const standings = useQuery({
     queryKey: ['standings', id, user?.id],
     queryFn: ({ signal }) => api.contestStandings(id, signal),
     enabled: Boolean(item) && item?.format !== 'duel' && phase !== 'upcoming' && selected === 'standings',
-    refetchInterval: phase === 'live' ? 5000 : false,
+    refetchInterval: item?.finalized ? false : 5000,
+
   });
   const previousPhase = useRef<{ id: string; phase: string } | null>(null);
   useEffect(() => {
@@ -104,6 +116,7 @@ export default function Contest() {
     },
   });
   const resetJoin = join.reset;
+  const startVirtual = useMutation({ mutationFn: () => api.startVirtual(id), onSuccess: attempt => navigate(`/virtual/${attempt.id}`) });
   useEffect(() => resetJoin(), [id, resetJoin]);
 
   if (contest.isPending) return <p className="loading" role="status">Загрузка контеста...</p>;
@@ -112,7 +125,11 @@ export default function Contest() {
 
   const base = `/contest/${encodeURIComponent(id)}`;
   const actions = <>
+    {item.format === 'duel' && <><Link className="text-link" to="/duels">Мои дуэли</Link><Link className="btn secondary" to="/duels/new">Новая дуэль</Link></>}
     {phase !== 'finished' && (item.registered ? item.format !== 'duel' && <span className="success">{phase === 'upcoming' ? 'Вы зарегистрированы' : 'Вы участвуете'}</span> : !canJoinContest(item, user?.id) ? <span className="muted">Дуэль по приглашению</span> : user ? <button className="btn secondary" disabled={join.isPending} onClick={() => join.mutate()}>{join.isPending ? 'Регистрация...' : item.format === 'duel' ? 'Принять дуэль' : 'Зарегистрироваться'}</button> : <Link className="btn secondary" to={`/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`}>Зарегистрироваться</Link>)}
+    {item.finalized && item.format !== 'duel' && <><Link className="btn secondary" to={`${base}${upsolving ? '' : '?mode=upsolving'}`}>{upsolving ? 'Официальные результаты' : 'Дорешивание'}</Link>{user && <button className="btn secondary" disabled={startVirtual.isPending} onClick={() => startVirtual.mutate()}>Начать виртуально</button>}</>}
+    {user && item.format !== 'duel' && <Link className="text-link" to="/virtual">Мои виртуальные контесты</Link>}
+
     {author && phase === 'upcoming' && item.format !== 'duel' && <Link className="btn secondary" to={`${base}/edit`}>Изменить</Link>}
   </>;
   const columns = tasks.data ?? [];
@@ -122,26 +139,31 @@ export default function Contest() {
     {contest.error && <div><ErrorMessage error={contest.error} /><button className="text-link" disabled={contest.isFetching} onClick={() => void contest.refetch()}>Повторить загрузку соревнования</button></div>}
     {item.format !== 'duel' && <div className="toolbar small contest-meta">
       <span className="muted">{dateTime(item.startAt)} - {dateTime(item.endAt)} МСК</span>
-      <span>{phase === 'finished' ? 'Завершен' : <>{phase === 'upcoming' ? 'До начала' : 'До конца'} <time>{countdown(phase === 'upcoming' ? item.startAt : item.endAt, now)}</time></>}</span>
+      <span>{phase === 'finished' ? 'Завершен' : <>{phase === 'upcoming' ? 'До начала' : 'До конца'} <time>{countdown(phase === 'upcoming' ? item.startAt : item.endAt, serverNow)}</time></>}</span>
       <span className="muted">Процессор: {catalog.title(item.processor)}{catalog.find(item.processor) && <> · {item.processor === GPU_CUDA && runtime.data?.gpuName ? runtime.data.gpuName : catalog.find(item.processor)?.model}</>}</span>
       <span className="muted">Авторы: {item.authors.map((person, index) => <span key={person.id}>{index > 0 && ', '}<UserLink user={person} /></span>)}</span>
     </div>}
     {join.error && <ErrorMessage error={join.error} />}
-    {item.format === 'duel' ? <>
-      <DuelBoard contest={item} finished={phase === 'finished'} contestUpdatedAt={contestSnapshot.current?.id === id && contestSnapshot.current.userId === user?.id ? contestSnapshot.current.startedAt : 0} showHeading={false} />
+    <ErrorMessage error={startVirtual.error} />
+    {upsolving && <p className="notice">Дорешивание. Ваши новые отправки не изменяют официальный зачет.</p>}
+    {item.format !== 'duel' && phase === 'finished' && item.finalized === false && <p className="notice">{item.hackEndAt && Date.parse(item.hackEndAt) > serverNow ? `Период взломов до ${dateTime(item.hackEndAt)} МСК.` : 'Ожидаем окончания проверок. Результаты предварительные.'}</p>}
+    {item.format === 'duel' && !upsolving ? <>
+      <DuelBoard contest={item} finished={phase === 'finished'} clockOffset={clockOffset} contestUpdatedAt={contestSnapshot.current?.id === id && contestSnapshot.current.userId === user?.id ? contestSnapshot.current.startedAt : 0} showHeading={false} />
       {tasks.isPending && <p role="status">Загрузка задачи...</p>}
       {tasks.error && <ErrorMessage error={tasks.error} />}
-      {tasks.data?.[0] && <div className="duel-task-link"><Link className="btn primary" to={problemPath(tasks.data[0].id, id)}>{tasks.data[0].title}</Link><span className="small muted">{difficultyLabels[tasks.data[0].difficulty]}</span></div>}
+      {tasks.data?.[0] && <div className="duel-task-link"><Link className="btn primary" to={problemPath(tasks.data[0].id, context)}>{tasks.data[0].title}</Link><span className="small muted">{difficultyLabels[tasks.data[0].difficulty]}</span></div>}
       {item.rulesMarkdown && <details className="disclosure"><summary>Правила дуэли</summary><Markdown>{item.rulesMarkdown}</Markdown></details>}
     </> : <>
-    <Tabs selected={selected} items={[{ id: 'tasks', label: 'Задачи', to: `${base}?tab=tasks` }, { id: 'standings', label: 'Таблица', to: `${base}?tab=standings` }, { id: 'rules', label: 'Правила', to: `${base}?tab=rules` }]} />
-    {selected === 'rules' ? item.rulesMarkdown ? <Markdown>{item.rulesMarkdown}</Markdown> : <Empty>Правила пока недоступны.</Empty> : phase === 'upcoming' && (selected === 'standings' || !author) ? <Empty>{selected === 'standings' ? 'Таблица появится после начала.' : `Задачи откроются ${dateTime(item.startAt)} МСК.`}</Empty> : <>
+    <Tabs selected={selected} items={[{ id: 'tasks', label: 'Задачи', to: `${base}?tab=tasks${upsolving ? '&mode=upsolving' : ''}` }, { id: 'standings', label: 'Таблица', to: `${base}?tab=standings` }, { id: 'rules', label: 'Правила', to: `${base}?tab=rules` }, ...(item.hackEndAt && item.format !== 'duel' ? [{ id: 'hacks', label: 'Взломы', to: `${base}?tab=hacks` }] : [])]} />
+    {selected === 'hacks' && item.format !== 'duel' && <HackList contestId={id} />}
+
+    {selected === 'hacks' ? null : selected === 'rules' ? item.rulesMarkdown ? <Markdown>{item.rulesMarkdown}</Markdown> : <Empty>Правила пока недоступны.</Empty> : phase === 'upcoming' && (selected === 'standings' || !author) ? <Empty>{selected === 'standings' ? 'Таблица появится после начала.' : `Задачи откроются ${dateTime(item.startAt)} МСК.`}</Empty> : <>
       {tasks.isPending && <p className="loading" role="status">Загрузка задач...</p>}
       {tasks.error && <div><ErrorMessage error={tasks.error} /><button className="text-link" onClick={() => void tasks.refetch()}>Повторить</button></div>}
       {selected === 'tasks' && tasks.data && <>
-        {phase === 'finished' && <p className="notice">Контест завершен. На странице задачи можно перейти к решению в практике.</p>}
+        {phase === 'finished' && !upsolving && <p className="notice">{item.finalized ? 'Контест завершён. Можно дорешать задачи или начать виртуальное участие.' : 'Контест завершен. На странице задачи можно перейти к решению в практике.'}</p>}
         {tasks.data.length ? <div className="table-wrap"><table className="data-table" aria-label="Задачи соревнования"><thead><tr><th>Задача</th><th>Сложность</th>{user && <th>Ваш статус</th>}</tr></thead><tbody>{tasks.data.map((problem, index) => <tr key={problem.id}>
-          <td><Link to={problemPath(problem.id, id)}>{taskLabel(index)}. {problem.title}</Link></td>
+          <td><Link to={problemPath(problem.id, context)}>{taskLabel(index)}. {problem.title}</Link></td>
           <td>{difficultyLabels[problem.difficulty]}<div className="subline">{formatLabels[problem.format ?? 'standard']}</div></td>
           {user && <td><PersonalStatus problem={problem} /></td>}
         </tr>)}</tbody></table></div> : <Empty>В контесте пока нет задач.</Empty>}
@@ -151,7 +173,7 @@ export default function Contest() {
         {standings.isPending && <p className="loading" role="status">Загрузка таблицы...</p>}
         {standings.error && <div><ErrorMessage error={standings.error} /><button className="text-link" onClick={() => void standings.refetch()}>Повторить</button></div>}
         {standings.data && (standings.data.length ? <div className="table-wrap"><table className="data-table" aria-label="Таблица контеста"><thead><tr><th>Место</th><th>Участник</th><th>Решено</th><th>Время</th>{columns.map((problem, index) => <th key={problem.id}><Link title={problem.title} to={problemPath(problem.id, id)}>{taskLabel(index)}</Link></th>)}</tr></thead><tbody>{standings.data.map(row => <tr key={row.user.id} className={row.user.id === user?.id ? 'own-row' : undefined}>
-          <td>{row.rank}</td><td><UserLink user={row.user} />{row.user.id === user?.id && <span className="small muted"> вы</span>}</td><td>{row.solved}</td><td className="mono">{solveTime(row.totalSeconds)}</td>
+          <td>{row.rank}</td><td><UserLink user={row.user} />{row.user.id === user?.id && <span className="small muted"> вы</span>}{phase === 'finished' && <div className="small"><Link to={`/submissions?user=${encodeURIComponent(row.user.id)}&contest=${encodeURIComponent(id)}`}>Решения</Link></div>}</td><td>{row.solved}</td><td className="mono">{solveTime(row.totalSeconds)}</td>
           {columns.map(problem => <td key={problem.id} className="mono">{row.times[problem.id] === undefined ? '-' : solveTime(row.times[problem.id])}</td>)}
         </tr>)}</tbody></table></div> : <Empty>Результатов пока нет.</Empty>)}
       </>}

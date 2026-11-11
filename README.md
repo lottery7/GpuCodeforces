@@ -60,6 +60,8 @@ verdicts come back through RabbitMQ (`RABBITMQ_HOST`), so start the judge profil
 [Testing system](#testing-system). How submissions are queued and judged, how results are compared,
 and the administrator Groovy console (`ADMIN_HANDLES`, page `/admin`) are described (in Russian) in
 [docs/backend/submissions.md](docs/backend/submissions.md).
+Upsolving, virtual participation, post-contest hacks and finalization are described in
+[docs/backend/participation.md](docs/backend/participation.md).
 
 ```sh
 ./gradlew test

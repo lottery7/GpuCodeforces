@@ -278,6 +278,7 @@ class FormatsIntegrationTest {
     }
 
     @Test
+    @AllowFullScan("problems", "FROM gpucodeforces\\.problems p", "Exact catalogue totals and tags inspect current ids; only page metadata reaches the application")
     fun `optimization baseline and best results stay in the captured cohort after the environment changes`() {
         val (user, cookie) = register()
         val version = optimizationVersion()
@@ -364,6 +365,14 @@ class FormatsIntegrationTest {
             .exchange().expectStatus().isOk.expectBody(ListProblems200Response::class.java).returnResult().responseBody!!.items.single().processors.single()
         assertThat(listed.bestScore).isNull()
         assertThat(listed.recordScore!!.value).isEqualByComparingTo("4")
+        val unsolved = client.get().uri("/problems?context=${contest.id}&solved=false").cookie("session", opponentCookie)
+            .exchange().expectStatus().isOk.expectBody(ListProblems200Response::class.java).returnResult().responseBody!!
+        assertThat(unsolved.items.map { it.id }).containsExactly(version.problemId)
+        assertThat(unsolved.items.single().solved).isFalse()
+        val solved = client.get().uri("/problems?context=${contest.id}&solved=true").cookie("session", opponentCookie)
+            .exchange().expectStatus().isOk.expectBody(ListProblems200Response::class.java).returnResult().responseBody!!
+        assertThat(solved.items).isEmpty()
+        assertThat(solved.total).isZero()
         val lateView = client.get().uri("/submissions/${late.id}").cookie("session", cookie)
             .exchange().expectStatus().isOk.expectBody(Submission::class.java).returnResult().responseBody!!
         assertThat(lateView.comparable).isFalse()

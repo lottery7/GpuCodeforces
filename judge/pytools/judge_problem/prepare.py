@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import itertools
 import importlib.util
 import json
 import os
@@ -28,7 +29,7 @@ import traceback
 from pathlib import Path
 from typing import Dict
 
-from .spec import DTYPES, Param, Test, check_coverage, declared_processors, parse_params, parse_test
+from .spec import DTYPES, Param, Test, check_coverage, declared_processors, parse_custom_test, parse_params, parse_test
 
 # Must be set before CUDA is initialised for deterministic cuBLAS.
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
@@ -38,6 +39,10 @@ import torch  # noqa: E402
 
 class ProblemError(Exception):
     """Mistake in the problem module (wrong keys, shapes, dtypes)."""
+
+
+class InvalidCustomTest(Exception):
+    """A candidate input violates the problem's input contract."""
 
 
 def torch_dtype(type_name: str) -> torch.dtype:
@@ -155,10 +160,23 @@ def prepare(spec: dict, source: Path, out: Path, device: str, processor: str | N
     seen: list[Test] = []
     started = time.monotonic()
     with reference_context():
-        tests = declared_tests(
-            module, params, int(limits.get("maxTests", 200)), int(limits.get("maxTestBytes", 4 << 30)), processors,
-        )
-        for test in tests:
+        max_tests, max_test_bytes = int(limits.get("maxTests", 200)), int(limits.get("maxTestBytes", 4 << 30))
+        custom_only = bool(spec.get("customOnly"))
+        base = [] if custom_only else declared_tests(module, params, max_tests, max_test_bytes, processors)
+        custom = spec.get("customTests") or []
+        if len(custom) > 32:
+            raise InvalidCustomTest("too many custom tests")
+
+        def custom_tests():
+            for i, raw in enumerate(custom, start=1):
+                try:
+                    yield parse_custom_test(i, raw, params, processors)
+                except (ValueError, ZeroDivisionError) as e:
+                    raise InvalidCustomTest(str(e)) from None
+
+        for test, is_custom in itertools.chain(((t, False) for t in base), ((t, True) for t in custom_tests())):
+            if is_custom:
+                test.index = len(seen) + 1  # they continue the generator's own tests
             seen.append(test)
             if processor is not None and not test.runs_on(processor):
                 test.inputs = test.expected = None
@@ -174,6 +192,13 @@ def prepare(spec: dict, source: Path, out: Path, device: str, processor: str | N
                 gen = torch.Generator(device=device)
                 gen.manual_seed(test.seed)
                 inputs = check_arrays("generate", test, generate(test, gen, device), inputs_p)
+
+            if is_custom:
+                validator = getattr(module, "validate_input", None)
+                if not callable(validator):
+                    raise ProblemError("custom tests require validate_input(test, inputs)")
+                if validator(test, {k: v.clone() for k, v in inputs.items()}) is not True:
+                    raise InvalidCustomTest("input violates problem constraints")
 
             entry = {"index": n, "declared": test.index, "name": test.name, "inputs": {}, "expected": {}}
             for p in inputs_p:
@@ -194,10 +219,11 @@ def prepare(spec: dict, source: Path, out: Path, device: str, processor: str | N
             print(f"test {test.index} '{test.name}' prepared in {entry['seconds']}s", file=sys.stderr, flush=True)
             del inputs, ref_out
             test.inputs = test.expected = None
-    try:
-        check_coverage(seen, processors)
-    except ValueError as e:
-        raise ProblemError(str(e)) from None
+    if not custom_only:  # a lone custom test gives no score
+        try:
+            check_coverage(seen, processors)
+        except ValueError as e:
+            raise ProblemError(str(e)) from None
     meta["seconds"] = round(time.monotonic() - started, 3)
     (out / "tests.json").write_text(json.dumps(declared, indent=1))
     (out / "meta.json").write_text(json.dumps(meta, indent=1))
@@ -220,6 +246,9 @@ def main(argv=None) -> int:
         args.out.mkdir(parents=True, exist_ok=True)
         prepare(spec, args.source, args.out, device, args.processor)
         return 0
+    except InvalidCustomTest as e:
+        print(f"invalid custom test: {e}", file=sys.stderr)
+        return 3
     except ProblemError as e:
         print(f"problem error: {e}", file=sys.stderr)
         return 2

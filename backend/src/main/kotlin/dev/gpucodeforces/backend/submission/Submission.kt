@@ -83,7 +83,14 @@ class Submission(
     val createdAt: Instant = Instant.now(),
     @Column(name = "guess_choice")
     val guessChoice: String? = null,
+    /** Where the result counts: `practice`, the contest id, `upsolve:<contest>` or `virtual:<attempt>`. */
+    @Column(name = "context_key", nullable = false)
+    val contextKey: String = contestId?.toString() ?: PRACTICE_CONTEXT,
 ) {
+    /** The custom tests it was judged with beyond the problem's own: id of a [TestSuite]. */
+    @Column(name = "test_suite", nullable = false)
+    var testSuite: String = TestSuite.BASE
+
     @Column(nullable = false)
     var status: SubmissionStatus = SubmissionStatus.QUEUED
 
@@ -153,13 +160,19 @@ class Submission(
 
     fun toRow() = SubmissionRow(
         id, userId, problemId, problemVersionId, contestId, status, score, scoreType, judgeHash, processor, language, createdAt,
-        benchmarkEnvironmentKey, finishedAt,
+        benchmarkEnvironmentKey, contextKey, finishedAt,
     )
+
+    /** Sent to a running contest: only these decide its standings and can be hacked. */
+    val official: Boolean get() = contestId != null && contextKey == contestId.toString()
 
     companion object {
         const val RECHECK_SEPARATOR = ".r"
     }
 }
+
+/** Context of the submissions sent outside any contest. */
+const val PRACTICE_CONTEXT = "practice"
 
 class SubmissionRow(
     val id: UUID,
@@ -175,14 +188,21 @@ class SubmissionRow(
     val language: String,
     val createdAt: Instant,
     val benchmarkEnvironmentKey: String? = null,
+    val contextKey: String = contestId?.toString() ?: PRACTICE_CONTEXT,
     val finishedAt: Instant? = null,
 )
 
 interface SubmissionRepository : JpaRepository<Submission, UUID> {
+    fun findByContestId(contestId: UUID): List<Submission>
+
+    /** Official contest submissions being judged again (after a judge failure or a successful hack). */
+    @Query("SELECT count(s) FROM Submission s WHERE s.recheckCount > 0 AND s.contestId IS NOT NULL AND s.contextKey NOT LIKE '%:%' AND s.status IN :statuses")
+    fun countPendingRejudges(statuses: Collection<SubmissionStatus>): Long
+
     @Query("SELECT s FROM Submission s WHERE s.userId = :userId AND s.problemVersionId = :versionId " +
-        "AND s.guessChoice IS NOT NULL AND ((:contestId IS NULL AND s.contestId IS NULL) OR s.contestId = :contestId) " +
+        "AND s.guessChoice IS NOT NULL AND s.contextKey = :contextKey " +
         "AND ((:benchmarkKey IS NULL AND s.guessBenchmarkKey IS NULL) OR s.guessBenchmarkKey = :benchmarkKey)")
-    fun findGuess(userId: UUID, versionId: UUID, contestId: UUID?, benchmarkKey: String? = null): Submission?
+    fun findGuess(userId: UUID, versionId: UUID, contextKey: String, benchmarkKey: String? = null): Submission?
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT s FROM Submission s WHERE s.id = :id")
@@ -201,15 +221,14 @@ interface SubmissionRepository : JpaRepository<Submission, UUID> {
         """
         SELECT new dev.gpucodeforces.backend.submission.SubmissionRow(
             s.id, s.userId, s.problemId, s.problemVersionId, s.contestId, s.status, s.score, s.scoreType, s.judgeHash, s.processor,
-            s.language, s.createdAt, s.benchmarkEnvironmentKey, s.finishedAt)
+            s.language, s.createdAt, s.benchmarkEnvironmentKey, s.contextKey, s.finishedAt)
         FROM Submission s
         WHERE s.userId = :userId
           AND (:problemId IS NULL OR s.problemId = :problemId)
           AND (:status IS NULL OR s.status = :status)
-          AND (:practiceOnly = FALSE OR s.contestId IS NULL)
-          AND (:contestId IS NULL OR s.contestId = :contestId)
+          AND (:contextKey IS NULL OR s.contextKey = :contextKey)
         ORDER BY s.createdAt DESC
         """,
     )
-    fun search(userId: UUID, problemId: String?, status: SubmissionStatus?, practiceOnly: Boolean, contestId: UUID?): List<SubmissionRow>
+    fun search(userId: UUID, problemId: String?, status: SubmissionStatus?, contextKey: String?): List<SubmissionRow>
 }

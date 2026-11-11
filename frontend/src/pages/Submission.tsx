@@ -10,6 +10,8 @@ import { writeDraft } from '../drafts';
 import { GPU_CUDA, useProcessors } from '../processors';
 import { ErrorMessage, Markdown, PageHeader, QueryState, ScoreValue, Status, UserLink } from '../ui';
 import { dateTime, pendingStatuses, problemPath, shortId } from '../utils';
+import { HackForm } from '../components/Hacks';
+
 
 /** Names of the further numbers the judge reports, by processor. */
 const metricLabels: Record<string, string> = {
@@ -47,11 +49,11 @@ export default function Submission() {
     },
   });
   const owner = Boolean(user && item?.user.id === user.id);
-  const context = item?.contestId || 'practice';
+  const context = item?.context || item?.contestId || 'practice';
   const pending = Boolean(item && pendingStatuses.has(item.status));
   const accepted = item?.status === 'accepted';
   const isGuess = item?.format === 'guess';
-  const retryAvailable = owner && (item?.status === 'system_error' || item?.status === 'measurement_error');
+  const retryAvailable = owner && item?.recheckAllowed !== false && (item?.status === 'system_error' || item?.status === 'measurement_error');
   function edit() {
     if (!item || typeof item.code !== 'string' || !user) return;
     const target = { processor: item.processor, language: item.language };
@@ -86,9 +88,11 @@ export default function Submission() {
       {owner && !pending && !accepted && item.diagnostic && <pre className="diagnostic" tabIndex={0} aria-label="Диагностика посылки">{item.diagnostic}</pre>}
     </section>
     {isGuess ? owner && item.guessResult ? <GuessResult result={item.guessResult} /> : <p className="muted small">Выбранный ответ доступен автору.</p> : <>
-      {accepted && <p>{item.contestId ? <Link to={`/contest/${encodeURIComponent(item.contestId)}?tab=standings`}>Результаты соревнования</Link> : <Link to={problemPath(item.problemId, context, 'leaders', { processor: item.processor, language: item.language })}>Таблица лидеров</Link>}</p>}
-      {owner && typeof item.code === 'string' ? <details className="disclosure" open={!accepted && !pending}><summary>Код решения</summary><div className="editor-panel"><CodeEditor value={item.code} readOnly language={item.language} label="Исходный код посылки" /></div></details> : <p className="muted small">Исходный код доступен автору посылки.</p>}
+      {accepted && <p>{context.startsWith('virtual:') ? <Link to={`/virtual/${encodeURIComponent(context.slice(8))}`}>Виртуальное участие</Link> : item.contestId && !context.startsWith('upsolve:') ? <Link to={`/contest/${encodeURIComponent(item.contestId)}?tab=standings`}>Результаты соревнования</Link> : <Link to={problemPath(item.problemId, context, 'leaders', { processor: item.processor, language: item.language })}>Таблица лидеров</Link>}</p>}
+      {(owner || item.sourcePublic) && typeof item.code === 'string' ? <details className="disclosure" open={!accepted && !pending}><summary>Код решения</summary><div className="editor-panel"><CodeEditor value={item.code} readOnly language={item.language} label="Исходный код посылки" /></div></details> : <p className="muted small">Исходный код доступен автору посылки.</p>}
+
     </>}
+    {item.hackable && item.contestId && <HackForm submissionId={item.id} contestId={item.contestId} />}
     {item.environmentMarkdown && !isGuess && <details className="disclosure"><summary>Среда и методика замера</summary><Markdown>{item.environmentMarkdown}</Markdown></details>}
     {item.measurement && !isGuess && <p className="small muted"><SyntheticResultsNotice synthetic={item.measurement.synthetic} />{' '}{item.measurement.timingMode == null ? 'Результат теста посчитал эмулятор.' : item.measurement.timingMode === 'wall' ? 'Измеряется вызов решения до завершения работы, включая запуск и синхронизацию GPU.' : 'Измеряются интервалы работы ядер GPU.'} Замерных тестов: {item.measurement.testCount}.{item.measurement.model && !item.measurement.synthetic && ` Модель: ${item.measurement.model}.`}</p>}
   </>}</QueryState>;

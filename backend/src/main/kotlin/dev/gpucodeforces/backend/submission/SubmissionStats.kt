@@ -20,18 +20,26 @@ class AcceptedSubmission(
     val score: BigDecimal?,
     val createdAt: Instant,
     val benchmarkEnvironmentKey: String? = null,
+    val contextKey: String = contestId?.toString() ?: PRACTICE_CONTEXT,
     val problemVersionId: UUID? = null,
     val finishedAt: Instant? = null,
 )
 
 /** Submission header for "last submission" summaries. */
-class SubmissionHead(val id: UUID, val problemId: String, val contestId: UUID?, val status: SubmissionStatus, val createdAt: Instant)
+class SubmissionHead(
+    val id: UUID,
+    val problemId: String,
+    val contestId: UUID?,
+    val status: SubmissionStatus,
+    val createdAt: Instant,
+    val contextKey: String = contestId?.toString() ?: PRACTICE_CONTEXT,
+)
 
 interface SubmissionStatsRepository : Repository<Submission, UUID> {
     @Query(
         """
         SELECT new dev.gpucodeforces.backend.submission.AcceptedSubmission(
-            s.id, s.userId, s.problemId, s.contestId, s.judgeHash, s.processor, s.score, s.createdAt, s.benchmarkEnvironmentKey, s.problemVersionId, s.finishedAt)
+            s.id, s.userId, s.problemId, s.contestId, s.judgeHash, s.processor, s.score, s.createdAt, s.benchmarkEnvironmentKey, s.contextKey, s.problemVersionId, s.finishedAt)
         FROM Submission s WHERE s.status = :status AND s.problemId IN :problemIds
         """,
     )
@@ -40,29 +48,29 @@ interface SubmissionStatsRepository : Repository<Submission, UUID> {
     @Query(
         """
         SELECT new dev.gpucodeforces.backend.submission.AcceptedSubmission(
-            s.id, s.userId, s.problemId, s.contestId, s.judgeHash, s.processor, s.score, s.createdAt, s.benchmarkEnvironmentKey, s.problemVersionId, s.finishedAt)
-        FROM Submission s WHERE s.status = :status AND s.contestId = :contestId
+            s.id, s.userId, s.problemId, s.contestId, s.judgeHash, s.processor, s.score, s.createdAt, s.benchmarkEnvironmentKey, s.contextKey, s.problemVersionId, s.finishedAt)
+        FROM Submission s WHERE s.status = :status AND s.contextKey = :contextKey
         """,
     )
-    fun findWithStatusInContest(status: SubmissionStatus, contestId: UUID): List<AcceptedSubmission>
+    fun findWithStatusInContext(status: SubmissionStatus, contextKey: String): List<AcceptedSubmission>
 
     @Query(
         """
-        SELECT new dev.gpucodeforces.backend.submission.SubmissionHead(s.id, s.problemId, s.contestId, s.status, s.createdAt)
+        SELECT new dev.gpucodeforces.backend.submission.SubmissionHead(s.id, s.problemId, s.contestId, s.status, s.createdAt, s.contextKey)
         FROM Submission s WHERE s.userId = :userId AND s.problemId IN :problemIds
         """,
     )
     fun findHeads(userId: UUID, problemIds: Collection<String>): List<SubmissionHead>
 
-    @Query("SELECT DISTINCT s.userId FROM Submission s WHERE s.contestId = :contestId")
-    fun findContestParticipants(contestId: UUID): List<UUID>
+    @Query("SELECT DISTINCT s.userId FROM Submission s WHERE s.contextKey = :contextKey")
+    fun findContextParticipants(contextKey: String): List<UUID>
 
-    @Query("SELECT count(s) FROM Submission s WHERE s.contestId = :contestId AND s.status IN :statuses")
-    fun countInContestWithStatus(contestId: UUID, statuses: Collection<SubmissionStatus>): Long
-
-    @Query("SELECT count(s) FROM Submission s WHERE s.contestId = :contestId AND s.status IN :statuses " +
+    @Query("SELECT count(s) FROM Submission s WHERE s.contestId = :contestId AND s.contextKey = CAST(:contestId AS string) AND s.status IN :statuses " +
         "AND s.createdAt >= :startAt AND s.createdAt < :endAt")
     fun countInContestWithStatusDuring(contestId: UUID, statuses: Collection<SubmissionStatus>, startAt: Instant, endAt: Instant): Long
+
+    @Query("SELECT count(s) FROM Submission s WHERE s.contextKey = :contextKey AND s.status IN :statuses")
+    fun countInContextWithStatus(contextKey: String, statuses: Collection<SubmissionStatus>): Long
 
     @Query("SELECT count(DISTINCT s.problemId) FROM Submission s WHERE s.userId = :userId AND s.status = :status")
     fun countProblemsWithStatus(userId: UUID, status: SubmissionStatus): Long
@@ -73,17 +81,19 @@ interface SubmissionStatsRepository : Repository<Submission, UUID> {
  * one judge configuration - the problem version's judge hash - and one processor.
  */
 data class ResultScope(
-    val contestId: UUID?, val judgeHashes: Map<String, String>, val gpuEnvironmentKey: String? = null,
-    val startAt: Instant? = null, val endAt: Instant? = null,
+    val contestId: UUID?,
+    val judgeHashes: Map<String, String>,
+    val gpuEnvironmentKey: String? = null,
+    val contextKey: String = contestId?.toString() ?: PRACTICE_CONTEXT,
+    val startAt: Instant? = null,
+    val endAt: Instant? = null,
     val finishedBefore: Instant? = null,
 ) {
-    /** On the real GPU a result counts only from the current environment ([gpuEnvironmentKey]); emulators are deterministic. */
     fun counts(submission: AcceptedSubmission, processor: String): Boolean =
-        submission.processor == processor && submission.contestId == contestId && judgeHashes[submission.problemId] == submission.judgeHash &&
+        submission.processor == processor && submission.contextKey == contextKey && judgeHashes[submission.problemId] == submission.judgeHash &&
             (processor != Processors.GPU_CUDA || gpuEnvironmentKey == null || submission.benchmarkEnvironmentKey == gpuEnvironmentKey) &&
             (startAt == null || !submission.createdAt.isBefore(startAt)) && (endAt == null || submission.createdAt.isBefore(endAt)) &&
             (finishedBefore == null || submission.finishedAt == null || !submission.finishedAt.isAfter(finishedBefore))
-
 }
 
 class ProblemResult(
@@ -102,8 +112,9 @@ class Leader(val rank: Int, val submission: AcceptedSubmission)
 class SubmissionStats(private val repository: SubmissionStatsRepository) {
     fun bestScore(
         userId: UUID, problemId: String, contestId: UUID?, judgeHash: String, processor: String, gpuEnvironmentKey: String? = null,
+        contextKey: String = contestId?.toString() ?: PRACTICE_CONTEXT,
     ): BigDecimal? {
-        val scope = ResultScope(contestId, mapOf(problemId to judgeHash), gpuEnvironmentKey)
+        val scope = ResultScope(contestId, mapOf(problemId to judgeHash), gpuEnvironmentKey, contextKey)
         return bestScore(userId, problemId, scope, processor)
     }
 
@@ -121,9 +132,12 @@ class SubmissionStats(private val repository: SubmissionStatsRepository) {
             val all = accepted[problemId].orEmpty()
             ProblemResult(
                 // Practice counts a solution in any context, a contest only its own.
-                solved = userId != null && all.any { it.userId == userId && (scope.contestId == null || it.contestId == scope.contestId) },
+                solved = userId != null && all.any {
+                    it.userId == userId && (scope.contextKey == PRACTICE_CONTEXT || it.contextKey == scope.contextKey) &&
+                        (scope.startAt == null && scope.endAt == null && scope.finishedBefore == null || processors.any { p -> scope.counts(it, p) })
+                },
                 solvedCount = all.map { it.userId }.distinct().size,
-                last = heads[problemId].orEmpty().filter { it.contestId == scope.contestId }.maxByOrNull { it.createdAt },
+                last = heads[problemId].orEmpty().filter { it.contextKey == scope.contextKey }.maxByOrNull { it.createdAt },
                 best = processors.mapNotNull { p -> all.filter { it.userId == userId && scope.counts(it, p) }.best()?.let { p to it } }.toMap(),
                 record = processors.mapNotNull { p -> all.filter { scope.counts(it, p) }.best()?.let { p to it } }.toMap(),
             )
@@ -139,24 +153,26 @@ class SubmissionStats(private val repository: SubmissionStatsRepository) {
         return best.map { submission -> Leader(1 + best.count { it.score!! < submission.score!! }, submission) }
     }
 
-    /** When each participant sent the first accepted submission of each problem of a contest (submission time, not verdict time). */
-    fun firstAcceptedInContest(contestId: UUID): Map<UUID, Map<String, Instant>> =
-        repository.findWithStatusInContest(SubmissionStatus.ACCEPTED, contestId)
+    /** When each participant sent the first accepted official submission of each problem of a contest. */
+    fun firstAcceptedInContest(contestId: UUID): Map<UUID, Map<String, Instant>> = firstAcceptedIn(contestId.toString())
+
+    /** When each user sent the first accepted submission of each problem in a context (submission time, not verdict time). */
+    fun firstAcceptedIn(contextKey: String): Map<UUID, Map<String, Instant>> =
+        repository.findWithStatusInContext(SubmissionStatus.ACCEPTED, contextKey)
             .groupBy { it.userId }
             .mapValues { (_, submissions) -> submissions.groupBy { it.problemId }.mapValues { (_, it) -> it.minOf { s -> s.createdAt } } }
 
     fun duelBestScores(scope: ResultScope, versionId: UUID, processor: String, startAt: Instant, endAt: Instant): Map<UUID, BigDecimal> =
-        repository.findWithStatusInContest(SubmissionStatus.ACCEPTED, checkNotNull(scope.contestId))
+        repository.findWithStatusInContext(SubmissionStatus.ACCEPTED, scope.contextKey)
             .filter { submission ->
                 submission.problemVersionId == versionId && submission.score != null && scope.counts(submission, processor) &&
                     !submission.createdAt.isBefore(startAt) && submission.createdAt.isBefore(endAt)
             }
             .groupBy { it.userId }.mapValues { (_, submissions) -> submissions.minOf { it.score!! } }
 
-    fun contestParticipants(contestId: UUID): Set<UUID> = repository.findContestParticipants(contestId).toSet()
+    fun contestParticipants(contestId: UUID): Set<UUID> = repository.findContextParticipants(contestId.toString()).toSet()
 
-    /** Contest submissions still waiting for their verdict. */
-    fun pendingInContest(contestId: UUID): Long = repository.countInContestWithStatus(contestId, SubmissionStatus.PENDING)
+    fun pendingInContest(contestId: UUID): Long = repository.countInContextWithStatus(contestId.toString(), SubmissionStatus.PENDING)
 
     fun pendingInContest(contestId: UUID, startAt: Instant, endAt: Instant): Long =
         repository.countInContestWithStatusDuring(contestId, SubmissionStatus.PENDING, startAt, endAt)

@@ -21,6 +21,12 @@ data class ProblemSpec(
     val timing: TimingSpec = TimingSpec(),
     val compile: CompileSpec = CompileSpec(),
     val policy: PolicyOverrides = PolicyOverrides(),
+    /** Requires an author-supplied validate_input(test, inputs) function. */
+    val allowCustomTests: Boolean = false,
+    /** Run after the generator's tests, unmeasured. */
+    val customTests: List<CustomTest> = emptyList(),
+    /** Only the single test of [customTests] is run, without the generator's. */
+    val customOnly: Boolean = false,
     /**
      * Processors the problem can be judged on. Empty means `gpu-cuda` alone with its time limit from
      * [LimitsSpec.timeLimitMs]: packages written before processors existed keep working. [timing], [compile],
@@ -68,6 +74,12 @@ enum class RtlDataMode {
     /** After `start` the judge feeds inputs one element per cycle and takes outputs one element at a time, in order. */
     STREAM,
 }
+
+/**
+ * A test given as data, not declared by the generator: values of the scalars and of every INPUT and INOUT array.
+ * It runs on every processor of the problem, and only its answer is checked.
+ */
+data class CustomTest(val scalars: Map<String, Number>, val inputs: Map<String, List<Number>>)
 
 /** How the solution is compiled. Null fields fall back to the executor's defaults for its GPU profile. */
 data class CompileSpec(

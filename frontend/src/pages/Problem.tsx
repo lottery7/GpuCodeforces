@@ -71,7 +71,7 @@ function EditorPane({ problem, detail, summary, target, context, contest, contes
     onError: error => { if (error instanceof ApiError && error.status === 401) requestLogin(); },
   });
   const submit = useMutation({
-    mutationFn: () => api.submitSolution({ problemId: problem.id, ...(context !== 'practice' ? { contestId: context } : {}), ...target, code }),
+    mutationFn: () => api.submitSolution({ problemId: problem.id, ...(context.includes(':') ? { context } : context !== 'practice' ? { contestId: context } : {}), ...target, code }),
     onSuccess: item => {
       void queryClient.invalidateQueries();
       navigate(`/submission/${encodeURIComponent(item.id)}`);
@@ -101,8 +101,10 @@ function EditorPane({ problem, detail, summary, target, context, contest, contes
     check.reset();
   }
   function practice() {
-    setSaved(writeDraft(user?.id || null, { ...draft, context: 'practice' }, code));
-    navigate(problemPath(problem.id, 'practice', undefined, target));
+    const nextContext = contest?.finalized && contest.format !== 'duel' ? `upsolve:${contest.id}` : 'practice';
+    setSaved(writeDraft(user?.id || null, { ...draft, context: nextContext }, code));
+    navigate(problemPath(problem.id, nextContext, undefined, target));
+
   }
   function download() {
     const url = URL.createObjectURL(new Blob([view === 'original' ? starterCode : code], { type: 'text/plain;charset=utf-8' }));
@@ -145,11 +147,11 @@ function EditorPane({ problem, detail, summary, target, context, contest, contes
         {view === 'original' ? <button type="button" className="btn primary" onClick={() => setView('solution')}>Продолжить редактирование</button> : <>
         <button type="button" className="text-link" onClick={reset} disabled={busy}>{problem.format === 'optimization' ? 'Восстановить исходный код' : 'Восстановить шаблон'}</button>
         <button type="button" className="btn secondary run-btn" onClick={() => { clearErrors(); setExample(null); check.mutate(code); }} disabled={busy || !code.trim()}>{check.isPending ? 'Проверяем пример...' : 'Проверить пример'}</button>
-        {phase === 'finished' ? <button type="button" className="btn primary" onClick={practice}>Продолжить в практике</button>
+        {phase === 'finished' ? <button type="button" className="btn primary" onClick={practice}>{contest?.finalized && contest.format !== 'duel' ? 'Перейти к дорешиванию' : 'Продолжить в практике'}</button>
           : phase === 'upcoming' ? <button type="button" className="btn primary" disabled>Отправка после начала</button>
           : !user ? <button type="button" className="btn primary" onClick={requestLogin}>Войти и отправить</button>
-          : contest?.format === 'duel' && !canJoinContest(contest, user.id) ? <button type="button" className="btn primary" disabled>Только для участников дуэли</button>
-          : context !== 'practice' && !contest?.registered ? <button type="button" className="btn primary" disabled={busy || contestLoading} onClick={() => { clearErrors(); join.mutate(); }}>{join.isPending ? 'Регистрируем...' : contest?.format === 'duel' ? 'Принять дуэль' : 'Участвовать'}</button>
+          : contest?.format === 'duel' && !context.includes(':') && !canJoinContest(contest, user.id) ? <button type="button" className="btn primary" disabled>Только для участников дуэли</button>
+          : context !== 'practice' && !context.includes(':') && !contest?.registered ? <button type="button" className="btn primary" disabled={busy || contestLoading} onClick={() => { clearErrors(); join.mutate(); }}>{join.isPending ? 'Регистрируем...' : contest?.format === 'duel' ? 'Принять дуэль' : 'Участвовать'}</button>
           : <button type="button" className="btn primary" disabled={busy || !code.trim() || contestLoading} onClick={() => { clearErrors(); submit.mutate(); }}>{submit.isPending ? 'Отправляем...' : 'Отправить'}</button>}
         </>}
       </div>
@@ -206,11 +208,11 @@ function GuessPane({ problem, processor, context, contest, phase, contestLoading
       })}</div>
       <label className={`guess-equal guess-pick${saved?.guessResult?.correctChoice === 'equal' ? ' answer-correct' : ''}`}><input type="radio" name="guess" value="equal" aria-label="Одинаково" checked={(saved?.guessResult?.choice ?? choice) === 'equal'} onChange={() => setChoice('equal')} /><span className="guess-equal-symbol" aria-hidden="true">=</span><span><strong>Одинаково</strong></span><span className="guess-pick-mark" aria-hidden="true" /></label>
     </fieldset>
-    {phase === 'finished' ? <Link className="btn secondary" to={problemPath(problem.id)}>Продолжить в практике</Link>
+    {phase === 'finished' ? <Link className="btn secondary" to={problemPath(problem.id, contest?.finalized && contest.format !== 'duel' ? `upsolve:${contest.id}` : 'practice')}>{contest?.finalized && contest.format !== 'duel' ? 'Перейти к дорешиванию' : 'Продолжить в практике'}</Link>
       : phase === 'upcoming' ? <p className="muted">Ответы принимаются после начала.</p>
       : !user ? <Link className="btn primary" to={`/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`}>Войти и ответить</Link>
-      : contest?.format === 'duel' && !canJoinContest(contest, user.id) ? <p className="muted">Ответить могут только участники дуэли.</p>
-      : context !== 'practice' && !contest?.registered ? <button className="btn primary" disabled={blocked} onClick={() => join.mutate()}>{join.isPending ? 'Регистрируем...' : contest?.format === 'duel' ? 'Принять дуэль' : 'Участвовать'}</button>
+      : contest?.format === 'duel' && !context.includes(':') && !canJoinContest(contest, user.id) ? <p className="muted">Ответить могут только участники дуэли.</p>
+      : context !== 'practice' && !context.includes(':') && !contest?.registered ? <button className="btn primary" disabled={blocked} onClick={() => join.mutate()}>{join.isPending ? 'Регистрируем...' : contest?.format === 'duel' ? 'Принять дуэль' : 'Участвовать'}</button>
       : !saved && <button className="btn primary guess-submit" disabled={blocked || !choice} onClick={() => { if (choice) guess.mutate(choice); }}>{guess.isPending ? 'Проверяем ответ...' : 'Проверить выбор'}</button>}
     {!saved && referencesReady && phase !== 'finished' && <p className="small muted guess-attempt-note">Одна попытка. После проверки откроется разбор.</p>}
     <div ref={feedbackRef}><ErrorMessage error={guess.error || join.error || previous.error} />
@@ -280,6 +282,10 @@ export default function Problem() {
   const previousPhase = useRef<{ context: string; phase: ReturnType<typeof phaseOf> } | null>(null);
   const contestSnapshot = useRef<{ id: string; userId: string | undefined; startedAt: number } | null>(null);
   const context = contextFromSearch(params);
+  const virtualId = context.startsWith('virtual:') ? context.slice(8) : null;
+  const upsolving = context.startsWith('upsolve:');
+  const virtual = useQuery({ queryKey: ['virtual', virtualId, user?.id], queryFn: ({ signal }) => api.getVirtual(virtualId!, signal), enabled: Boolean(virtualId && user), refetchInterval: 5000 });
+  const contestId = virtualId ? virtual.data?.contestId : upsolving ? context.slice(8) : context;
   function returnToStatement() {
     requestAnimationFrame(() => {
       const statement = statementRef.current;
@@ -301,40 +307,46 @@ export default function Problem() {
     return () => clearInterval(timer);
   }, [context]);
   const requestedTab = ['submissions', 'leaders'].includes(params.get('tab') || '') ? params.get('tab')! : 'statement';
+  const contest = useQuery({
+    queryKey: ['contest', contestId, user?.id],
+    queryFn: async ({ signal }) => {
+      const requestedAt = Date.now();
+      const result = await api.getContest(contestId!, signal);
+      const startedAt = result.serverNow ? Date.parse(result.serverNow) - Math.max(0, Date.now() - requestedAt) : requestedAt;
+      contestSnapshot.current = { id: contestId!, userId: user?.id, startedAt };
+      return result;
+    },
+    enabled: context !== 'practice' && Boolean(contestId) && !isLoading,
+    refetchInterval: q => {
+      const data = q.state.data;
+      const snapshot = contestSnapshot.current;
+      if (data?.format !== 'duel' && data?.finalized !== undefined) return data.finalized ? false : 5000;
+      return data && data.finalized !== false && !data.resultsPending && snapshot && snapshot.id === contestId && snapshot.userId === user?.id && snapshot.startedAt >= Date.parse(data.endAt) ? false : 5000;
+    },
+
+  });
   const problem = useQuery({
     queryKey: ['problem', id, context, user?.id],
     queryFn: ({ signal }) => api.getProblem(id, context, signal),
     enabled: Boolean(id) && !isLoading,
-    refetchInterval: query => query.state.data?.format && query.state.data.format !== 'standard' ? 5000 : false,
+    refetchInterval: query => (query.state.data?.format && query.state.data.format !== 'standard') || (contest.data?.finalized === false && !upsolving) ? 5000 : false,
   });
-  const contest = useQuery({
-    queryKey: ['contest', context, user?.id],
-    queryFn: async ({ signal }) => {
-      const startedAt = Date.now();
-      const result = await api.getContest(context, signal);
-      contestSnapshot.current = { id: context, userId: user?.id, startedAt };
-      return result;
-    },
-    enabled: context !== 'practice' && !isLoading,
-    refetchInterval: q => {
-      const snapshot = contestSnapshot.current;
-      return q.state.data && !q.state.data.resultsPending && snapshot?.id === context && snapshot.userId === user?.id && snapshot.startedAt >= Date.parse(q.state.data.endAt) ? false : 5000;
-    },
-  });
-  const phase = phaseOf(contest.data, now);
+  const clockOffset = contest.data?.serverNow ? Date.parse(contest.data.serverNow) - contest.dataUpdatedAt : 0;
+  const virtualNow = virtual.data ? now + Date.parse(virtual.data.serverNow) - virtual.dataUpdatedAt : now;
+  const phase = upsolving ? null : virtualId ? virtual.data ? virtualNow >= Date.parse(virtual.data.endsAt) ? 'finished' : 'live' : 'upcoming' : phaseOf(contest.data, now + clockOffset);
   const isGuess = problem.data?.format === 'guess';
-  const isDuel = contest.data?.format === 'duel';
+  const isDuel = contest.data?.format === 'duel' && !upsolving && !virtualId;
   const tab = (isGuess || isDuel) && requestedTab === 'leaders' ? 'statement' : requestedTab;
   useEffect(() => {
     const previous = previousPhase.current;
     if (phase && previous?.context === context && previous.phase && previous.phase !== phase) {
-      void queryClient.invalidateQueries({ queryKey: ['contest', context] });
+      void queryClient.invalidateQueries({ queryKey: ['contest', contestId] });
       void queryClient.invalidateQueries({ queryKey: ['problem', id, context] });
       void queryClient.invalidateQueries({ queryKey: ['problem-leaders', id, context] });
       void queryClient.invalidateQueries({ queryKey: ['standings', context] });
     }
     previousPhase.current = { context, phase };
-  }, [phase, context, id, queryClient]);
+  }, [phase, context, id, contestId, queryClient]);
   const target = problem.data ? chooseTarget(problem.data, params) : null;
   const detail = target ? problem.data?.processorDetails.find(item => item.id === target.processor) : undefined;
   const summary = target ? problem.data?.processors.find(item => item.id === target.processor) : undefined;
@@ -345,7 +357,9 @@ export default function Problem() {
     setParams(query, { replace: true });
   }
   return <QueryState query={problem}>{problem.data && <>
-    <div className="breadcrumbs"><Link to={context === 'practice' ? '/problems' : `/contest/${encodeURIComponent(context)}`}>{context === 'practice' ? 'Практика' : contest.data?.title || 'Контест'}</Link></div>
+    <div className="breadcrumbs"><Link to={context === 'practice' ? '/problems' : virtualId ? `/virtual/${encodeURIComponent(virtualId)}` : `/contest/${encodeURIComponent(contestId || '')}`}>{context === 'practice' ? 'Практика' : contest.data?.title || 'Контест'}</Link>{upsolving && <span> / Дорешивание</span>}{virtualId && <span> / Виртуальное участие</span>}</div>
+    {virtual.error && <div><ErrorMessage error={virtual.error} /><button className="text-link" onClick={() => void virtual.refetch()}>Повторить загрузку участия</button></div>}
+    {virtual.data && <p className="notice">Виртуальный контест. Осталось {Math.max(0, Math.ceil((Date.parse(virtual.data.endsAt) - virtualNow) / 1000))} с.</p>}
     <PageHeader title={`${problem.data.code}. ${problem.data.title}`} actions={tab === 'statement' ? <a className="text-link editor-anchor" href="#editor">{isGuess ? 'К вариантам ответа' : 'К редактору'}</a> : undefined} />
     <div className="problem-meta"><span>{formatLabels[problem.data.format ?? 'standard']}</span><span>{difficultyLabels[problem.data.difficulty]}</span>{!isGuess && <>{detail && <span>Лимит: {formatLimit(detail.limit)} {scoreUnits[detail.limit.type]}</span>}<span>Память: {problem.data.memoryLimitMb} МБ</span></>}</div>
     {target && <TargetPicker problem={problem.data} target={target} onChange={pickTarget} />}
@@ -356,10 +370,11 @@ export default function Problem() {
     ]} />
     {context !== 'practice' && contest.error && <div><ErrorMessage error={contest.error} /><button className="text-link" disabled={contest.isFetching} onClick={() => void contest.refetch()}>Повторить загрузку соревнования</button></div>}
     {phase === 'finished' && !isDuel && <p className="notice">Соревнование завершено. Новые решения в практике не изменят его результаты.</p>}
-    {isDuel && contest.data && <DuelBoard contest={contest.data} finished={phase === 'finished'} contestUpdatedAt={contestSnapshot.current?.id === context && contestSnapshot.current.userId === user?.id ? contestSnapshot.current.startedAt : 0} />}
+    {isDuel && contest.data && <DuelBoard contest={contest.data} finished={phase === 'finished'} clockOffset={clockOffset} contestUpdatedAt={contestSnapshot.current && contestSnapshot.current.id === contestId && contestSnapshot.current.userId === user?.id ? contestSnapshot.current.startedAt : 0} />}
     {!target || !detail || !summary ? <Empty>Задачу пока нельзя сдавать ни на одном процессоре платформы.</Empty> : tab === 'statement' ? <div className={isGuess ? 'guess-workspace' : 'problem-workspace'}>
       <section className="statement statement-pane" id="statement" ref={statementRef} tabIndex={-1} aria-label="Условие задачи"><div className="tool-window-head">Условие</div><div className="statement-body"><Markdown>{problem.data.statementMarkdown}</Markdown>{problem.data.format === 'standard' ? <details className="methodology"><summary>Среда и замер</summary><Markdown>{detail.environmentMarkdown}</Markdown></details> : <BenchmarkInfo benchmark={detail.benchmark} />}</div></section>
-      {isGuess ? <GuessPane key={`${user?.id || 'guest'}:${id}:${context}:${problem.data.versionId ?? ''}:${summary.referenceMeasurement?.key ?? ''}`} problem={problem.data} processor={summary} context={context} contest={contest.data} phase={phase} contestLoading={context !== 'practice' && (contest.isPending || Boolean(contest.error))} /> : <EditorPane key={`${user?.id || 'guest'}:${id}:${context}:${target.processor}:${target.language}`} problem={problem.data} detail={detail} summary={summary} target={target} context={context} contest={contest.data} phase={phase} onCloseOutput={returnToStatement} contestLoading={context !== 'practice' && (contest.isPending || Boolean(contest.error))} />}
-    </div> : tab === 'submissions' ? <SubmissionList key={`${id}:${context}:${user?.id || 'guest'}`} problemId={id} context={context} /> : <Leaders problemId={id} processor={target.processor} context={context} finished={phase === 'finished'} />}
+      {isGuess ? <GuessPane key={`${user?.id || 'guest'}:${id}:${context}:${problem.data.versionId ?? ''}:${summary.referenceMeasurement?.key ?? ''}`} problem={problem.data} processor={summary} context={context} contest={contest.data} phase={phase} contestLoading={context !== 'practice' && (contest.isPending || Boolean(contest.error) || Boolean(virtualId && (virtual.isPending || virtual.error)))} /> : <EditorPane key={`${user?.id || 'guest'}:${id}:${context}:${target.processor}:${target.language}`} problem={problem.data} detail={detail} summary={summary} target={target} context={context} contest={contest.data} phase={phase} onCloseOutput={returnToStatement} contestLoading={context !== 'practice' && (contest.isPending || Boolean(contest.error) || Boolean(virtualId && (virtual.isPending || virtual.error)))} />}
+    </div> : tab === 'submissions' ? <SubmissionList key={`${id}:${context}:${user?.id || 'guest'}`} problemId={id} context={context} /> : <Leaders problemId={id} processor={target.processor} context={context} finished={phase === 'finished' && (virtualId ? !virtual.data?.pending : contest.data?.finalized !== false)} />}
+
   </>}</QueryState>;
 }

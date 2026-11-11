@@ -20,6 +20,7 @@ import dev.gpucodeforces.backend.user.UserRating
 import dev.gpucodeforces.backend.user.UserRepository
 import dev.gpucodeforces.judge.api.Processors
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -29,6 +30,8 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 import org.springframework.test.web.servlet.client.RestTestClient
+import org.springframework.jdbc.core.JdbcTemplate
+import org.intellij.lang.annotations.Language
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.postgresql.PostgreSQLContainer
@@ -41,11 +44,22 @@ import java.util.UUID
 @Tag("integration")
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@AllowFullScan("user_ratings", "UPDATE gpucodeforces\\.user_ratings r SET rank", "Finalization recomputes the ranks of every rated user")
 class ContestRatingFinalizerIntegrationTest {
     @LocalServerPort
     var port: Int = 0
 
     private val client by lazy { RestTestClient.bindToServer().baseUrl("http://localhost:$port/api").build() }
+
+    @Autowired
+    lateinit var jdbc: JdbcTemplate
+
+    @BeforeEach
+    fun cleanup() {
+        @Language("SQL")
+        val cleanup = "TRUNCATE TABLE gpucodeforces.contests, gpucodeforces.users CASCADE"
+        jdbc.execute(cleanup)
+    }
 
     @Autowired
     lateinit var contestRepository: ContestRepository
@@ -171,6 +185,10 @@ class ContestRatingFinalizerIntegrationTest {
     }
 
     @Test
+    @AllowFullScan(
+        "users", "lower\\(u\\.handle\\) LIKE", "The fixture has a few users; selective search is tested on 10000 users in QueryScalingIntegrationTest",
+        maxTableRows = 20,
+    )
     fun `ratings of two processors do not affect each other`() {
         val frank = userRepository.save(User("frank_rtl", "frank_rtl@example.com", "hash"))
         val gina = userRepository.save(User("gina_rtl", "gina_rtl@example.com", "hash"))

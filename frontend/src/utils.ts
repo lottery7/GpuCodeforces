@@ -37,8 +37,8 @@ export function solveTime(seconds: number) {
   const pad = (value: number) => String(value).padStart(2, '0');
   return `${Math.floor(seconds / 3600)}:${pad(Math.floor(seconds / 60) % 60)}:${pad(seconds % 60)}`;
 }
-export function phaseOf(contest: Pick<Contest, 'startAt' | 'endAt'>): 'upcoming' | 'live' | 'finished' {
-  return Date.now() < Date.parse(contest.startAt) ? 'upcoming' : Date.now() < Date.parse(contest.endAt) ? 'live' : 'finished';
+export function phaseOf(contest: Pick<Contest, 'startAt' | 'endAt'>, now = Date.now()): 'upcoming' | 'live' | 'finished' {
+  return now < Date.parse(contest.startAt) ? 'upcoming' : now < Date.parse(contest.endAt) ? 'live' : 'finished';
 }
 export function safeReturnTo(value: string | null) {
   return value?.startsWith('/') && !value.startsWith('//') && !/[\\\x00-\x1f\x7f]/.test(value) ? value : '/profile';

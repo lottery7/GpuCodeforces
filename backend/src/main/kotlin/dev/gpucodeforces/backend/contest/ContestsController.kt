@@ -11,9 +11,18 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.RestController
 import dev.gpucodeforces.backend.api.model.Contest as ContestApiModel
+import dev.gpucodeforces.backend.api.model.VirtualParticipation as VirtualApiModel
 
 @RestController
-class ContestsController(private val contestService: ContestService, private val duelService: DuelService) : ContestsApi {
+class ContestsController(
+    private val contestService: ContestService,
+    private val duelService: DuelService,
+    private val virtuals: VirtualParticipationService,
+    private val virtualViews: VirtualViews,
+) : ContestsApi {
+    override fun startVirtual(id: String): ResponseEntity<VirtualApiModel> =
+        ResponseEntity.status(HttpStatus.CREATED).body(virtualViews.detail(virtuals.start(id, CurrentUser.resolve()!!)))
+
     override fun listContests(q: String?, phase: String?, mine: Boolean, processor: String?): ResponseEntity<List<ContestApiModel>> {
         val viewer = CurrentUser.resolve()
         val now = Instant.now()
