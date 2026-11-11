@@ -96,10 +96,16 @@ export function AuthDialogProvider({ children }: { children: ReactNode }) {
 
 export function AuthLanding({ mode }: { mode: AuthMode }) {
   const openAuth = useAuthDialog();
+  const session = useSession();
+  const navigate = useNavigate();
   const [params] = useSearchParams();
   const returnTo = params.get('returnTo');
+  const signedIn = Boolean(session.user);
   useEffect(() => {
-    openAuth(mode, returnTo || undefined);
-  }, [openAuth, mode, returnTo]);
+    if (session.isLoading) return;
+    // nothing to sign in to: the link is followed to where it leads
+    if (signedIn) navigate(returnTo ? safeReturnTo(returnTo) : '/', { replace: true });
+    else openAuth(mode, returnTo || undefined);
+  }, [openAuth, navigate, mode, returnTo, signedIn, session.isLoading]);
   return null;
 }

@@ -24,9 +24,10 @@ const languages: Record<string, { mode: () => ReturnType<typeof cpp> | StreamLan
 export const editorLabel = (language: string) => (languages[language] ?? languages.cuda).label;
 
 const editorTheme = EditorView.theme({
-  '&': { backgroundColor: '#1e1f22', color: '#bcbec4', fontSize: '13px' },
-  '.cm-content': { fontFamily: 'var(--mono)', padding: '12px 0', caretColor: '#dfe1e5' },
-  '.cm-gutters': { backgroundColor: '#1e1f22', color: '#6f737a', borderRight: '1px solid #393b40' },
+  // sizes follow the 1.2x scale of styles.css
+  '&': { backgroundColor: '#1e1f22', color: '#bcbec4', fontSize: 'var(--font-sm)' },
+  '.cm-content': { fontFamily: 'var(--mono)', padding: '14.4px 0', caretColor: '#dfe1e5' },
+  '.cm-gutters': { backgroundColor: '#1e1f22', color: '#6f737a', borderRight: '1.2px solid #393b40' },
   '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: '#282b30' },
   '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': { backgroundColor: '#2e436e !important' },
   '.cm-cursor': { borderLeftColor: '#dfe1e5' },

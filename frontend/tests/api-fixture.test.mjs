@@ -131,6 +131,8 @@ describe('Fixture HTTP API', () => {
     expect(created.body.registered).toBe(false);
     expect(created.body.problemIds).toEqual(input.problemIds);
     expect(created.body.authors.map(author => author.id)).toEqual(input.authorIds);
+    // a contest is created by one of its authors; leaving them is an edit
+    expect((await request('/contests', { method: 'POST', body: { ...input, authorIds: ['new_cuda'] }, cookie: alex })).status).toBe(400);
     expect((await request('/contests?mine=true', { cookie: alex })).body.some(contest => contest.id === id)).toBe(true);
     expect((await request(`/contests/${id}`, {
       method: 'PUT', body: { ...input, authorIds: [] }, cookie: alex,

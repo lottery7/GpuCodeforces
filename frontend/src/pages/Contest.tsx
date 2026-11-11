@@ -18,6 +18,13 @@ function countdown(value: string, now: number) {
   return days ? `${days} д ${time}` : time;
 }
 
+/** Which problems of a contest take hacks: without it a hack period looks open where nothing can be hacked. */
+function hackNote(problems: Problem[]) {
+  if (!problems.length) return '';
+  const hackable = problems.flatMap((problem, index) => problem.hacksAllowed ? [taskLabel(index)] : []);
+  return hackable.length ? ` Взламывать можно принятые решения задач: ${hackable.join(', ')}.` : ' Задачи этого контеста взломы не допускают.';
+}
+
 function taskLabel(index: number) {
   let value = index + 1;
   let label = '';
@@ -148,7 +155,7 @@ export default function Contest() {
     {join.error && <ErrorMessage error={join.error} />}
     <ErrorMessage error={startVirtual.error} />
     {upsolving && <p className="notice">Дорешивание. Ваши новые отправки не изменяют официальный зачет.</p>}
-    {item.format !== 'duel' && phase === 'finished' && item.finalized === false && <p className="notice">{item.hackEndAt && Date.parse(item.hackEndAt) > serverNow ? `Период взломов до ${dateTime(item.hackEndAt)} МСК.` : 'Ожидаем окончания проверок. Результаты предварительные.'}</p>}
+    {item.format !== 'duel' && phase === 'finished' && item.finalized === false && <p className="notice">{item.hackEndAt && Date.parse(item.hackEndAt) > serverNow ? `Период взломов до ${dateTime(item.hackEndAt)} МСК.${hackNote(columns)}` : 'Ожидаем окончания проверок. Результаты предварительные.'}</p>}
     {item.format === 'duel' && !upsolving ? <>
       <DuelBoard contest={item} finished={phase === 'finished'} clockOffset={clockOffset} contestUpdatedAt={contestSnapshot.current?.id === id && contestSnapshot.current.userId === user?.id ? contestSnapshot.current.startedAt : 0} showHeading={false} />
       {tasks.isPending && <p role="status">Загрузка задачи...</p>}
@@ -174,7 +181,7 @@ export default function Contest() {
         {phase === 'finished' && <p className="small muted">Итоговая таблица.</p>}
         {standings.isPending && <p className="loading" role="status">Загрузка таблицы...</p>}
         {standings.error && <div><ErrorMessage error={standings.error} /><button className="text-link" onClick={() => void standings.refetch()}>Повторить</button></div>}
-        {standings.data && (standings.data.length ? <div className="table-wrap"><table className="data-table" aria-label="Таблица контеста"><thead><tr><th className="num">Место</th><th>Участник</th><th className="num">Решено</th><th className="num">Время</th>{columns.map((problem, index) => <th key={problem.id}><Link title={problem.title} to={problemPath(problem.id, id)}>{taskLabel(index)}</Link></th>)}</tr></thead><tbody>{standings.data.map(row => <tr key={row.user.id} className={row.user.id === user?.id ? 'own-row' : undefined}>
+        {standings.data && (standings.data.length ? <div className="table-wrap"><table className="data-table" aria-label="Таблица контеста"><thead><tr><th className="num">Место</th><th>Участник</th><th className="num">Решено</th><th className="num">Время</th>{columns.map((problem, index) => <th key={problem.id} className="num"><Link title={problem.title} to={problemPath(problem.id, id)}>{taskLabel(index)}</Link></th>)}</tr></thead><tbody>{standings.data.map(row => <tr key={row.user.id} className={row.user.id === user?.id ? 'own-row' : undefined}>
           <td className="num">{row.rank}</td><td><UserLink user={row.user} />{row.user.id === user?.id && <span className="small muted"> вы</span>}{phase === 'finished' && <div className="small"><Link to={`/submissions?user=${encodeURIComponent(row.user.id)}&contest=${encodeURIComponent(id)}`}>Решения</Link></div>}</td><td className="num">{row.solved}</td><td className="num mono">{solveTime(row.totalSeconds)}</td>
           {columns.map(problem => <td key={problem.id} className="num mono">{row.times[problem.id] === undefined ? '-' : solveTime(row.times[problem.id])}</td>)}
         </tr>)}</tbody></table></div> : <Empty>Результатов пока нет.</Empty>)}

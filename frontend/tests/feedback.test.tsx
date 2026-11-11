@@ -7,7 +7,7 @@ import { api, ApiError } from '../src/api/client';
 import type { ProblemDetail, User } from '../src/api/types';
 import Problem from '../src/pages/Problem';
 import { readDraft } from '../src/drafts';
-import { ErrorMessage, useFeedbackVisibility } from '../src/ui';
+import { ErrorMessage, QueryState, useFeedbackVisibility } from '../src/ui';
 
 const session = vi.hoisted(() => ({ user: null as User | null }));
 vi.mock('../src/auth', () => ({ useSession: () => ({ user: session.user, isLoading: false, error: null }) }));
@@ -40,6 +40,27 @@ beforeEach(() => {
 });
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe('Ошибка загрузки страницы', () => {
+  function failed(error: unknown) {
+    const refetch = vi.fn();
+    render(<MemoryRouter><QueryState query={{ error, refetch }} /></MemoryRouter>);
+    return refetch;
+  }
+
+  it('предлагает повторить запрос после временного сбоя', async () => {
+    const refetch = failed(new ApiError(503, 'Сервис недоступен'));
+    await userEvent.click(screen.getByRole('button', { name: 'Повторить' }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('не предлагает повторять запрос того, чего нет', () => {
+    failed(new ApiError(404, 'Задача не найдена'));
+    expect(screen.getByRole('alert')).toHaveTextContent('Задача не найдена');
+    expect(screen.queryByRole('button', { name: 'Повторить' })).not.toBeInTheDocument();
+    expect(document.title).toBe('GPU Forces - Не найдено');
+  });
+});
 
 describe('Видимость ответа на действие', () => {
   it('позволяет дочитать длинную HTTP-ошибку с клавиатуры', async () => {

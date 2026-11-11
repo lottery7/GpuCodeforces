@@ -22,6 +22,8 @@ class UserService(
         if (userRepository.existsByEmailIgnoreCase(email)) {
             throw BadRequestException("Эта почта уже зарегистрирована")
         }
+        // BCrypt hashes at most 72 bytes and refuses a longer password; in UTF-8 that is fewer characters than 72
+        if (password.toByteArray().size > MAX_PASSWORD_BYTES) throw BadRequestException("Пароль длиннее $MAX_PASSWORD_BYTES байт: сократите его")
         val passwordHash = passwordEncoder.encode(password) ?: error("PasswordEncoder returned null")
         return userRepository.save(User(handle = handle, email = email, passwordHash = passwordHash))
     }
@@ -60,5 +62,9 @@ class UserService(
         }
         val total = if (ratingProcessor != null) userRepository.countRated(ratingProcessor, pattern) else userRepository.countByHandle(pattern)
         return UserPage(items, total.toInt())
+    }
+
+    private companion object {
+        const val MAX_PASSWORD_BYTES = 72
     }
 }

@@ -36,9 +36,19 @@ export function ErrorMessage({ error, reveal = false }: { error: unknown; reveal
   return <div ref={ref} className="notice error feedback-anchor" role="alert"><div className="error-copy" tabIndex={0}>{error instanceof Error ? error.message : 'Не удалось выполнить запрос.'}</div>{error instanceof ApiError && error.status === 401 && !['/login', '/register'].includes(location.pathname) && <button className="text-link" onClick={() => openAuth('login', location.pathname + location.search)}>Войти</button>}</div>;
 }
 
+/** The tab of a page that was not found says so instead of keeping the title of the previous page. */
+function MissingTitle() {
+  useEffect(() => { document.title = 'GPU Forces - Не найдено'; }, []);
+  return null;
+}
+
 export function QueryState({ query, children }: { query: { isPending?: boolean; isLoading?: boolean; error: unknown; data?: unknown; refetch: () => unknown }; children?: ReactNode }) {
   if (query.isPending || query.isLoading) return <div className="empty" role="status">Загрузка...</div>;
-  if (query.error && query.data === undefined) return <div className="stack"><ErrorMessage error={query.error} /><div><button className="btn secondary" onClick={() => void query.refetch()}>Повторить</button></div></div>;
+  if (query.error && query.data === undefined) {
+    // what is not there will not appear on a second try
+    const missing = query.error instanceof ApiError && query.error.status === 404;
+    return <div className="stack">{missing && <MissingTitle />}<ErrorMessage error={query.error} />{!missing && <div><button className="btn secondary" onClick={() => void query.refetch()}>Повторить</button></div>}</div>;
+  }
   return <>{query.error && <ErrorMessage error={query.error} />}{children}</>;
 }
 

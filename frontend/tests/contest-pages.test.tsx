@@ -96,6 +96,18 @@ describe('Список соревнований', () => {
     const labels = rows.map(row => row.textContent);
     expect(labels.findIndex(label => label?.includes('Мой контест'))).toBeLessThan(labels.findIndex(label => label?.includes('Чужой контест')));
     expect(screen.getByRole('row', { name: /Мои соревнования/ })).toBeInTheDocument();
+    // without a heading of their own the other contests would read as the author's too
+    const others = labels.findIndex(label => label === 'Остальные соревнования');
+    expect(others).toBeGreaterThan(labels.findIndex(label => label?.includes('Мой контест')));
+    expect(others).toBeLessThan(labels.findIndex(label => label?.includes('Чужой контест')));
+  });
+
+  it('не делит список на группы, если своих соревнований нет', async () => {
+    vi.spyOn(api, 'listContests').mockResolvedValue([{ ...contest('live'), title: 'Чужой контест' }]);
+    session.user = { ...author, id: 'myself' };
+    open('/contests');
+    expect(await screen.findByRole('link', { name: 'Чужой контест' })).toBeVisible();
+    expect(screen.queryByRole('row', { name: /Мои соревнования|Остальные соревнования/ })).not.toBeInTheDocument();
   });
 });
 

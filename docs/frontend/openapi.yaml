@@ -256,7 +256,7 @@ paths:
               properties:
                 handle: {type: string, pattern: '^[A-Za-z0-9_]{3,24}$'}
                 email: {type: string, format: email}
-                password: {type: string, minLength: 8}
+                password: {type: string, minLength: 8, description: 'Не длиннее 72 байт в UTF-8 (предел BCrypt): 72 латинских символа или 36 кириллических.'}
       responses:
         '201':
           description: Новый пользователь; сервер устанавливает cookie сессии
@@ -1162,6 +1162,7 @@ components:
         lastSubmissionId: {type: string, nullable: true}
         lastStatus: {type: string, nullable: true, description: Статус из Submission; null означает отсутствие посылок.}
         processors: {type: array, items: {$ref: '#/components/schemas/ProblemProcessor'}}
+        hacksAllowed: {type: boolean, description: 'Принятые решения задачи можно взламывать в периоде взломов контеста: пакет задачи допускает свои тесты, и это не угадывание. Без поля - нельзя.'}
     Submission:
       type: object
       required: [id, problemId, problemTitle, user, contestId, contestTitle, createdAt, status, processor, language, score, comparable]
@@ -1244,10 +1245,11 @@ components:
       type: object
       description: |
         Обычный контест; startAt в будущем, endAt позже startAt. Только публичные задачи, которые можно сдавать на
-        processor; их порядок задает problemIds. Для дуэли используйте POST /duels.
+        processor; их порядок задает problemIds. При создании создатель обязан быть среди authorIds; выйти из авторов
+        можно при редактировании. Для дуэли используйте POST /duels.
       required: [title, startAt, endAt, authorIds, problemIds, processor]
       properties:
-        title: {type: string, minLength: 1, maxLength: 100}
+        title: {type: string, minLength: 1, maxLength: 100, description: Не из одних пробелов; пробелы по краям отбрасываются.}
         format: {type: string, enum: [standard, duel], default: standard}
         opponentId: {type: string, nullable: true, deprecated: true, description: Поле старого формата; дуэли создаются через /duels.}
         startAt: {type: string, format: date-time}

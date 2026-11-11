@@ -141,6 +141,15 @@ class ContestIntegrationTest {
         assertThat(client.get().uri("/contests?processor=rtl").exchange().expectBody(Array<Contest>::class.java).returnResult().responseBody!!).isEmpty()
         client.get().uri("/contests?processor=nope").exchange().expectStatus().isBadRequest
 
+        // A title of spaces would leave the contest lists with a row nobody can open.
+        val unnamed = ContestInput("  ", input.startAt, input.endAt, input.authorIds, input.problemIds, input.processor)
+        client.post().uri("/contests").contentType(MediaType.APPLICATION_JSON).cookie("session", authorCookie).body(unnamed)
+            .exchange().expectStatus().isBadRequest
+        client.get().uri("/contests?phase=someday").exchange().expectStatus().isBadRequest
+        // A contest is created by one of its authors: nobody signs it with somebody else's name alone.
+        client.post().uri("/contests").contentType(MediaType.APPLICATION_JSON).cookie("session", outsiderCookie).body(input)
+            .exchange().expectStatus().isBadRequest
+
         // Anonymous visitors see no problem ids before the contest starts.
         val anonymousView = client.get().uri("/contests/${created.id}")
             .exchange().expectStatus().isOk.expectBody(Contest::class.java).returnResult().responseBody!!

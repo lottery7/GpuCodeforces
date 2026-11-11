@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, ApiError } from '../src/api/client';
 import type { Contest, Problem, User } from '../src/api/types';
 import ContestEditor from '../src/pages/ContestEditor';
+import { testProcessors } from './setup';
 
 const session = vi.hoisted(() => ({ user: null as User | null }));
 vi.mock('../src/auth', () => ({ useSession: () => ({ user: session.user, isLoading: false, error: null }) }));
@@ -63,7 +64,7 @@ afterEach(() => {
 });
 
 describe('Создание контеста', () => {
-  it('ищет авторов по нику и позволяет убрать создателя, сохранив хотя бы одного автора', async () => {
+  it('ищет авторов по нику и оставляет создателя автором нового контеста', async () => {
     const search = vi.spyOn(api, 'listUsers').mockResolvedValue({ items: [zeta], total: 1 });
     open();
     expect(await screen.findByRole('button', { name: `Убрать ${creator.handle}` })).toBeDisabled();
@@ -73,12 +74,37 @@ describe('Создание контеста', () => {
     await addAuthor(zeta.handle);
 
     expect(search).toHaveBeenLastCalledWith({ q: zeta.handle, sort: 'handle', limit: 8 }, expect.objectContaining({ aborted: false }));
-    await userEvent.click(screen.getByRole('button', { name: `Убрать ${creator.handle}` }));
+    // a new contest cannot be signed with somebody else's name alone: its creator stays, a co-author can go
+    expect(screen.getByRole('button', { name: `Убрать ${creator.handle}` })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: `Убрать ${zeta.handle}` }));
+    expect(screen.queryByRole('link', { name: zeta.handle })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: creator.handle })).toBeVisible();
+  });
+
+  it('при редактировании позволяет выйти из авторов, сохранив хотя бы одного', async () => {
+    vi.spyOn(api, 'getContest').mockResolvedValue(contest());
+    open('/contest/round/edit');
+    await userEvent.click(await screen.findByRole('button', { name: `Убрать ${creator.handle}` }));
     expect(screen.queryByRole('button', { name: `Убрать ${creator.handle}` })).not.toBeInTheDocument();
+    expect(screen.getByText('После сохранения вы потеряете право редактирования.')).toBeVisible();
     const lastAuthor = screen.getByRole('button', { name: `Убрать ${zeta.handle}` });
     expect(lastAuthor).toBeDisabled();
     await userEvent.click(lastAuthor);
     expect(screen.getByRole('link', { name: zeta.handle })).toBeVisible();
+  });
+
+  it('говорит, решения каких задач можно взламывать, и предупреждает, если таких нет', async () => {
+    vi.spyOn(api, 'allProblems').mockResolvedValue([{ ...tasks[0], hacksAllowed: true }, tasks[1]]);
+    open();
+    const period = await screen.findByRole('spinbutton', { name: /Период взломов/ });
+    await userEvent.click(await screen.findByRole('checkbox', { name: /200\. Редукция/ }));
+    await userEvent.clear(period);
+    await userEvent.type(period, '30');
+    expect(screen.getByText(/Ни одна из выбранных задач не допускает взломы/)).toBeVisible();
+
+    await userEvent.click(screen.getByRole('checkbox', { name: /100\. Сложение векторов/ }));
+    expect(screen.queryByText(/Ни одна из выбранных задач/)).not.toBeInTheDocument();
+    expect(screen.getByText('Взламывать можно решения задач: Сложение векторов.')).toBeVisible();
   });
 
   it('отправляет авторов и выбранные задачи в заданном пользователем порядке', async () => {
@@ -96,7 +122,6 @@ describe('Создание контеста', () => {
     await userEvent.type(screen.getByRole('spinbutton', { name: 'Длительность, минут' }), '90');
     await addAuthor(zeta.handle);
     await addAuthor(alpha.handle);
-    await userEvent.click(screen.getByRole('button', { name: `Убрать ${creator.handle}` }));
     await userEvent.click(screen.getByRole('checkbox', { name: /300\. Транспонирование/ }));
     await userEvent.click(screen.getByRole('checkbox', { name: /100\. Сложение векторов/ }));
     await userEvent.click(screen.getByRole('checkbox', { name: /200\. Редукция/ }));
@@ -106,7 +131,7 @@ describe('Создание контеста', () => {
 
     await waitFor(() => expect(create).toHaveBeenCalledWith({
       title: 'GPU Round', format: 'standard', startAt, endAt: new Date(Date.parse(startAt) + 90 * 60000).toISOString(),
-      authorIds: [zeta.id, alpha.id], problemIds: ['transpose', 'reduce', 'add'], processor: 'gpu-cuda', hackDurationMinutes: 0,
+      authorIds: [creator.id, zeta.id, alpha.id], problemIds: ['transpose', 'reduce', 'add'], processor: 'gpu-cuda', hackDurationMinutes: 0,
     }));
     expect(await screen.findByText('Контест сохранен')).toBeVisible();
   });
@@ -139,6 +164,17 @@ describe('Создание контеста', () => {
       title: 'Мои изменения', format: 'standard', startAt: original.startAt, endAt: new Date(Date.parse(original.startAt) + 75 * 60000).toISOString(),
       authorIds: [creator.id, alpha.id], problemIds: ['reduce', 'transpose'], processor: 'gpu-cuda', hackDurationMinutes: 0,
     }));
+  });
+
+  it('новый контест начинается на процессоре, который есть на платформе', async () => {
+    const onRtl = { ...problem('chip', '400', 'Сумматор'), processors: [{ id: 'rtl', languages: ['systemverilog'], bestSubmissionId: null, bestScore: null, recordScore: null }] };
+    vi.spyOn(api, 'allProblems').mockResolvedValue([...tasks, onRtl]);
+    // a platform without the real GPU: only the emulated processor is offered
+    vi.spyOn(api, 'listProcessors').mockResolvedValue(testProcessors.filter(item => item.id === 'rtl'));
+    open();
+    expect(await screen.findByRole('combobox', { name: 'Процессор' })).toHaveValue('rtl');
+    expect(await screen.findByRole('checkbox', { name: /400\. Сумматор/ })).toBeVisible();
+    expect(screen.queryByRole('checkbox', { name: /100\. Сложение векторов/ })).not.toBeInTheDocument();
   });
 
   it('берет в контест на процессоре только задачи, которые на нем сдаются', async () => {

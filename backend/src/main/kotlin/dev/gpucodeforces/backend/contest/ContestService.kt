@@ -50,7 +50,7 @@ class ContestService(
         processor?.let(processorCatalog::require)
         val now = Instant.now()
         val trimmed = query?.trim()?.lowercase().orEmpty()
-        if (phase != null && ContestPhase.entries.none { it.value == phase }) return emptyList()
+        if (phase != null && ContestPhase.entries.none { it.value == phase }) throw BadRequestException("Неизвестная фаза контеста")
         val filter = Specification<Contest> { root, criteria, builder ->
             val conditions = mutableListOf<Predicate>()
             conditions += builder.equal(root.get<String>("format"), "standard")
@@ -81,11 +81,13 @@ class ContestService(
     @Transactional
     fun create(input: ContestInputApi, creator: User): Contest {
         validate(input)
+        // Nobody signs a contest with somebody else's name alone; an author may leave it later, when editing.
+        if (creator.id.toString() !in input.authorIds) throw BadRequestException("Создатель контеста должен быть среди его авторов")
         val versions = problemsFor(input)
         val contest = contestRepository.save(
             Contest(
                 id = UUID.randomUUID(),
-                title = input.title,
+                title = input.title.trim(),
                 startAt = input.startAt.toInstant(),
                 endAt = input.endAt.toInstant(),
                 processor = input.processor,
@@ -125,7 +127,7 @@ class ContestService(
         }
         validate(input)
         val versions = problemsFor(input)
-        contest.title = input.title
+        contest.title = input.title.trim()
         contest.startAt = input.startAt.toInstant()
         contest.endAt = input.endAt.toInstant()
         contest.hackEndAt = hackEnd(input, contest.endAt)
@@ -237,6 +239,7 @@ class ContestService(
     }
 
     private fun validate(input: ContestInputApi) {
+        if (input.title.isBlank()) throw BadRequestException("Укажите название контеста")
         if ((input.hackDurationMinutes ?: 0) !in 0..MAX_HACK_MINUTES) throw BadRequestException("Недопустимая длительность периода взломов")
         processorCatalog.require(input.processor)
         val format = input.format?.value ?: "standard"

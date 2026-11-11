@@ -94,6 +94,6 @@ export default function Submission() {
     </>}
     {item.hackable && item.contestId && <HackForm submissionId={item.id} contestId={item.contestId} />}
     {item.environmentMarkdown && !isGuess && <details className="disclosure"><summary>Среда и методика замера</summary><Markdown>{item.environmentMarkdown}</Markdown></details>}
-    {item.measurement && !isGuess && <p className="small muted"><SyntheticResultsNotice synthetic={item.measurement.synthetic} />{' '}{item.measurement.timingMode == null ? 'Результат теста посчитал эмулятор.' : item.measurement.timingMode === 'wall' ? 'Измеряется вызов решения до завершения работы, включая запуск и синхронизацию GPU.' : 'Измеряются интервалы работы ядер GPU.'} Замерных тестов: {item.measurement.testCount}.{item.measurement.model && !item.measurement.synthetic && ` Модель: ${item.measurement.model}.`}</p>}
+    {item.measurement && !isGuess && <p className="small muted">{item.measurement.timingMode == null ? 'Результат теста посчитал эмулятор.' : item.measurement.timingMode === 'wall' ? 'Измеряется вызов решения до завершения работы, включая запуск и синхронизацию GPU.' : 'Измеряются интервалы работы ядер GPU.'} Замерных тестов: {item.measurement.testCount}.{item.measurement.model && !item.measurement.synthetic && ` Модель: ${item.measurement.model}.`}{' '}<SyntheticResultsNotice synthetic={item.measurement.synthetic} /></p>}
   </>}</QueryState>;
 }

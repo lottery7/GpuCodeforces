@@ -181,8 +181,12 @@ h1, .task-link { overflow-wrap: anywhere; }
 .breadcrumbs a:hover { color: var(--text-strong); }
 .inline { display: flex; flex-wrap: wrap; align-items: center; gap: 7.2px 14.4px; }
 .stack { display: flex; flex-direction: column; gap: 19.2px; }
-.dashboard { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(360px, 1fr); align-items: start; gap: 19.2px; }
+/* The feed of submissions is a wide table: it gets all the width the side cards can spare, long problem titles wrap,
+   and the time of sending is left out - the feed is in that order anyway. */
+.dashboard { display: grid; grid-template-columns: minmax(0, 1fr) 336px; align-items: start; gap: 19.2px; }
 .dashboard-main, .dashboard-side { min-width: 0; }
+.dashboard-main .data-table td:nth-child(2) { white-space: normal; }
+.dashboard-main .data-table th:last-child, .dashboard-main .data-table td:last-child { display: none; }
 .dashboard-side { display: flex; flex-direction: column; gap: 19.2px; }
 .dashboard-head { display: flex; align-items: baseline; justify-content: space-between; gap: 14.4px; margin-bottom: 14.4px; }
 .dashboard-head h2 { margin: 0; }
@@ -250,7 +254,8 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
 .toolbar .search { flex: 1 1 288px; min-width: 216px; }
 .toolbar > .search-input { flex: 1 1 288px; width: auto; min-width: 216px; }
 .toolbar select { flex: 0 1 auto; width: auto; min-width: 150px; max-width: 264px; font-size: var(--font-base); }
-.field-inline { display: inline-flex; align-items: center; gap: 9.6px; }
+.field-inline { display: inline-flex; align-items: center; gap: 9.6px; min-width: 0; max-width: 100%; }
+.field-inline select { flex: 1 1 auto; min-width: 0; }
 .target-picker select { max-width: 384px; }
 .toolbar input:not([type="checkbox"]) { min-height: 40.8px; }
 .toolbar .filter-reset { margin-left: auto; }
@@ -347,6 +352,7 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
 .metric-list dt { color: var(--muted); }
 .metric-list dd { margin: 0; }
 .contest-form { max-width: 912px; }
+.hack-warning { color: var(--pending); }
 .contest-builder { max-width: none; }
 .contest-settings { display: flex; flex-direction: column; gap: 21.6px; min-width: 0; padding: 19.2px; border: 1.2px solid var(--border); border-radius: 4.8px; background: var(--surface); }
 .contest-task-picker { min-width: 0; padding: 19.2px; border: 1.2px solid var(--border); border-radius: 4.8px; background: var(--surface); }
@@ -586,7 +592,11 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
   .toolbar .search { flex-basis: 100%; min-width: 0; }
   .toolbar > .search-input { flex-basis: 100%; min-width: 0; }
   .toolbar input:not([type="checkbox"]) { min-height: 48px; }
-  .toolbar select { flex: 1 1 0; min-width: 0; max-width: none; padding: 10.8px 36px 10.8px 13.2px; font-size: var(--font-sm); }
+  /* two filters in a row: five of them in one row leave a letter of each */
+  .toolbar select { flex: 1 1 calc(50% - 4.8px); min-width: 0; max-width: none; padding: 10.8px 36px 10.8px 13.2px; font-size: var(--font-sm); }
+  .target-picker .field-inline { flex: 1 1 100%; }
+  .hero { flex-direction: column; align-items: flex-start; gap: 14.4px; padding: 9.6px 0 14.4px; }
+  .hero-logo { width: 57.6px; height: 57.6px; }
   .toolbar .filter-reset { flex-basis: 100%; text-align: right; }
   .panel { padding: 16.8px; }
   .data-table th, .data-table td { padding: 12px 13.2px; }

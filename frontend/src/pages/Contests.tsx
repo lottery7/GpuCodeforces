@@ -106,6 +106,7 @@ export default function Contests() {
       <tbody>
         {user && mine.length > 0 && <tr className="contest-group"><td colSpan={7}>Мои соревнования</td></tr>}
         {user && mine.length > 0 && rows(mine)}
+        {user && mine.length > 0 && rest.length > 0 && <tr className="contest-group"><td colSpan={7}>Остальные соревнования</td></tr>}
         {rows(rest)}
       </tbody>
     </table></div> : <Empty>{query.trim() || processor ? 'Соревнования не найдены. Измените запрос или выберите другой фильтр.' : 'Соревнований пока нет.'}</Empty>)}
