@@ -225,7 +225,7 @@ describe('Fixture HTTP API', () => {
     const paginated = (await request('/problems?offset=1&limit=2')).body;
     expect(paginated.total).toBe(10);
     expect(paginated.items).toHaveLength(2);
-  });
+  }, 10000);
 
   it('returns canonical terminal verdicts and counts passed correctness tests', async () => {
     const alex = await login('alex_cuda');

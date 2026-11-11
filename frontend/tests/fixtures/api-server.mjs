@@ -788,9 +788,8 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
       }
 
       if (resource === 'submissions' && id === 'latest' && segments.length === 2 && method === 'GET') {
-        // The feed of all users has no total, and a virtual attempt stays private.
-        const feed = model.submissions({}).map(item => submissionDto(item)).filter(item => !item.context?.startsWith('virtual:'));
-        return send(response, 200, { items: page(feed, query).items });
+        // The feed of all users has no total. Only its page is mapped: a DTO is computed from the whole history.
+        return send(response, 200, { items: page(model.submissions({}), query).items.map(item => submissionDto(item)) });
       }
 
       if (resource === 'submissions' && id && segments.length <= 3) {
