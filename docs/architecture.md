@@ -547,8 +547,11 @@ classDiagram
 
 `judge-api` — общие контракты gateway, executor и backend, включая каталог процессоров. У `JobProcessor` две
 реализации: настоящий конвейер и mock (Spring-профиль `mock`). Конвейер выбирает `ProcessorBackend` по процессору
-задания; `GpuCudaBackend` — путь на реальной GPU, `RtlBackend` — схема в Verilator, `RiscvBackend` — RISC-V в QEMU с плагином судьи, `CudaSimBackend` — CUDA в GPGPU-Sim; эмулируемые процессоры
-используют `EmulatorRun`. Конфигурация и
+задания; `GpuCudaBackend` — путь на реальной GPU, `RtlBackend` — схема в Verilator, `RiscvBackend` — RISC-V в QEMU с плагином судьи, `CudaSimBackend` — CUDA в GPGPU-Sim. Эмулируемые процессоры
+наследуют `EmulatorBackend`: в нём общий порядок проверки (сборка, тесты задачи, работник из пула) и цикл по тестам
+`EmulatorRun`, а процессор задаёт только сборку посылки и запуск одного теста. Сборки эмуляторов хранит общий
+`BuildCache` (каталог на ключ, ошибки сборки тоже кэшируются). `HarnessRunner` разбирает статус-строки обвязки
+`gpu-cuda` в `HarnessLine` и сам решает, могла ли обвязка написать строку в этот момент. Конфигурация и
 утилиты опущены.
 
 ```mermaid
@@ -609,11 +612,21 @@ classDiagram
     class RiscvBuilder
     class RiscvHarness
     class CudaSimBackend
+    class EmulatorBackend {
+      <<abstract>>
+      build(JudgeJob, ProcessorSpec) EmulatorBuild
+      launch(TestRun, artifact) SimulatorLaunch
+    }
     class EmulatorRun
+    class BuildCache
     class SlotPool
     class Builder
     class ProblemStore
     class HarnessRunner
+    class HarnessLine {
+      <<sealed>>
+      parse(String) HarnessLine
+    }
     class OutputChecker
     class GpuManager
     class Sandbox {
@@ -651,23 +664,24 @@ classDiagram
   GpuCudaBackend ..> Builder
   GpuCudaBackend ..> ProblemStore
   GpuCudaBackend ..> HarnessRunner
+  HarnessRunner ..> HarnessLine
   GpuCudaBackend ..> GpuManager
   GpuManager ..> SlotPool
-  RtlBackend ..|> ProcessorBackend
+  EmulatorBackend ..|> ProcessorBackend
+  EmulatorBackend ..> ProblemStore
+  EmulatorBackend ..> EmulatorRun
+  EmulatorBackend ..> SlotPool : работники
+  RtlBackend --|> EmulatorBackend
   RtlBackend ..> RtlBuilder
-  RtlBackend ..> ProblemStore
-  RtlBackend ..> EmulatorRun
-  RtlBackend ..> SlotPool : работники
   RtlBuilder ..> RtlTestbench
+  RtlBuilder ..> BuildCache
   RtlBuilder ..> Sandbox
-  RiscvBackend ..|> ProcessorBackend
+  RiscvBackend --|> EmulatorBackend
   RiscvBackend ..> RiscvBuilder
-  RiscvBackend ..> ProblemStore
-  RiscvBackend ..> EmulatorRun
   RiscvBuilder ..> RiscvHarness
+  RiscvBuilder ..> BuildCache
   RiscvBuilder ..> Sandbox
-  CudaSimBackend ..|> ProcessorBackend
-  CudaSimBackend ..> EmulatorRun
+  CudaSimBackend --|> EmulatorBackend
   EmulatorRun ..> Sandbox
   EmulatorRun ..> OutputChecker
   ProblemStore ..> SlotPool : GPU-слот, если есть GPU

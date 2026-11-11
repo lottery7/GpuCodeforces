@@ -12,11 +12,11 @@ import dev.gpucodeforces.judge.executor.sandbox.Sandbox
 import dev.gpucodeforces.judge.executor.sandbox.SandboxSpec
 import dev.gpucodeforces.judge.executor.util.FileTrees
 import dev.gpucodeforces.judge.executor.util.Proc
+import dev.gpucodeforces.judge.executor.util.nextNonce
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.SecureRandom
 import java.time.Duration
-import java.util.HexFormat
 import kotlin.io.path.deleteIfExists
 import org.slf4j.LoggerFactory
 
@@ -94,7 +94,7 @@ class EmulatorRun(private val sandbox: Sandbox) {
             hooks.progress(test.index, total)
             val outDir = Files.createDirectories(runDir.resolve("out").resolve("t${test.index}"))
             FileTrees.makeWritableByAll(outDir)
-            val nonce = HexFormat.of().formatHex(ByteArray(12).also { random.nextBytes(it) })
+            val nonce = random.nextNonce()
             val sim = launch(test, outDir, nonce)
             val result = try {
                 runTest(problem, test, sim, nonce, scoreType, limit, hostTimeLimit)

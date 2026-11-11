@@ -11,6 +11,7 @@ import dev.gpucodeforces.judge.executor.processor.SimulatorExit
 import dev.gpucodeforces.judge.executor.processor.SimulatorOutcome
 import dev.gpucodeforces.judge.executor.processor.cudasim.CudaSimBackend
 import dev.gpucodeforces.judge.executor.processor.cudasim.CudaSimHarness
+import dev.gpucodeforces.judge.executor.processor.unitLimit
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -49,6 +50,6 @@ class CudaSimTest {
         assertEquals("solve: invalid argument", error.details)
         assertEquals(Verdict.RUNTIME_ERROR, assertIs<SimulatorOutcome.Failed>(CudaSimBackend.outcome(SimulatorExit(139, emptyList(), ""), 1, ScoreType.CYCLES)).verdict)
         assertTrue(CudaSimBackend.isStatistic("gpu_tot_sim_cycle = 1"))
-        assertEquals(50_000, CudaSimBackend.cycleLimit(5e4, 10_000_000))
+        assertEquals(50_000, unitLimit(5e4, cap = 10_000_000))
     }
 }
