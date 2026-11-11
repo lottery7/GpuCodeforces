@@ -13,7 +13,7 @@ import ReferenceStatus from '../components/ReferenceStatus';
 import { readDraft, rememberEditorLogin, writeDraft, type DraftTarget } from '../drafts';
 import { formatLimit, scoreUnits, useProcessors } from '../processors';
 import { Difficulty, Empty, ErrorMessage, Markdown, PageHeader, QueryState, ScoreValue, Tabs, UserLink, useFeedbackVisibility } from '../ui';
-import { canJoinContest, contextFromSearch, difficultyLabels, formatLabels, guessLabels, problemPath } from '../utils';
+import { canJoinContest, contextFromSearch, difficultyLabels, formatLabels, guessLabels, problemPath, shortId } from '../utils';
 import { SubmissionList } from './Submissions';
 import { t } from '../i18n';
 
@@ -248,7 +248,7 @@ function Leaders({ problemId, processor, context, finished }: { problemId: strin
   });
   return <QueryState query={leaders}>{leaders.data && (leaders.data.length ? <div className="panel table-wrap"><table className="data-table" aria-label={t('Лидеры задачи')}>
     <thead><tr><th className="num">{t('Место')}</th><th>{t('Участник')}</th><th className="num">{t('Лучший результат')}</th><th className="num">{t('Посылка')}</th></tr></thead>
-    <tbody>{leaders.data.map(item => <tr key={item.user.id} className={item.user.id === user?.id ? 'own-row' : undefined}><td className="num">{item.rank}</td><td><UserLink user={item.user} /></td><td className="num mono"><ScoreValue score={item.score} /></td><td className="num"><Link to={`/submission/${encodeURIComponent(item.submissionId)}`}>#{item.submissionId}</Link></td></tr>)}</tbody>
+    <tbody>{leaders.data.map(item => <tr key={item.user.id} className={item.user.id === user?.id ? 'own-row' : undefined}><td className="num">{item.rank}</td><td><UserLink user={item.user} /></td><td className="num mono"><ScoreValue score={item.score} /></td><td className="num mono"><Link to={`/submission/${encodeURIComponent(item.submissionId)}`} title={item.submissionId}>#{shortId(item.submissionId)}</Link></td></tr>)}</tbody>
   </table></div> : <Empty>{t('Принятых решений на процессоре')} {processors.title(processor)} {t('в этой конфигурации пока нет.')}</Empty>)}</QueryState>;
 }
 

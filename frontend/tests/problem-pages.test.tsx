@@ -118,6 +118,17 @@ describe('Решение задачи', () => {
     expect(screen.queryByText('Пример пройден.')).not.toBeInTheDocument();
   });
 
+  it('показывает в таблице лидеров короткий номер посылки со ссылкой на нее', async () => {
+    const submissionId = '8c940c0f-d253-491f-a9d1-8afafe4c0705';
+    vi.spyOn(api, 'getProblem').mockResolvedValue(problem);
+    vi.spyOn(api, 'problemLeaders').mockResolvedValue([{ rank: 1, user: owner, score: { value: 12.5, type: 'TIME_MS' }, submissionId }]);
+    open('/problem/vector-add?tab=leaders');
+
+    const link = await screen.findByRole('link', { name: '#8c940c0f' });
+    expect(link).toHaveAttribute('href', `/submission/${submissionId}`);
+    expect(link).toHaveAttribute('title', submissionId);
+  });
+
   it('обновляет лидеров на границе окончания контеста и останавливает опрос', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T10:00:00Z'));
