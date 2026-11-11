@@ -1,9 +1,9 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { api } from '../api/client';
 import { useSession } from '../auth';
-import { Empty, LoginRequired, PageHeader, QueryState, RatingDelta } from '../ui';
+import { Empty, ErrorMessage, LoginRequired, PageHeader, QueryState, RatingDelta } from '../ui';
 import { pendingStatuses } from '../utils';
 import { SubmissionTable } from './Submissions';
 
@@ -11,10 +11,21 @@ const phases = { upcoming: 'До начала', live: 'Идет', finished: 'З�
 
 export default function Profile() {
   const [params] = useSearchParams();
-  const { user, isLoading } = useSession();
+  const { user, isLoading, logout } = useSession();
+  const navigate = useNavigate();
   const id = params.get('user') || user?.id;
   const queryClient = useQueryClient();
   const previous = useRef(new Map<string, string>());
+  const [busy, setBusy] = useState(false);
+  const [logoutError, setLogoutError] = useState<unknown>(null);
+  async function signOut() {
+    if (busy) return;
+    setBusy(true);
+    setLogoutError(null);
+    try { await logout(); navigate('/problems'); }
+    catch (error) { setLogoutError(error); }
+    finally { setBusy(false); }
+  }
   const profile = useQuery({
     queryKey: ['profile', id],
     queryFn: ({ signal }) => api.getProfile(id!, signal),
@@ -43,7 +54,8 @@ export default function Profile() {
   const encoded = encodeURIComponent(id);
 
   return <>
-    <PageHeader title={data?.user.handle || 'Профиль'} actions={data && <Link className="btn secondary" to={`/submissions?user=${encoded}`}>{own ? 'Мои посылки' : 'Посылки участника'}</Link>} />
+    <PageHeader title={data?.user.handle || 'Профиль'} actions={data && <div className="inline"><Link className="btn secondary" to={`/submissions?user=${encoded}`}>{own ? 'Мои посылки' : 'Посылки участника'}</Link>{own && <button className="btn secondary" onClick={() => void signOut()} disabled={busy}>{busy ? 'Выход...' : 'Выйти'}</button>}</div>} />
+    {logoutError && <ErrorMessage error={logoutError} />}
     <QueryState query={profile}>
       {data && <>
         <div className="metrics">

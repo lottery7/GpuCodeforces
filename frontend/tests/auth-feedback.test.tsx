@@ -3,12 +3,16 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../src/api/client';
-import Auth from '../src/pages/Auth';
+import { AuthDialogContext, AuthForm } from '../src/auth-dialog';
 
 const session = vi.hoisted(() => ({ login: vi.fn(), register: vi.fn() }));
 vi.mock('../src/auth', () => ({ useSession: () => session }));
 const scrollIntoView = vi.fn();
 const originalScroll = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView');
+
+function renderForm(mode: 'login' | 'register') {
+  return render(<MemoryRouter initialEntries={['/login']}><AuthDialogContext.Provider value={() => {}}><AuthForm mode={mode} returnTo="/profile" onClose={() => {}} /></AuthDialogContext.Provider></MemoryRouter>);
+}
 
 beforeEach(() => {
   session.login.mockReset();
@@ -26,7 +30,7 @@ afterEach(() => {
 describe('Ошибки входа и регистрации', () => {
   it('показывает отказ входа рядом с кнопкой и сохраняет введенные данные', async () => {
     session.login.mockRejectedValue(new ApiError(401, 'Нужен вход'));
-    render(<MemoryRouter initialEntries={['/login']}><Auth mode="login" /></MemoryRouter>);
+    renderForm('login');
     const identifier = screen.getByRole('textbox', { name: 'Ник или почта' });
     const password = screen.getByLabelText('Пароль');
     await userEvent.type(identifier, '  new_cuda  ');
@@ -48,7 +52,7 @@ describe('Ошибки входа и регистрации', () => {
 
   it('показывает ошибку регистрации у действия без потери заполненных полей', async () => {
     session.register.mockRejectedValue(new ApiError(400, 'Этот ник уже занят'));
-    render(<MemoryRouter initialEntries={['/register']}><Auth mode="register" /></MemoryRouter>);
+    renderForm('register');
     await userEvent.type(screen.getByRole('textbox', { name: /^Ник участника/ }), 'new_cuda');
     await userEvent.type(screen.getByRole('textbox', { name: 'Почта' }), 'new@example.com');
     await userEvent.type(screen.getByLabelText(/^Пароль/), 'my-password');

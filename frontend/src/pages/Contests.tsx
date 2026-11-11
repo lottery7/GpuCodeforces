@@ -4,6 +4,7 @@ import { Link, useLocation, useSearchParams } from 'react-router';
 import { api } from '../api/client';
 import type { Contest, ContestQuery } from '../api/types';
 import { useSession } from '../auth';
+import { useAuthDialog } from '../auth-dialog';
 import { Empty, ErrorMessage, LoginRequired, PageHeader, SearchInput, Tabs } from '../ui';
 import { dateTime, phaseOf } from '../utils';
 
@@ -17,6 +18,7 @@ function duration(contest: Contest) {
 
 export default function Contests() {
   const { user, isLoading } = useSession();
+  const openAuth = useAuthDialog();
   const [params, setParams] = useSearchParams();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -49,7 +51,7 @@ export default function Contests() {
   ];
 
   return <>
-    <PageHeader title="Соревнования" actions={<Link className="btn primary" to={user ? '/contests/new' : '/login?returnTo=%2Fcontests%2Fnew'}>Создать контест</Link>} />
+    <PageHeader title="Соревнования" actions={<Link className="btn primary" to={user ? '/contests/new' : '/login?returnTo=%2Fcontests%2Fnew'} onClick={!user ? event => { event.preventDefault(); openAuth('login', '/contests/new'); } : undefined}>Создать контест</Link>} />
     <Tabs items={entries} selected={selected} />
     {selected === 'mine' && !user && !isLoading ? <LoginRequired returnTo={returnTo}>Здесь будут контесты, в которых вы указаны автором.</LoginRequired> : <>
       <div className="toolbar">
@@ -65,7 +67,7 @@ export default function Contests() {
           <td><time dateTime={contest.startAt}>{dateTime(contest.startAt)}</time></td>
           <td>{duration(contest)}</td><td>{contest.problemCount}</td>
           {selected === 'mine' ? <td>{({ upcoming: 'До начала', live: 'Идет', finished: 'Завершен' })[phaseOf(contest)]}</td> : selected !== 'finished' && <td className="contest-registration">
-            {contest.registered ? <span className="success">{selected === 'upcoming' ? 'Вы зарегистрированы' : 'Вы участвуете'}</span> : user ? <button className="btn secondary" disabled={join.isPending} onClick={() => join.mutate(contest.id)}>{join.isPending && join.variables === contest.id ? 'Регистрация...' : 'Зарегистрироваться'}</button> : <Link className="btn secondary" to={`/login?returnTo=${encodeURIComponent(returnTo)}`}>Зарегистрироваться</Link>}
+            {contest.registered ? <span className="success">{selected === 'upcoming' ? 'Вы зарегистрированы' : 'Вы участвуете'}</span> : user ? <button className="btn secondary" disabled={join.isPending} onClick={() => join.mutate(contest.id)}>{join.isPending && join.variables === contest.id ? 'Регистрация...' : 'Зарегистрироваться'}</button> : <button className="btn secondary" onClick={() => openAuth('login', returnTo)}>Зарегистрироваться</button>}
             {join.variables === contest.id && <ErrorMessage error={join.error} reveal />}
           </td>}
         </tr>)}</tbody>

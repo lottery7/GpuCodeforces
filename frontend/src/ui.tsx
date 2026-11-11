@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ApiError } from './api/client';
+import { useAuthDialog } from './auth-dialog';
 import { difficultyLabels, pendingStatuses, statusLabels, userPath } from './utils';
 
 export function PageHeader({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
@@ -27,9 +28,10 @@ export function useFeedbackVisibility<T extends HTMLElement = HTMLDivElement>(tr
 
 export function ErrorMessage({ error, reveal = false }: { error: unknown; reveal?: boolean }) {
   const location = useLocation();
+  const openAuth = useAuthDialog();
   const ref = useFeedbackVisibility(error, reveal);
   if (!error) return null;
-  return <div ref={ref} className="notice error feedback-anchor" role="alert"><div className="error-copy" tabIndex={0}>{error instanceof Error ? error.message : 'Не удалось выполнить запрос.'}</div>{error instanceof ApiError && error.status === 401 && !['/login', '/register'].includes(location.pathname) && <Link to={`/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`}>Войти</Link>}</div>;
+  return <div ref={ref} className="notice error feedback-anchor" role="alert"><div className="error-copy" tabIndex={0}>{error instanceof Error ? error.message : 'Не удалось выполнить запрос.'}</div>{error instanceof ApiError && error.status === 401 && !['/login', '/register'].includes(location.pathname) && <button className="text-link" onClick={() => openAuth('login', location.pathname + location.search)}>Войти</button>}</div>;
 }
 
 export function QueryState({ query, children }: { query: { isPending?: boolean; isLoading?: boolean; error: unknown; data?: unknown; refetch: () => unknown }; children?: ReactNode }) {
@@ -81,5 +83,6 @@ export function Pagination({ total, offset, limit, onChange }: { total: number; 
 }
 export function LoginRequired({ returnTo, children }: { returnTo?: string; children?: ReactNode }) {
   const location = useLocation();
-  return <div className="empty"><p>{children || 'Войдите, чтобы продолжить.'}</p><Link className="btn primary" to={`/login?returnTo=${encodeURIComponent(returnTo || location.pathname + location.search)}`}>Войти</Link></div>;
+  const openAuth = useAuthDialog();
+  return <div className="empty"><p>{children || 'Войдите, чтобы продолжить.'}</p><button className="btn primary" onClick={() => openAuth('login', returnTo || location.pathname + location.search)}>Войти</button></div>;
 }

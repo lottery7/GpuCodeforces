@@ -4,6 +4,7 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'reac
 import { api, ApiError } from '../api/client';
 import type { Contest, ProblemDetail } from '../api/types';
 import { useSession } from '../auth';
+import { useAuthDialog } from '../auth-dialog';
 import CodeEditor from '../components/CodeEditor';
 import { readDraft, rememberEditorLogin, writeDraft } from '../drafts';
 import { Difficulty, Empty, ErrorMessage, Markdown, PageHeader, QueryState, Tabs, TimeValue, UserLink, useFeedbackVisibility } from '../ui';
@@ -17,6 +18,7 @@ function phaseOf(contest: Contest | undefined, now: number) {
 
 function EditorPane({ problem, context, contest, contestLoading, phase, onCloseOutput }: { problem: ProblemDetail; context: string; contest?: Contest; contestLoading: boolean; phase: ReturnType<typeof phaseOf>; onCloseOutput: () => void }) {
   const { user } = useSession();
+  const openAuth = useAuthDialog();
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -39,7 +41,7 @@ function EditorPane({ problem, context, contest, contestLoading, phase, onCloseO
   }
   function requestLogin() {
     rememberEditorLogin(problem.id, context, code, location.pathname + location.search);
-    navigate(`/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`);
+    openAuth('login', location.pathname + location.search);
   }
   const check = useMutation({
     mutationFn: (snapshot: string) => api.checkExample(problem.id, context, snapshot),

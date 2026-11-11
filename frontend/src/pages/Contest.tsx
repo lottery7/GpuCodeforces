@@ -4,6 +4,7 @@ import { Link, useLocation, useParams, useSearchParams } from 'react-router';
 import { api } from '../api/client';
 import type { Problem } from '../api/types';
 import { useSession } from '../auth';
+import { useAuthDialog } from '../auth-dialog';
 import { Difficulty, Empty, ErrorMessage, Markdown, PageHeader, Status, Tabs, UserLink } from '../ui';
 import { dateTime, phaseOf, problemPath, solveTime, statusLabels } from '../utils';
 
@@ -40,6 +41,7 @@ export default function Contest() {
   const { id = '' } = useParams();
   const [params] = useSearchParams();
   const { user, isLoading } = useSession();
+  const openAuth = useAuthDialog();
   const location = useLocation();
   const queryClient = useQueryClient();
   const [now, setNow] = useState(Date.now());
@@ -96,7 +98,7 @@ export default function Contest() {
 
   const base = `/contest/${encodeURIComponent(id)}`;
   const actions = <>
-    {phase !== 'finished' && (item.registered ? <span className="success">{phase === 'upcoming' ? 'Вы зарегистрированы' : 'Вы участвуете'}</span> : user ? <button className="btn secondary" disabled={join.isPending} onClick={() => join.mutate()}>{join.isPending ? 'Регистрация...' : 'Зарегистрироваться'}</button> : <Link className="btn secondary" to={`/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`}>Зарегистрироваться</Link>)}
+    {phase !== 'finished' && (item.registered ? <span className="success">{phase === 'upcoming' ? 'Вы зарегистрированы' : 'Вы участвуете'}</span> : user ? <button className="btn secondary" disabled={join.isPending} onClick={() => join.mutate()}>{join.isPending ? 'Регистрация...' : 'Зарегистрироваться'}</button> : <button className="btn secondary" onClick={() => openAuth('login', location.pathname + location.search)}>Зарегистрироваться</button>)}
     {author && phase === 'upcoming' && <Link className="btn secondary" to={`${base}/edit`}>Изменить</Link>}
   </>;
   const columns = tasks.data ?? [];

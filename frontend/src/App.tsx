@@ -1,6 +1,7 @@
-import { Component, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router';
+import { Component, lazy, Suspense, useEffect, useRef, type ReactNode } from 'react';
+import { Link, NavLink, Navigate, Route, Routes, useLocation } from 'react-router';
 import { useSession } from './auth';
+import { AuthDialogProvider, AuthLanding, useAuthDialog } from './auth-dialog';
 import { ErrorMessage, PageHeader } from './ui';
 import { userPath } from './utils';
 const Problems = lazy(() => import('./pages/Problems'));
@@ -10,7 +11,6 @@ const Submission = lazy(() => import('./pages/Submission'));
 const Contests = lazy(() => import('./pages/Contests'));
 const Contest = lazy(() => import('./pages/Contest'));
 const ContestEditor = lazy(() => import('./pages/ContestEditor'));
-const Auth = lazy(() => import('./pages/Auth'));
 const Profile = lazy(() => import('./pages/Profile'));
 const Rating = lazy(() => import('./pages/Rating'));
 
@@ -28,38 +28,28 @@ class PageBoundary extends Component<{ children: ReactNode }, { failed: boolean 
   }
 }
 
-export default function App() {
+function Shell() {
   const session = useSession();
   const location = useLocation();
-  const navigate = useNavigate();
+  const openAuth = useAuthDialog();
   const menu = useRef<HTMLDetailsElement>(null);
   const main = useRef<HTMLElement>(null);
   const previousPath = useRef(location.pathname);
-  const [logoutError, setLogoutError] = useState<unknown>(null);
-  const [loggingOut, setLoggingOut] = useState(false);
   useEffect(() => {
     if (menu.current) menu.current.open = false;
-    setLogoutError(null);
     if (previousPath.current !== location.pathname) {
       window.scrollTo(0, 0);
       main.current?.focus({ preventScroll: true });
       previousPath.current = location.pathname;
     }
   }, [location.pathname, location.key]);
-  async function logout() {
-    setLoggingOut(true);
-    setLogoutError(null);
-    try { await session.logout(); navigate('/problems'); }
-    catch (error) { setLogoutError(error); }
-    finally { setLoggingOut(false); }
-  }
+  const returnTo = () => location.pathname + location.search;
   function links() {
     return navigation.map(([to, title]) => <NavLink key={to} to={to} className={({ isActive }) => isActive || (to === '/contests' && location.pathname.startsWith('/contest/')) || (to === '/problems' && location.pathname.startsWith('/problem/')) || (to === '/submissions' && location.pathname.startsWith('/submission/')) ? 'active' : undefined}>{title}</NavLink>);
   }
   function account() {
     if (session.isLoading) return <span className="muted" role="status">Загрузка...</span>;
-    if (!session.user && ['/login', '/register'].includes(location.pathname)) return null;
-    return session.user ? <><Link to={userPath(session.user.id)}>{session.user.handle}</Link><button onClick={() => void logout()} disabled={loggingOut}>{loggingOut ? 'Выход...' : 'Выйти'}</button></> : <Link to={`/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`}>Войти</Link>;
+    return session.user ? <Link to={userPath(session.user.id)}>{session.user.handle}</Link> : <button className="text-link" onClick={() => openAuth('login', returnTo())}>Войти</button>;
   }
   return <>
     <a className="skip-link" href="#content">К содержимому</a>
@@ -72,7 +62,6 @@ export default function App() {
     <main id="content" ref={main} tabIndex={-1} className="container">
       <div className="global-feedback">
       {Boolean(session.error) && <div className="session-error"><ErrorMessage error={session.error} /><button className="text-link" onClick={session.refresh}>Проверить соединение</button></div>}
-      <ErrorMessage error={logoutError} reveal />
       </div>
       <PageBoundary key={location.pathname}>
         <Suspense fallback={<div className="empty" role="status">Загрузка...</div>}>
@@ -86,8 +75,8 @@ export default function App() {
           <Route path="/contests/new" element={<ContestEditor />} />
           <Route path="/contest/:id" element={<Contest />} />
           <Route path="/contest/:id/edit" element={<ContestEditor />} />
-          <Route path="/login" element={<Auth key="login" mode="login" />} />
-          <Route path="/register" element={<Auth key="register" mode="register" />} />
+          <Route path="/login" element={<><Problems /><AuthLanding mode="login" /></>} />
+          <Route path="/register" element={<><Problems /><AuthLanding mode="register" /></>} />
           <Route path="/rating" element={<Rating />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="*" element={<><PageHeader title="Страница не найдена" /><Link to="/problems">Перейти к задачам</Link></>} />
@@ -96,4 +85,8 @@ export default function App() {
       </PageBoundary>
     </main>
   </>;
+}
+
+export default function App() {
+  return <AuthDialogProvider><Shell /></AuthDialogProvider>;
 }
