@@ -30,7 +30,7 @@ fun Contest.toApiModel(
         visibleProblemIds,
         problems.size,
         registered,
-        gpu,
+        processor,
     ).rulesMarkdown(rulesMarkdown)
         .format(ContestApiModel.FormatEnum.fromValue(format))
         .challengerId(challengerId?.toString())

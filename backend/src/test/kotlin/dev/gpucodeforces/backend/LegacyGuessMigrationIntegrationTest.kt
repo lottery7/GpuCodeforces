@@ -1,6 +1,5 @@
 package dev.gpucodeforces.backend
 
-import dev.gpucodeforces.backend.submission.GuessSnapshot
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.intellij.lang.annotations.Language
@@ -69,13 +68,13 @@ class LegacyGuessMigrationIntegrationTest {
         @Language("SQL")
         val readSnapshot = "SELECT guess_result::text FROM gpucodeforces.submissions WHERE id = ?"
         val mapper = JsonMapper.builder().addModule(KotlinModule.Builder().build()).build()
-        val snapshot = mapper.readValue(jdbc.queryForObject(readSnapshot, String::class.java, answerId)!!, GuessSnapshot::class.java)
-        assertThat(snapshot.firstTimeMs).isEqualByComparingTo("1.25")
-        assertThat(snapshot.secondTimeMs).isEqualByComparingTo("2.50")
-        assertThat(snapshot.correctChoice()).isEqualTo("first")
-        assertThat(snapshot.explanation).isEqualTo("Сохраненный разбор")
-        assertThat(snapshot.synthetic).isTrue()
-        assertThat(snapshot.benchmarkKey).isEqualTo("legacy-$versionId")
+        // V13 kept times; V14 (processors) adds them as scores, which GuessSnapshot reads
+        val snapshot = mapper.readTree(jdbc.queryForObject(readSnapshot, String::class.java, answerId)!!)
+        assertThat(snapshot.path("firstTimeMs").decimalValue()).isEqualByComparingTo("1.25")
+        assertThat(snapshot.path("secondTimeMs").decimalValue()).isEqualByComparingTo("2.50")
+        assertThat(snapshot.path("explanation").asString()).isEqualTo("Сохраненный разбор")
+        assertThat(snapshot.path("synthetic").asBoolean()).isTrue()
+        assertThat(snapshot.path("benchmarkKey").asString()).isEqualTo("legacy-$versionId")
         assertThat(jdbc.queryForObject(readSnapshot, String::class.java, missingTimesAnswer)).isNull()
         @Language("SQL")
         val readChoice = "SELECT guess_choice FROM gpucodeforces.submissions WHERE id = ?"

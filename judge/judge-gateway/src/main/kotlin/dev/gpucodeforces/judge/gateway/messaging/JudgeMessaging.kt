@@ -22,7 +22,7 @@ class JudgeMessaging(
     fun publishJob(job: JudgeJob, confirmTimeout: Duration) {
         val message = message(job, job.submissionId, persistent = true)
         rabbit.invoke { ops ->
-            ops.send(Topology.JOBS_EXCHANGE, job.gpuProfile, message)
+            ops.send(Topology.JOBS_EXCHANGE, job.processor, message)
             ops.waitForConfirmsOrDie(confirmTimeout.toMillis())
         }
     }

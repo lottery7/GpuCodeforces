@@ -1,11 +1,12 @@
 package dev.gpucodeforces.backend.submission
 
-import org.springframework.data.jpa.repository.Query
-import org.springframework.data.repository.Repository
-import org.springframework.stereotype.Service
+import dev.gpucodeforces.judge.api.Processors
 import java.math.BigDecimal
 import java.time.Instant
 import java.util.UUID
+import org.springframework.data.jpa.repository.Query
+import org.springframework.data.repository.Repository
+import org.springframework.stereotype.Service
 
 /** Accepted submission without its code. */
 class AcceptedSubmission(
@@ -14,8 +15,9 @@ class AcceptedSubmission(
     val problemId: String,
     val contestId: UUID?,
     val judgeHash: String,
-    val gpuProfile: String,
-    val timeMs: BigDecimal?,
+    val processor: String,
+    /** Null for an answer to a guess: accepted, yet nothing ran. */
+    val score: BigDecimal?,
     val createdAt: Instant,
     val benchmarkEnvironmentKey: String? = null,
     val problemVersionId: UUID? = null,
@@ -27,7 +29,8 @@ class SubmissionHead(val id: UUID, val problemId: String, val contestId: UUID?, 
 interface SubmissionStatsRepository : Repository<Submission, UUID> {
     @Query(
         """
-        SELECT new dev.gpucodeforces.backend.submission.AcceptedSubmission(s.id, s.userId, s.problemId, s.contestId, s.judgeHash, s.gpuProfile, s.timeMs, s.createdAt, s.benchmarkEnvironmentKey, s.problemVersionId)
+        SELECT new dev.gpucodeforces.backend.submission.AcceptedSubmission(
+            s.id, s.userId, s.problemId, s.contestId, s.judgeHash, s.processor, s.score, s.createdAt, s.benchmarkEnvironmentKey, s.problemVersionId)
         FROM Submission s WHERE s.status = :status AND s.problemId IN :problemIds
         """,
     )
@@ -35,7 +38,8 @@ interface SubmissionStatsRepository : Repository<Submission, UUID> {
 
     @Query(
         """
-        SELECT new dev.gpucodeforces.backend.submission.AcceptedSubmission(s.id, s.userId, s.problemId, s.contestId, s.judgeHash, s.gpuProfile, s.timeMs, s.createdAt, s.benchmarkEnvironmentKey, s.problemVersionId)
+        SELECT new dev.gpucodeforces.backend.submission.AcceptedSubmission(
+            s.id, s.userId, s.problemId, s.contestId, s.judgeHash, s.processor, s.score, s.createdAt, s.benchmarkEnvironmentKey, s.problemVersionId)
         FROM Submission s WHERE s.status = :status AND s.contestId = :contestId
         """,
     )
@@ -60,67 +64,72 @@ interface SubmissionStatsRepository : Repository<Submission, UUID> {
 }
 
 /**
- * Where results count: practice and every contest have their own records. Accepted times are compared only within
- * one judge configuration - the problem version's judge hash on the platform GPU.
+ * Where results count: practice and every contest have their own records. Accepted scores are compared only within
+ * one judge configuration - the problem version's judge hash - and one processor.
  */
 data class ResultScope(
-    val contestId: UUID?, val judgeHashes: Map<String, String>, val gpuProfile: String,
-    val benchmarkEnvironmentKey: String? = null, val startAt: Instant? = null, val endAt: Instant? = null,
+    val contestId: UUID?, val judgeHashes: Map<String, String>, val gpuEnvironmentKey: String? = null,
+    val startAt: Instant? = null, val endAt: Instant? = null,
 ) {
-    fun counts(submission: AcceptedSubmission): Boolean =
-        submission.contestId == contestId && judgeHashes[submission.problemId] == submission.judgeHash &&
-            (if (benchmarkEnvironmentKey != null) submission.benchmarkEnvironmentKey == benchmarkEnvironmentKey else submission.gpuProfile == gpuProfile) &&
+    /** On the real GPU a result counts only from the current environment ([gpuEnvironmentKey]); emulators are deterministic. */
+    fun counts(submission: AcceptedSubmission, processor: String): Boolean =
+        submission.processor == processor && submission.contestId == contestId && judgeHashes[submission.problemId] == submission.judgeHash &&
+            (processor != Processors.GPU_CUDA || gpuEnvironmentKey == null || submission.benchmarkEnvironmentKey == gpuEnvironmentKey) &&
             (startAt == null || !submission.createdAt.isBefore(startAt)) && (endAt == null || submission.createdAt.isBefore(endAt))
+
 }
 
 class ProblemResult(
     val solved: Boolean,
     val solvedCount: Int,
     val last: SubmissionHead?,
-    val best: AcceptedSubmission?,
-    val record: AcceptedSubmission?,
+    /** Personal best per processor. */
+    val best: Map<String, AcceptedSubmission>,
+    /** Record per processor. */
+    val record: Map<String, AcceptedSubmission>,
 )
 
 class Leader(val rank: Int, val submission: AcceptedSubmission)
 
 @Service
 class SubmissionStats(private val repository: SubmissionStatsRepository) {
-    fun bestTime(userId: UUID, problemId: String, contestId: UUID?, judgeHash: String, gpuProfile: String, benchmarkEnvironmentKey: String? = null): BigDecimal? {
-        val scope = ResultScope(contestId, mapOf(problemId to judgeHash), gpuProfile, benchmarkEnvironmentKey)
-        return bestTime(userId, problemId, scope)
+    fun bestScore(
+        userId: UUID, problemId: String, contestId: UUID?, judgeHash: String, processor: String, gpuEnvironmentKey: String? = null,
+    ): BigDecimal? {
+        val scope = ResultScope(contestId, mapOf(problemId to judgeHash), gpuEnvironmentKey)
+        return bestScore(userId, problemId, scope, processor)
     }
 
-    fun bestTime(userId: UUID, problemId: String, scope: ResultScope): BigDecimal? {
-        return accepted(listOf(problemId)).filter { it.userId == userId && scope.counts(it) && it.timeMs != null }.minOfOrNull { it.timeMs!! }
+    fun bestScore(userId: UUID, problemId: String, scope: ResultScope, processor: String): BigDecimal? {
+        return accepted(listOf(problemId)).filter { it.userId == userId && scope.counts(it, processor) }.mapNotNull { it.score }.minOrNull()
     }
 
-    /** Personal results of [userId] (if any) and shared counters for the problems of one context. */
-    fun problemResults(scope: ResultScope, userId: UUID?): Map<String, ProblemResult> {
+    /** Personal results of [userId] (if any) and shared counters for the problems of one context, on [processors]. */
+    fun problemResults(scope: ResultScope, userId: UUID?, processors: Collection<String>): Map<String, ProblemResult> {
         val problemIds = scope.judgeHashes.keys
         if (problemIds.isEmpty()) return emptyMap()
         val accepted = accepted(problemIds).groupBy { it.problemId }
         val heads = userId?.let { repository.findHeads(it, problemIds) }.orEmpty().groupBy { it.problemId }
         return problemIds.associateWith { problemId ->
             val all = accepted[problemId].orEmpty()
-            val counted = all.filter { scope.counts(it) }
             ProblemResult(
                 // Practice counts a solution in any context, a contest only its own.
                 solved = userId != null && all.any { it.userId == userId && (scope.contestId == null || it.contestId == scope.contestId) },
                 solvedCount = all.map { it.userId }.distinct().size,
                 last = heads[problemId].orEmpty().filter { it.contestId == scope.contestId }.maxByOrNull { it.createdAt },
-                best = counted.filter { it.userId == userId }.fastest(),
-                record = counted.fastest(),
+                best = processors.mapNotNull { p -> all.filter { it.userId == userId && scope.counts(it, p) }.best()?.let { p to it } }.toMap(),
+                record = processors.mapNotNull { p -> all.filter { scope.counts(it, p) }.best()?.let { p to it } }.toMap(),
             )
         }
     }
 
-    /** Best accepted submission of every user, fastest first; equal times share a rank. */
-    fun leaders(problemId: String, scope: ResultScope, limit: Int): List<Leader> {
-        val best = accepted(listOf(problemId)).filter { scope.counts(it) && it.timeMs != null }
-            .groupBy { it.userId }.values.map { it.fastest()!! }
-            .sortedWith(compareBy<AcceptedSubmission> { it.timeMs }.thenBy { it.createdAt })
+    /** Best accepted submission of every user on [processor], smallest score first; equal scores share a rank. */
+    fun leaders(problemId: String, scope: ResultScope, processor: String, limit: Int): List<Leader> {
+        val best = accepted(listOf(problemId)).filter { scope.counts(it, processor) && it.score != null }
+            .groupBy { it.userId }.values.map { it.best()!! }
+            .sortedWith(compareBy<AcceptedSubmission> { it.score }.thenBy { it.createdAt })
             .take(limit)
-        return best.map { submission -> Leader(1 + best.count { it.timeMs!! < submission.timeMs!! }, submission) }
+        return best.map { submission -> Leader(1 + best.count { it.score!! < submission.score!! }, submission) }
     }
 
     /** When each participant sent the first accepted submission of each problem of a contest (submission time, not verdict time). */
@@ -129,16 +138,13 @@ class SubmissionStats(private val repository: SubmissionStatsRepository) {
             .groupBy { it.userId }
             .mapValues { (_, submissions) -> submissions.groupBy { it.problemId }.mapValues { (_, it) -> it.minOf { s -> s.createdAt } } }
 
-    fun duelBestTimes(scope: ResultScope, versionId: UUID, startAt: Instant, endAt: Instant): Map<UUID, BigDecimal> =
+    fun duelBestScores(scope: ResultScope, versionId: UUID, processor: String, startAt: Instant, endAt: Instant): Map<UUID, BigDecimal> =
         repository.findWithStatusInContest(SubmissionStatus.ACCEPTED, checkNotNull(scope.contestId))
             .filter { submission ->
-                submission.problemVersionId == versionId && submission.timeMs != null &&
-                    !submission.createdAt.isBefore(startAt) && submission.createdAt.isBefore(endAt) &&
-                    submission.contestId == scope.contestId && scope.judgeHashes[submission.problemId] == submission.judgeHash &&
-                    if (scope.benchmarkEnvironmentKey != null) submission.benchmarkEnvironmentKey == scope.benchmarkEnvironmentKey
-                    else submission.gpuProfile == scope.gpuProfile
+                submission.problemVersionId == versionId && submission.score != null && scope.counts(submission, processor) &&
+                    !submission.createdAt.isBefore(startAt) && submission.createdAt.isBefore(endAt)
             }
-            .groupBy { it.userId }.mapValues { (_, submissions) -> submissions.minOf { it.timeMs!! } }
+            .groupBy { it.userId }.mapValues { (_, submissions) -> submissions.minOf { it.score!! } }
 
     fun contestParticipants(contestId: UUID): Set<UUID> = repository.findContestParticipants(contestId).toSet()
 
@@ -150,6 +156,7 @@ class SubmissionStats(private val repository: SubmissionStatsRepository) {
     private fun accepted(problemIds: Collection<String>): List<AcceptedSubmission> =
         if (problemIds.isEmpty()) emptyList() else repository.findWithStatus(SubmissionStatus.ACCEPTED, problemIds)
 
-    private fun List<AcceptedSubmission>.fastest(): AcceptedSubmission? =
-        filter { it.timeMs != null }.minWithOrNull(compareBy<AcceptedSubmission> { it.timeMs }.thenBy { it.createdAt })
+    /** The smallest score, the earliest on a tie; answers to a guess have none. */
+    private fun List<AcceptedSubmission>.best(): AcceptedSubmission? =
+        filter { it.score != null }.minWithOrNull(compareBy<AcceptedSubmission> { it.score }.thenBy { it.createdAt })
 }

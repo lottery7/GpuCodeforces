@@ -34,11 +34,12 @@ afterEach(async () => {
 describe('Reference measurement HTTP API', () => {
   it('returns ready reference metadata by default without revealing the comparison answer', async () => {
     const optimization = (await request('/problems/optimize-vector')).body;
-    expect(optimization.referenceMeasurement).toMatchObject({ status: 'ready', diagnostic: null });
-    expect(optimization.referenceMeasurement.key).toBeTruthy();
-    expect(optimization.baselineTimeMs).toBeGreaterThan(0);
+    // the formats of the fixture run on the real GPU: their measurements belong to its processor
+    expect(optimization.processors[0].referenceMeasurement).toMatchObject({ status: 'ready', diagnostic: null });
+    expect(optimization.processors[0].referenceMeasurement.key).toBeTruthy();
+    expect(optimization.processors[0].baselineScore.value).toBeGreaterThan(0);
     const guess = (await request('/problems/guess-vector')).body;
-    expect(guess.referenceMeasurement.status).toBe('ready');
+    expect(guess.processors[0].referenceMeasurement.status).toBe('ready');
     expect(guess.firstCode).toContain('void solve');
     expect(guess).not.toHaveProperty('firstTimeMs');
     expect(guess).not.toHaveProperty('secondTimeMs');
@@ -48,27 +49,27 @@ describe('Reference measurement HTTP API', () => {
   it('hides stale baseline values and rejects guessing while references are pending or failed', async () => {
     references.set('optimize-vector', { key: 'new-environment', status: 'running', baselineTimeMs: 999 });
     const optimization = (await request('/problems/optimize-vector')).body;
-    expect(optimization.baselineTimeMs).toBeNull();
-    expect(optimization.referenceMeasurement.status).toBe('running');
+    expect(optimization.processors[0].baselineScore).toBeNull();
+    expect(optimization.processors[0].referenceMeasurement.status).toBe('running');
     references.set('optimize-vector', { key: 'new-environment', status: 'ready', baselineTimeMs: 0.345 });
-    expect((await request('/problems/optimize-vector')).body.baselineTimeMs).toBe(0.345);
+    expect((await request('/problems/optimize-vector')).body.processors[0].baselineScore).toEqual({ value: 0.345, type: 'TIME_MS' });
     for (const status of ['pending', 'failed']) {
       references.set('guess-vector', { key: 'new-environment', status, diagnostic: status === 'failed' ? 'Замер недоступен.' : null });
       const detail = (await request('/problems/guess-vector')).body;
       expect(detail.firstCode).toContain('void solve');
       expect(detail.guessSubmissionId).toBeNull();
-      expect(detail.referenceMeasurement.status).toBe(status);
+      expect(detail.processors[0].referenceMeasurement.status).toBe(status);
       expect((await request('/problems/guess-vector/guess', { method: 'POST', body: { choice: 'first', benchmarkKey: 'new-environment' } })).status).toBe(503);
     }
     expect((await request('/submissions?problemId=guess-vector')).body.total).toBe(0);
     references.set('guess-vector', { key: 'new-environment', status: 'ready', firstTimeMs: 0.01, secondTimeMs: 0.02 });
     const saved = await request('/problems/guess-vector/guess', { method: 'POST', body: { choice: 'first', benchmarkKey: 'new-environment' } });
     expect(saved.status).toBe(200);
-    expect(saved.body.guessResult).toMatchObject({ benchmarkKey: 'new-environment', firstTimeMs: 0.01, secondTimeMs: 0.02 });
+    expect(saved.body.guessResult).toMatchObject({ benchmarkKey: 'new-environment', firstScore: { value: 0.01 }, secondScore: { value: 0.02 } });
   });
 
   it('opens a new attempt for a new environment while keeping old history times unchanged', async () => {
-    const key = (await request('/problems/guess-vector')).body.referenceMeasurement.key;
+    const key = (await request('/problems/guess-vector')).body.processors[0].referenceMeasurement.key;
     const first = (await request('/problems/guess-vector/guess', { method: 'POST', body: { choice: 'first', benchmarkKey: key } })).body;
     expect(first.guessResult.synthetic).toBe(true);
     references.set('guess-vector', { key: 'environment-b', status: 'pending' });
@@ -78,13 +79,13 @@ describe('Reference measurement HTTP API', () => {
     references.set('guess-vector', { key: 'environment-b', status: 'ready', firstTimeMs: 2, secondTimeMs: 1 });
     const second = (await request('/problems/guess-vector/guess', { method: 'POST', body: { choice: 'second', benchmarkKey: 'environment-b' } })).body;
     expect(second.id).not.toBe(first.id);
-    expect(second.guessResult).toMatchObject({ correctChoice: 'second', benchmarkKey: 'environment-b', firstTimeMs: 2, secondTimeMs: 1 });
+    expect(second.guessResult).toMatchObject({ correctChoice: 'second', benchmarkKey: 'environment-b', firstScore: { value: 2 }, secondScore: { value: 1 } });
     expect((await request('/problems/guess-vector')).body.guessSubmissionId).toBe(second.id);
     expect((await request(`/submissions/${first.id}`)).body.guessResult).toEqual(first.guessResult);
   });
 
   it('rejects an outdated client key without creating an attempt', async () => {
-    const key = (await request('/problems/guess-vector')).body.referenceMeasurement.key;
+    const key = (await request('/problems/guess-vector')).body.processors[0].referenceMeasurement.key;
     references.set('guess-vector', { key: 'environment-b', status: 'ready', firstTimeMs: 2, secondTimeMs: 1 });
     const rejected = await request('/problems/guess-vector/guess', { method: 'POST', body: { choice: 'first', benchmarkKey: key } });
     expect(rejected.status).toBe(400);

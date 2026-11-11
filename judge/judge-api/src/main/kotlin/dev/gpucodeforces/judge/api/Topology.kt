@@ -2,15 +2,14 @@ package dev.gpucodeforces.judge.api
 
 /** RabbitMQ names shared by the gateway, executors and the backend. */
 object Topology {
-    /** Direct exchange; routing key = GPU profile. */
+    /** Direct exchange; routing key = processor id. */
     const val JOBS_EXCHANGE = "judge.jobs"
 
-    /** Quorum queue per GPU profile, consumed by executors of that profile (competing consumers). */
-    fun jobsQueue(gpuProfile: String) = "judge.jobs.$gpuProfile"
+    /** Quorum queue per processor, consumed by executors of that processor (competing consumers). */
+    fun jobsQueue(processor: String) = "judge.jobs.$processor"
 
     /**
-     * What a GPU profile name may look like. The gateway and every executor spell the name independently and it
-     * ends up in a queue name, so both validate it against the same rule.
+     * What a processor id may look like. It ends up in a queue name; every id in [Processors] follows it.
      */
     const val PROFILE_NAME = "[a-z0-9_-]+"
 

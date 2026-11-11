@@ -1,6 +1,8 @@
 package dev.gpucodeforces.judge.executor.pipeline
 
+import dev.gpucodeforces.judge.api.GpuSlotStatus
 import dev.gpucodeforces.judge.api.JudgeJob
+import dev.gpucodeforces.judge.api.ProcessorStatus
 import java.util.concurrent.atomic.AtomicInteger
 
 enum class Disposition { ACK, REQUEUE }
@@ -12,4 +14,12 @@ interface JobProcessor {
 
     /** Judges one delivery of a job; [attempt] is 1 for the first delivery. */
     fun process(job: JudgeJob, attempt: Int): Disposition
+
+    /** Every processor this executor judges, for heartbeats. */
+    fun processors(): List<ProcessorStatus>
+
+    fun gpus(): List<GpuSlotStatus>
+
+    /** Called with "can [processor] take jobs" whenever that changes; its queue is not consumed while it cannot. */
+    fun onAvailabilityChange(processor: String, listener: (Boolean) -> Unit) {}
 }

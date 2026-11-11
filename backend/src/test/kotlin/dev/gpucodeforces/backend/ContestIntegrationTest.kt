@@ -15,6 +15,7 @@ import dev.gpucodeforces.backend.problem.ProblemVersion
 import dev.gpucodeforces.backend.problem.ProblemVersionRepository
 import dev.gpucodeforces.backend.submission.SubmissionRepository
 import dev.gpucodeforces.backend.submission.SubmissionStatus
+import dev.gpucodeforces.judge.api.ScoreType
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
@@ -79,7 +80,7 @@ class ContestIntegrationTest {
         val now = Instant.now().truncatedTo(ChronoUnit.MILLIS)
         val contest = contests.save(StoredContest(
             id = UUID.randomUUID(), title = "Дуэль", startAt = now.minusSeconds(600), endAt = now.plusSeconds(3600),
-            gpu = "NVIDIA GeForce RTX 3060", format = "duel", challengerId = UUID.fromString(first.id),
+            processor = "gpu-cuda", format = "duel", challengerId = UUID.fromString(first.id),
             opponentId = UUID.fromString(second.id), benchmarkEnvironmentKey = "captured-environment",
         ))
         val version = catalog.currentVersion("vector_add")!!
@@ -96,10 +97,11 @@ class ContestIntegrationTest {
         submissions.save(StoredSubmission(
             id = UUID.randomUUID(), userId = UUID.fromString(user.id), problemId = version.problemId,
             problemVersionId = version.id, contestId = contest.id, code = "code", environmentMarkdown = "",
-            judgeHash = hash, gpuProfile = "original-profile", previousBestTimeMs = null, createdAt = at,
+            judgeHash = hash, processor = "gpu-cuda", language = "cuda", previousBestScore = null, createdAt = at,
         ).apply {
             this.status = status
-            timeMs = time?.let(::BigDecimal)
+            score = time?.let(::BigDecimal)
+            scoreType = score?.let { ScoreType.TIME_MS }
             benchmarkEnvironmentKey = environment
         })
 
@@ -120,6 +122,7 @@ class ContestIntegrationTest {
             endAt.atOffset(ZoneOffset.UTC),
             setOf(author.id),
             setOf("vector_add", "matmul_host"),
+            "gpu-cuda",
         )
 
         val created = client.post().uri("/contests").contentType(MediaType.APPLICATION_JSON)
@@ -132,6 +135,11 @@ class ContestIntegrationTest {
             .responseBody!!
         assertThat(created.problemIds).containsExactly("vector_add", "matmul_host")
         assertThat(created.registered).isFalse()
+        assertThat(created.processor).isEqualTo("gpu-cuda")
+        assertThat(client.get().uri("/contests?processor=gpu-cuda").exchange().expectBody(Array<Contest>::class.java).returnResult().responseBody!!.map { it.id })
+            .contains(created.id)
+        assertThat(client.get().uri("/contests?processor=rtl").exchange().expectBody(Array<Contest>::class.java).returnResult().responseBody!!).isEmpty()
+        client.get().uri("/contests?processor=nope").exchange().expectStatus().isBadRequest
 
         // Anonymous visitors see no problem ids before the contest starts.
         val anonymousView = client.get().uri("/contests/${created.id}")
@@ -195,7 +203,7 @@ class ContestIntegrationTest {
         val otherVersion = versions.save(ProblemVersion(
             id = UUID.randomUUID(), problemId = version.problemId, code = version.code, title = version.title,
             difficulty = version.difficulty, tags = version.tags, authors = version.authors, draft = false,
-            statementMarkdown = "Другое условие", starterCode = version.starterCode, judgeSpec = version.judgeSpec,
+            statementMarkdown = "Другое условие", processors = version.processors, starters = version.starters, judgeSpec = version.judgeSpec,
             contentHash = UUID.randomUUID().toString(), judgeHash = version.judgeHash, revision = null,
         ))
         accepted(contest, otherVersion, first, "0.06", contest.startAt.plusSeconds(60))
@@ -204,10 +212,10 @@ class ContestIntegrationTest {
 
         assertThat(rows.map { it.user.id }).containsExactly(second.id, first.id)
         assertThat(rows.map { it.rank }).containsExactly(1, 2)
-        assertThat(rows.first().bestTimeMs).isEqualByComparingTo("1.5")
-        assertThat(rows.last().bestTimeMs).isEqualByComparingTo("2")
+        assertThat(rows.first().bestScore!!.value).isEqualByComparingTo("1.5")
+        assertThat(rows.last().bestScore!!.value).isEqualByComparingTo("2")
         assertThat(rows.all { it.solved == 1 && it.totalSeconds == 0 && it.times.isEmpty() && it.surrendered == false }).isTrue()
-        val standard = contests.save(StoredContest("Обычный контест", Instant.now().plusSeconds(3600), Instant.now().plusSeconds(7200), "GPU"))
+        val standard = contests.save(StoredContest("Обычный контест", Instant.now().plusSeconds(3600), Instant.now().plusSeconds(7200), "gpu-cuda"))
         val list = client.get().uri("/contests").exchange().expectStatus().isOk.expectBody(Array<Contest>::class.java)
             .returnResult().responseBody!!
         assertThat(list.map { it.id }).contains(standard.id.toString()).doesNotContain(contest.id.toString())
@@ -241,9 +249,9 @@ class ContestIntegrationTest {
         val rows = standings(contest.id)
         assertThat(rows.map { it.user.id }).containsExactly(second.id, first.id)
         assertThat(rows.map { it.rank }).containsExactly(1, 2)
-        assertThat(rows.first().bestTimeMs).isNull()
+        assertThat(rows.first().bestScore).isNull()
         assertThat(rows.first().solved).isZero()
-        assertThat(rows.last().bestTimeMs).isEqualByComparingTo("1")
+        assertThat(rows.last().bestScore!!.value).isEqualByComparingTo("1")
         assertThat(rows.last().surrendered).isTrue()
     }
 
@@ -261,7 +269,8 @@ class ContestIntegrationTest {
         assertThat(waiting.resultsPending).isTrue()
 
         pending.status = SubmissionStatus.ACCEPTED
-        pending.timeMs = BigDecimal("1.5")
+        pending.score = BigDecimal("1.5")
+        pending.scoreType = ScoreType.TIME_MS
         submissions.save(pending)
 
         val finished = client.get().uri("/contests/${contest.id}").exchange().expectStatus().isOk
@@ -269,7 +278,7 @@ class ContestIntegrationTest {
         assertThat(finished.resultsPending).isFalse()
         val rows = standings(contest.id)
         assertThat(rows.first().user.id).isEqualTo(second.id)
-        assertThat(rows.first().bestTimeMs).isEqualByComparingTo("1.5")
+        assertThat(rows.first().bestScore!!.value).isEqualByComparingTo("1.5")
     }
 
     companion object {

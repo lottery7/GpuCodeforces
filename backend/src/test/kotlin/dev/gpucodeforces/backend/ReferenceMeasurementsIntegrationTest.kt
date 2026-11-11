@@ -6,7 +6,6 @@ import dev.gpucodeforces.backend.benchmark.ReferenceJob
 import dev.gpucodeforces.backend.benchmark.ReferenceJobRepository
 import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
 import dev.gpucodeforces.backend.benchmark.ReferenceVersionLockRepository
-import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.common.ServiceUnavailableException
 import dev.gpucodeforces.backend.contest.Contest
 import dev.gpucodeforces.backend.contest.ContestProblem
@@ -15,6 +14,7 @@ import dev.gpucodeforces.backend.contest.ContestRepository
 import dev.gpucodeforces.backend.problem.ProblemCatalog
 import dev.gpucodeforces.backend.problem.ProblemSyncService
 import dev.gpucodeforces.backend.problem.ProblemVersion
+import dev.gpucodeforces.backend.processor.ProcessorCatalog
 import dev.gpucodeforces.backend.submission.JudgeExecutorView
 import dev.gpucodeforces.backend.submission.JudgeGateway
 import dev.gpucodeforces.backend.submission.JudgeProperties
@@ -29,7 +29,11 @@ import dev.gpucodeforces.judge.api.GpuInfo
 import dev.gpucodeforces.judge.api.GpuSlotStatus
 import dev.gpucodeforces.judge.api.JudgeEvent
 import dev.gpucodeforces.judge.api.JudgeResult
+import dev.gpucodeforces.judge.api.ProcessorRun
+import dev.gpucodeforces.judge.api.ProcessorStatus
 import dev.gpucodeforces.judge.api.Progress
+import dev.gpucodeforces.judge.api.Score
+import dev.gpucodeforces.judge.api.ScoreType
 import dev.gpucodeforces.judge.api.SubmissionRequest
 import dev.gpucodeforces.judge.api.SubmissionStatus
 import dev.gpucodeforces.judge.api.TestResult
@@ -74,7 +78,7 @@ class ReferenceMeasurementsIntegrationTest {
     @Autowired lateinit var jobs: ReferenceJobRepository
     @Autowired lateinit var locks: ReferenceVersionLockRepository
     @Autowired lateinit var properties: JudgeProperties
-    @Autowired lateinit var gpu: GpuProperties
+    @Autowired lateinit var processors: ProcessorCatalog
     @Autowired lateinit var transactions: TransactionTemplate
     @Autowired lateinit var json: JsonMapper
     @Autowired lateinit var submissions: SubmissionRepository
@@ -85,6 +89,7 @@ class ReferenceMeasurementsIntegrationTest {
 
     private var model = "NVIDIA GeForce RTX 3060"
     private var online = true
+    private var emulator = false
     private val sent = mutableListOf<SubmissionRequest>()
     private val requestPlaceholder = mock(SubmissionRequest::class.java)
     private val client by lazy { RestTestClient.bindToServer().baseUrl("http://localhost:$port/api").build() }
@@ -99,13 +104,22 @@ class ReferenceMeasurementsIntegrationTest {
         sent.clear()
         model = "NVIDIA GeForce RTX 3060"
         online = true
+        emulator = false
         given(gateway.executors()).willAnswer {
-            if (!online) null else listOf(JudgeExecutorView(
-                true, Instant.now(), ExecutorHeartbeat(
-                    "reference-executor", "local", "rtx3060", "test-version", Instant.now(), Instant.now(),
-                    listOf(GpuSlotStatus(0, model, true, false)), 0, 1, toolchain = "nvcc test",
+            if (!online) null else listOfNotNull(
+                JudgeExecutorView(
+                    true, Instant.now(), ExecutorHeartbeat(
+                        "reference-executor", "local", listOf(ProcessorStatus(GPU, "nvcc test", model, true, false, 1)), "test-version",
+                        Instant.now(), Instant.now(), listOf(GpuSlotStatus(0, model, true, false)), 0, 1,
+                    ),
                 ),
-            ))
+                if (!emulator) null else JudgeExecutorView(
+                    true, Instant.now(), ExecutorHeartbeat(
+                        "emu-executor", "local", listOf(ProcessorStatus(RTL, "Yosys, Verilator", "Verilator + Yosys", true, false, 2)), "test-version",
+                        Instant.now(), Instant.now(), emptyList(), 0, 2,
+                    ),
+                ),
+            )
         }
         doAnswer {
             val request = it.arguments[0] as SubmissionRequest
@@ -150,7 +164,7 @@ class ReferenceMeasurementsIntegrationTest {
         assertThat(value!!.toDouble()).isCloseTo(expected, within(1e-9))
     }
 
-    private fun frozenProblem(version: ProblemVersion, environment: String, device: String): GetProblem200Response {
+    private fun frozenProblem(version: ProblemVersion, environment: String): GetProblem200Response {
         fun player(): User {
             val handle = "reference_${UUID.randomUUID().toString().take(8)}"
             return users.save(User(handle, "$handle@example.com", "hash"))
@@ -160,7 +174,7 @@ class ReferenceMeasurementsIntegrationTest {
         val now = Instant.now()
         val contest = contests.save(Contest(
             id = UUID.randomUUID(), title = "Дуэль", startAt = now.minusSeconds(60), endAt = now.plusSeconds(3600),
-            gpu = device, format = "duel", challengerId = first.id, opponentId = second.id, benchmarkEnvironmentKey = environment,
+            processor = GPU, format = "duel", challengerId = first.id, opponentId = second.id, benchmarkEnvironmentKey = environment,
         ))
         contestProblems.save(ContestProblem(contest.id, version.problemId, 0, version.id))
         return client.get().uri("/problems/${version.problemId}?context=${contest.id}").exchange().expectStatus().isOk
@@ -172,9 +186,11 @@ class ReferenceMeasurementsIntegrationTest {
         references.apply(JudgeEvent(request.submissionId, 1, 1, SubmissionStatus.TESTING, Instant.now(), "reference-executor", Progress(1, times.size), jobId = jobId))
         val result = JudgeResult(
             verdict, message = if (verdict == Verdict.ACCEPTED) null else "private failure details",
-            tests = times.mapIndexed { index, time -> TestResult(index + 1, "test-${index + 1}", index == 0, Verdict.ACCEPTED, time, time, 1) },
-            maxTimeMs = times.maxOrNull(), timingMode = request.problem.timing.effectiveMode,
-            gpu = GpuInfo("rtx3060", device, 0, "reference-executor"), toolchain = "nvcc test",
+            tests = times.mapIndexed { index, time ->
+                TestResult(index + 1, "test-${index + 1}", index == 0, Verdict.ACCEPTED, score = Score(time, ScoreType.TIME_MS), wallTimeMs = time, runs = 1)
+            },
+            score = times.maxOrNull()?.let { Score(it, ScoreType.TIME_MS) }, timingMode = request.problem.timing.effectiveMode,
+            gpu = GpuInfo("rtx3060", device, 0, "reference-executor"), processor = ProcessorRun(GPU, "nvcc test", device, "reference-executor"),
         )
         assertThat(references.apply(JudgeEvent(request.submissionId, 1, 2, SubmissionStatus.FINISHED, Instant.now(), "reference-executor", result = result, jobId = jobId))).isTrue()
     }
@@ -182,48 +198,52 @@ class ReferenceMeasurementsIntegrationTest {
     @Test
     fun `baseline is measured through full judge and refreshed for actual hardware and changed tests`() {
         val (directory, original) = importProblem("optimization")
-        assertThat(references.view(original)!!.baselineTimeMs).isNull()
-        assertThatThrownBy { references.requireReady(original) }.isInstanceOf(ServiceUnavailableException::class.java)
+        assertThat(references.view(original, GPU)!!.baselineScore).isNull()
+        assertThatThrownBy { references.requireReady(original, GPU) }.isInstanceOf(ServiceUnavailableException::class.java)
         references.refresh()
         val first = sent.single()
         assertThat(first.source).isEqualTo(source(128))
+        assertThat(first.processor to first.language).isEqualTo(GPU to "cuda")
         assertThat(first.problem).isEqualTo(catalog.spec(original))
         complete(first, listOf(1.0, 9.0))
-        assertTime(references.requireReady(original).baselineTimeMs, 3.0)
-        val oldKey = references.requireReady(original).key
-        val oldEnvironment = references.environmentKey()!!
+        assertTime(references.requireReady(original, GPU).baselineScore, 3.0)
+        val oldKey = references.requireReady(original, GPU).key
+        val oldEnvironment = references.environmentKey(GPU)!!
         references.refresh()
         assertThat(sent).hasSize(1)
 
         model = "NVIDIA GeForce RTX 4090"
         references.refresh()
-        assertThat(references.view(original)!!.status).isEqualTo("running")
-        val historical = references.viewInEnvironment(original, oldEnvironment)!!
-        assertTime(historical.baselineTimeMs, 3.0)
-        assertThat(historical.gpuName).isEqualTo("NVIDIA GeForce RTX 3060")
+        assertThat(references.view(original, GPU)!!.status).isEqualTo("running")
+        val historical = references.viewInEnvironment(original, GPU, oldEnvironment)!!
+        assertTime(historical.baselineScore, 3.0)
+        assertThat(historical.model).isEqualTo("NVIDIA GeForce RTX 3060")
         assertThat(historical.synthetic).isFalse()
-        val frozen = frozenProblem(original, oldEnvironment, "NVIDIA GeForce RTX 3060")
-        val frozenBenchmark = checkNotNull(frozen.benchmark)
-        assertTime(frozen.baselineTimeMs, 3.0)
-        assertThat(frozenBenchmark.gpuName).isEqualTo("NVIDIA GeForce RTX 3060")
+        val frozen = frozenProblem(original, oldEnvironment)
+        val frozenProcessor = frozen.processors.single()
+        val frozenDetail = frozen.processorDetails.single()
+        val frozenBenchmark = checkNotNull(frozenDetail.benchmark)
+        assertTime(frozenProcessor.baselineScore?.value, 3.0)
+        assertThat(frozenBenchmark.model).isEqualTo("NVIDIA GeForce RTX 3060")
         assertThat(frozenBenchmark.synthetic).isFalse()
-        assertThat(frozen.environmentMarkdown).contains("NVIDIA GeForce RTX 3060").doesNotContain("NVIDIA GeForce RTX 4090")
-        assertThat(references.view(original)!!.baselineTimeMs).isNull()
-        assertThat(references.view(original)!!.key).isNotEqualTo(oldKey)
+        assertThat(frozenDetail.environmentMarkdown).contains("NVIDIA GeForce RTX 3060").doesNotContain("NVIDIA GeForce RTX 4090")
+        assertThat(frozenDetail.environmentMarkdown).contains("геометрическое среднее").doesNotContain("максимум по замерным тестам")
+        assertThat(references.view(original, GPU)!!.baselineScore).isNull()
+        assertThat(references.view(original, GPU)!!.key).isNotEqualTo(oldKey)
         complete(first, listOf(0.01, 0.01), device = "NVIDIA GeForce RTX 3060")
-        assertThat(references.view(original)!!.baselineTimeMs).isNull()
+        assertThat(references.view(original, GPU)!!.baselineScore).isNull()
         complete(sent.last(), listOf(4.0, 16.0))
-        assertTime(references.requireReady(original).baselineTimeMs, 8.0)
+        assertTime(references.requireReady(original, GPU).baselineScore, 8.0)
 
         Files.writeString(directory.resolve("problem.py"), Files.readString(directory.resolve("problem.py")) + "\n")
         assertThat(sync.sync().imported).isEqualTo(1)
         val updated = catalog.currentVersion(original.problemId)!!
         assertThat(updated.judgeHash).isNotEqualTo(original.judgeHash)
-        assertThat(references.view(updated)!!.key).isNotEqualTo(references.view(original)!!.key)
+        assertThat(references.view(updated, GPU)!!.key).isNotEqualTo(references.view(original, GPU)!!.key)
         references.refresh()
         complete(sent.last(), listOf(2.0, 8.0))
-        assertTime(references.requireReady(updated).baselineTimeMs, 4.0)
-        assertTime(references.requireReady(original).baselineTimeMs, 8.0)
+        assertTime(references.requireReady(updated, GPU).baselineScore, 4.0)
+        assertTime(references.requireReady(original, GPU).baselineScore, 8.0)
         assertThat(submissions.count()).isZero()
     }
 
@@ -232,24 +252,25 @@ class ReferenceMeasurementsIntegrationTest {
         val (_, version) = importProblem("optimization")
         val environment = "historical-mock-${UUID.randomUUID()}"
         jobs.save(ReferenceJob(
-            id = UUID.randomUUID(), problemVersionId = version.id, environmentKey = environment, role = "baseline", status = "ready",
-            timeMs = BigDecimal("3"), measuredAt = Instant.now(), measurement = json.writeValueAsString(MeasurementData(
+            id = UUID.randomUUID(), problemVersionId = version.id, processor = GPU, language = "cuda", environmentKey = environment, role = "baseline", status = "ready",
+            score = BigDecimal("3"), measuredAt = Instant.now(), measurement = json.writeValueAsString(MeasurementData(
                 "geometric_mean", catalog.spec(version).timing.effectiveMode.name.lowercase(), "Mock GPU", "mock test", true,
                 listOf(MeasuredTest(BigDecimal.ONE, 1), MeasuredTest(BigDecimal("9"), 1)),
             )),
         ))
 
-        val measured = references.viewInEnvironment(version, environment)!!
-        val frozen = frozenProblem(version, environment, "Mock GPU")
-        val frozenBenchmark = checkNotNull(frozen.benchmark)
+        val measured = references.viewInEnvironment(version, GPU, environment)!!
+        val frozen = frozenProblem(version, environment)
+        val frozenDetail = frozen.processorDetails.single()
+        val frozenBenchmark = checkNotNull(frozenDetail.benchmark)
 
         assertThat(properties.synthetic).isFalse()
         assertThat(measured.synthetic).isTrue()
-        assertThat(measured.gpuName).isEqualTo("Mock GPU")
-        assertTime(frozen.baselineTimeMs, 3.0)
+        assertThat(measured.model).isEqualTo("Mock GPU")
+        assertTime(frozen.processors.single().baselineScore?.value, 3.0)
         assertThat(frozenBenchmark.synthetic).isTrue()
-        assertThat(frozenBenchmark.gpuName).isNull()
-        assertThat(frozen.environmentMarkdown).doesNotContain("GPU:", "Mock GPU", model)
+        assertThat(frozenBenchmark.model).isNull()
+        assertThat(frozenDetail.environmentMarkdown).doesNotContain("Mock GPU", model)
     }
 
     @Test
@@ -260,37 +281,37 @@ class ReferenceMeasurementsIntegrationTest {
         val first = sent.first { it.source == source(128) }
         val second = sent.first { it.source == source(256) }
         complete(first, listOf(1.0, 4.0))
-        assertThat(references.view(version)!!.firstTimeMs).isNull()
-        assertThatThrownBy { references.requireReady(version) }.isInstanceOf(ServiceUnavailableException::class.java)
+        assertThat(references.view(version, GPU)!!.firstScore).isNull()
+        assertThatThrownBy { references.requireReady(version, GPU) }.isInstanceOf(ServiceUnavailableException::class.java)
 
         model = "NVIDIA GeForce RTX 4090"
         references.refresh()
         complete(second, listOf(0.01, 0.01), device = "NVIDIA GeForce RTX 3060")
-        assertThat(references.view(version)!!.firstTimeMs).isNull()
+        assertThat(references.view(version, GPU)!!.firstScore).isNull()
         val currentFirst = sent.last { it.source == source(128) }
         val currentSecond = sent.last { it.source == source(256) }
         complete(currentFirst, listOf(4.0, 16.0))
         complete(currentSecond, listOf(1.0, 4.0))
-        val ready = references.requireReady(version)
-        assertTime(ready.firstTimeMs, 8.0)
-        assertTime(ready.secondTimeMs, 2.0)
+        val ready = references.requireReady(version, GPU)
+        assertTime(ready.firstScore, 8.0)
+        assertTime(ready.secondScore, 2.0)
 
         online = false
         references.refresh()
-        assertThat(references.view(version)!!.status).isEqualTo("pending")
-        assertThat(references.view(version)!!.firstTimeMs).isNull()
+        assertThat(references.view(version, GPU)!!.status).isEqualTo("pending")
+        assertThat(references.view(version, GPU)!!.firstScore).isNull()
         online = true
         references.refresh()
-        assertThat(references.requireReady(version).key).isEqualTo(ready.key)
+        assertThat(references.requireReady(version, GPU).key).isEqualTo(ready.key)
 
         val (_, invalid) = importProblem("guess")
         references.refresh()
         val bad = sent.last { it.problem.id == invalid.problemId }
         complete(bad, emptyList(), Verdict.COMPILATION_ERROR)
-        val failed = references.view(invalid)!!
+        val failed = references.view(invalid, GPU)!!
         assertThat(failed.status).isEqualTo("failed")
-        assertThat(failed.firstTimeMs).isNull()
-        assertThat(failed.secondTimeMs).isNull()
+        assertThat(failed.firstScore).isNull()
+        assertThat(failed.secondScore).isNull()
         assertThat(failed.diagnostic).doesNotContain("private failure details")
     }
 
@@ -304,7 +325,7 @@ class ReferenceMeasurementsIntegrationTest {
         references.refresh()
         val original = sent.single()
         transactions.executeWithoutResult {
-            val job = jobs.findByProblemVersionIdAndEnvironmentKey(version.id, references.environmentKey()!!).single()
+            val job = jobs.findByProblemVersionIdAndEnvironmentKey(version.id, references.environmentKey(GPU)!!).single()
             jobs.findForUpdate(job.id)!!.nextAttemptAt = Instant.now().minusSeconds(1)
         }
         doAnswer {
@@ -312,12 +333,14 @@ class ReferenceMeasurementsIntegrationTest {
             sent += request
             SendOutcome.Accepted("job-${request.submissionId}")
         }.`when`(gateway).send(any(SubmissionRequest::class.java) ?: requestPlaceholder)
-        val restored = ReferenceMeasurements(catalog, jobs, locks, ReferenceEnvironmentMonitor(gateway, properties, gpu), gateway, properties, gpu, transactions, json)
+        val restored = ReferenceMeasurements(
+            catalog, processors, jobs, locks, ReferenceEnvironmentMonitor(gateway, properties, processors), gateway, properties, transactions, json,
+        )
         restored.refresh()
         assertThat(sent.last().submissionId).isEqualTo(original.submissionId)
         complete(sent.last(), listOf(1.0, 4.0), Verdict.INTERNAL_ERROR)
         transactions.executeWithoutResult {
-            val job = jobs.findByProblemVersionIdAndEnvironmentKey(version.id, references.environmentKey()!!).single()
+            val job = jobs.findByProblemVersionIdAndEnvironmentKey(version.id, references.environmentKey(GPU)!!).single()
             assertThat(job.generation).isEqualTo(1)
             jobs.findForUpdate(job.id)!!.nextAttemptAt = Instant.now().minusSeconds(1)
         }
@@ -325,13 +348,59 @@ class ReferenceMeasurementsIntegrationTest {
         val retry = sent.last()
         assertThat(retry.submissionId).isNotEqualTo(original.submissionId)
         complete(original, listOf(0.01, 0.01))
-        assertThat(references.view(version)!!.baselineTimeMs).isNull()
+        assertThat(references.view(version, GPU)!!.baselineScore).isNull()
         complete(retry, listOf(1.0, 9.0))
-        assertTime(restored.requireReady(version).baselineTimeMs, 3.0)
-        assertThat(jobs.findByProblemVersionIdAndEnvironmentKey(version.id, references.environmentKey()!!)).hasSize(1)
+        assertTime(restored.requireReady(version, GPU).baselineScore, 3.0)
+        assertThat(jobs.findByProblemVersionIdAndEnvironmentKey(version.id, references.environmentKey(GPU)!!)).hasSize(1)
+    }
+
+    @Test
+    fun `an optimization on a circuit measures its baseline on rtl, in that processor's score, from the rtl starter`() {
+        val directory = Files.createDirectory(root.resolve("reference-rtl-${UUID.randomUUID()}"))
+        val template = Path.of("../judge/problems/examples/vector_add_rtl")
+        listOf("problem.json", "problem.py").forEach { Files.copy(template.resolve(it), directory.resolve(it)) }
+        // the judge's example has no statement of the bank format
+        Files.copy(Path.of("../judge/problems/examples/vector_add/statement.md"), directory.resolve("statement.md"))
+        val circuit = Files.readString(template.resolve("solutions/accepted.sv"))
+        Files.writeString(directory.resolve("starter.rtl.sv"), circuit)
+        Files.writeString(
+            directory.resolve("format.json"),
+            json.writeValueAsString(mapOf("format" to "optimization", "benchmark" to mapOf("inputDescription" to "Тесты", "aggregation" to "max"))),
+        )
+        assertThat(sync.sync().failed).isEmpty()
+        val version = catalog.currentVersion(directory.fileName.toString())!!
+
+        // no executor of rtl yet: the baseline waits
+        references.refresh()
+        assertThat(references.view(version, RTL)!!.status).isEqualTo("pending")
+        assertThat(sent).isEmpty()
+
+        emulator = true
+        references.refresh()
+        val request = sent.single()
+        assertThat(request.processor to request.language).isEqualTo(RTL to "systemverilog")
+        assertThat(request.source).isEqualTo(circuit)
+        val jobId = "job-${request.submissionId}"
+        val type = ScoreType.CYCLES_X_DEPTH_X_TRANSISTORS
+        val result = JudgeResult(
+            Verdict.ACCEPTED,
+            tests = listOf(
+                TestResult(1, "sample", true, Verdict.ACCEPTED, score = Score(1000.0, type)),
+                TestResult(2, "large", false, Verdict.ACCEPTED, score = Score(5000.0, type)),
+            ),
+            score = Score(5000.0, type), processor = ProcessorRun(RTL, "Yosys, Verilator", "Verilator + Yosys", "emu-executor"),
+        )
+        references.apply(JudgeEvent(request.submissionId, 1, 1, SubmissionStatus.FINISHED, Instant.now(), "emu-executor", result = result, jobId = jobId))
+
+        val ready = references.requireReady(version, RTL)
+        assertThat(ready.scoreType).isEqualTo(type)
+        assertTime(ready.baselineScore, 5000.0)
+        assertThat(references.views(version).keys).containsExactly(RTL)
     }
 
     companion object {
+        private const val GPU = "gpu-cuda"
+        private const val RTL = "rtl"
         private val root = Files.createTempDirectory("reference-measurements-integration")
         @Container @ServiceConnection @JvmStatic val postgres = PostgreSQLContainer("postgres:18.1-alpine")
 

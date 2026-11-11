@@ -8,11 +8,9 @@ import dev.gpucodeforces.judge.api.JudgeJob
 import dev.gpucodeforces.judge.api.Topology
 import dev.gpucodeforces.judge.executor.config.ExecutorProperties
 import dev.gpucodeforces.judge.executor.config.REAL
-import dev.gpucodeforces.judge.executor.compile.Toolchain
-import dev.gpucodeforces.judge.executor.mock.MockJudge
-import dev.gpucodeforces.judge.executor.gpu.GpuManager
 import dev.gpucodeforces.judge.executor.pipeline.Disposition
 import dev.gpucodeforces.judge.executor.pipeline.JobProcessor
+import dev.gpucodeforces.judge.executor.processor.ProcessorBackends
 import java.net.InetAddress
 import java.time.Clock
 import org.slf4j.LoggerFactory
@@ -27,7 +25,6 @@ import org.springframework.amqp.rabbit.listener.api.ChannelAwareMessageListener
 import org.springframework.context.annotation.Profile
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
-import org.springframework.beans.factory.ObjectProvider
 import tools.jackson.core.JacksonException
 
 @Component
@@ -53,6 +50,7 @@ class JobListener(
         MDC.put("submissionId", job.submissionId)
         MDC.put("attempt", attempt.toString())
         MDC.put("problem", job.problem.id)
+        MDC.put("processor", job.processor)
         MDC.put("executor", props.id)
         try {
             when (pipeline.process(job, attempt)) {
@@ -96,17 +94,14 @@ class ControlListener(private val cancels: CancelRegistry, private val publisher
 @Component
 class HeartbeatPublisher(
     private val props: ExecutorProperties,
-    private val gpus: GpuManager,
     private val pipeline: JobProcessor,
     private val publisher: EventPublisher,
     private val clock: Clock,
-    toolchains: ObjectProvider<Toolchain>,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val startedAt = clock.instant()
     private val hostname = InetAddress.getLocalHost().hostName
     private val version = javaClass.`package`?.implementationVersion ?: "dev"
-    private val toolchain = toolchains.ifAvailable?.description ?: MockJudge.TOOLCHAIN
     @Volatile private var failing = false
 
     @Scheduled(fixedDelayString = "\${judge.executor.heartbeat-interval:5s}")
@@ -116,14 +111,13 @@ class HeartbeatPublisher(
                 ExecutorHeartbeat(
                     executorId = props.id,
                     hostname = hostname,
-                    gpuProfile = props.gpuProfile,
+                    processors = pipeline.processors(),
                     version = version,
                     startedAt = startedAt,
                     timestamp = clock.instant(),
-                    gpus = gpus.pool.slots.map { it.status() },
+                    gpus = pipeline.gpus(),
                     inFlight = pipeline.inFlight.get(),
                     capacity = props.capacity,
-                    toolchain = toolchain,
                 ),
             )
             if (failing) log.info("Heartbeats are being delivered again")
@@ -135,12 +129,12 @@ class HeartbeatPublisher(
     }
 }
 
-/** Probes the GPUs between jobs. Absent in the mock profile, where there is nothing to probe. */
+/** Health checks of the processors between jobs (GPU probes). Absent in the mock profile, where there is nothing to check. */
 @Component
 @Profile(REAL)
-class GpuHealthChecker(private val gpus: GpuManager) {
+class ProcessorHealthChecker(private val backends: ProcessorBackends) {
     @Scheduled(fixedDelayString = "\${judge.executor.health-check-interval:10s}")
     fun healthCheck() {
-        gpus.periodicCheck()
+        backends.all.forEach { it.maintenance() }
     }
 }

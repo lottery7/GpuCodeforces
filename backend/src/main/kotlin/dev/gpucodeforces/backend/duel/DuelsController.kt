@@ -21,22 +21,22 @@ import dev.gpucodeforces.backend.api.model.DuelRequest as DuelRequestApi
 
 @RestController
 class DuelsController(private val service: DuelService, private val views: DuelViews) : DuelsApi {
-    override fun listDuelProblems(q: String?, difficulty: String?, offset: Int, limit: Int): ResponseEntity<DuelProblemPage> {
-        val page = service.problems(q, difficulty, offset, limit)
+    override fun listDuelProblems(processor: String?, q: String?, difficulty: String?, offset: Int, limit: Int): ResponseEntity<DuelProblemPage> {
+        val page = service.problems(processor, q, difficulty, offset, limit)
         val items = page.items.map {
             DuelProblem().id(it.problemId).code(it.code).title(it.title).difficulty(DuelProblem.DifficultyEnum.fromValue(it.difficulty))
         }
         return ResponseEntity.ok(DuelProblemPage(items, page.total))
     }
 
-    override fun listDuels(phase: String, offset: Int, limit: Int): ResponseEntity<DuelPage> {
-        val page = service.list(phase, offset, limit, CurrentUser.resolve()!!)
+    override fun listDuels(processor: String?, phase: String, offset: Int, limit: Int): ResponseEntity<DuelPage> {
+        val page = service.list(processor, phase, offset, limit, CurrentUser.resolve()!!)
         return ResponseEntity.ok(DuelPage(views.models(page.items), page.total))
     }
 
     override fun createDuel(createDuelRequest: CreateDuelRequest): ResponseEntity<DuelRequestApi> {
         val user = CurrentUser.resolve()!!
-        val request = with(createDuelRequest) { service.create(mode.value, opponentHandle, problemId, user) }
+        val request = with(createDuelRequest) { service.create(mode.value, opponentHandle, problemId, processor, user) }
         return ResponseEntity.status(HttpStatus.CREATED).body(views.model(request))
     }
 
@@ -73,6 +73,7 @@ class DuelViews(private val users: UserRepository, private val catalog: ProblemC
             .id(request.id.toString())
             .mode(DuelMode.fromValue(request.mode))
             .status(DuelStatus.fromValue(request.status))
+            .processor(request.processor)
             .creator(people.getValue(request.creatorId).toApiModel())
             .opponent(request.opponentId?.let { people.getValue(it).toApiModel() })
             .problemId(problem?.problemId)

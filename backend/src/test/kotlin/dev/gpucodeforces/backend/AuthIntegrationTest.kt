@@ -37,7 +37,7 @@ class AuthIntegrationTest {
             .expectBody(User::class.java)
             .returnResult()
         assertThat(registerResult.responseBody?.handle).isEqualTo(handle)
-        assertThat(registerResult.responseBody?.rating).isNull()
+        assertThat(registerResult.responseBody?.ratings).isEmpty()
         val registerSessionCookie = registerResult.responseCookies.getFirst("session")?.value
         assertThat(registerSessionCookie).isNotNull()
 

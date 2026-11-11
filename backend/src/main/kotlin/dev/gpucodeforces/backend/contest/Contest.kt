@@ -22,8 +22,9 @@ class Contest(
     var startAt: Instant,
     @Column(name = "end_at")
     var endAt: Instant,
+    /** The one processor every submission of the contest is judged on; chosen at creation, fixed once it starts. */
     @Column(nullable = false)
-    var gpu: String,
+    var processor: String,
     @Column(name = "rating_applied_at")
     var ratingAppliedAt: Instant? = null,
     // Eager: every Contest response includes authors, and open-in-view is disabled.
@@ -46,8 +47,8 @@ class Contest(
     @Column(name = "benchmark_environment_key")
     var benchmarkEnvironmentKey: String? = null,
 ) {
-    constructor(title: String, startAt: Instant, endAt: Instant, gpu: String) :
-        this(UUID.randomUUID(), title, startAt, endAt, gpu)
+    constructor(title: String, startAt: Instant, endAt: Instant, processor: String) :
+        this(UUID.randomUUID(), title, startAt, endAt, processor)
 
     fun phaseAt(now: Instant): ContestPhase = when {
         now.isBefore(startAt) -> ContestPhase.UPCOMING

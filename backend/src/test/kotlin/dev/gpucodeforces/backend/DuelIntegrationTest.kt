@@ -27,11 +27,14 @@ import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection
 import org.springframework.http.MediaType
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.test.context.DynamicPropertyRegistry
+import org.springframework.test.context.DynamicPropertySource
 import org.springframework.test.context.bean.override.mockito.MockitoBean
 import org.springframework.test.web.servlet.client.RestTestClient
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.postgresql.PostgreSQLContainer
+import tools.jackson.databind.json.JsonMapper
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -53,6 +56,7 @@ class DuelIntegrationTest {
     @Autowired lateinit var versions: ProblemVersionRepository
     @Autowired lateinit var contests: ContestRepository
     @Autowired lateinit var jdbc: JdbcTemplate
+    @Autowired lateinit var jsonMapper: JsonMapper
     @MockitoBean lateinit var references: ReferenceMeasurements
 
     private val client by lazy { RestTestClient.bindToServer().baseUrl("http://localhost:$port/api").build() }
@@ -64,7 +68,8 @@ class DuelIntegrationTest {
         @Language("SQL")
         val cleanup = "UPDATE gpucodeforces.duel_requests SET status = 'cancelled' WHERE status IN ('queued', 'invited')"
         jdbc.update(cleanup)
-        given(references.environmentKey()).willReturn(ENVIRONMENT)
+        given(references.environmentKey(GPU)).willReturn(ENVIRONMENT)
+        given(references.environmentKey(RTL)).willReturn(RTL_ENVIRONMENT)
     }
 
     private fun player(): Player {
@@ -75,20 +80,22 @@ class DuelIntegrationTest {
         return Player(result.responseBody!!, result.responseCookies.getFirst("session")!!.value)
     }
 
-    private fun task(difficulty: String, problemId: String = "duel-${UUID.randomUUID()}", draft: Boolean = false, format: String = "standard", code: String = "D", title: String = "Задача $difficulty"): ProblemVersion {
+    private fun task(difficulty: String, problemId: String = "duel-${UUID.randomUUID()}", draft: Boolean = false, format: String = "standard", code: String = "D", title: String = "Задача $difficulty", processor: String = GPU): ProblemVersion {
         val template = catalog.currentVersion("vector_add")!!
+        val spec = catalog.spec(template)
         if (!problems.existsById(problemId)) problems.save(Problem(problemId, source = "comparison"))
         val version = versions.save(ProblemVersion(
             id = UUID.randomUUID(), problemId = problemId, code = code, title = title, difficulty = difficulty, tags = emptyList(),
-            authors = emptyList(), draft = draft, statementMarkdown = "Условие $difficulty", starterCode = template.starterCode,
-            judgeSpec = template.judgeSpec, contentHash = UUID.randomUUID().toString(), judgeHash = template.judgeHash, revision = null, format = format,
+            authors = emptyList(), draft = draft, statementMarkdown = "Условие $difficulty", processors = listOf(processor), starters = template.starters.filterKeys { it == processor },
+            judgeSpec = jsonMapper.writeValueAsString(spec.copy(processors = spec.declaredProcessors().filter { it.id == processor })),
+            contentHash = UUID.randomUUID().toString(), judgeHash = template.judgeHash, revision = null, format = format,
         ))
         problems.save(problems.findById(problemId).orElseThrow().apply { currentVersionId = version.id })
         return version
     }
 
-    private fun create(player: Player, mode: String, handle: String? = null, problemId: String? = null): DuelRequestApi {
-        val body = mutableMapOf<String, Any>("mode" to mode)
+    private fun create(player: Player, mode: String, handle: String? = null, problemId: String? = null, processor: String = GPU): DuelRequestApi {
+        val body = mutableMapOf<String, Any>("mode" to mode, "processor" to processor)
         if (handle != null) body["opponentHandle"] = handle
         if (problemId != null) body["problemId"] = problemId
         return client.post().uri("/duels").contentType(MediaType.APPLICATION_JSON).cookie("session", player.cookie)
@@ -103,8 +110,8 @@ class DuelIntegrationTest {
         client.post().uri("/duels/$id/$action").cookie("session", player.cookie).exchange().expectStatus().isOk
             .expectBody(DuelRequestApi::class.java).returnResult().responseBody!!
 
-    private fun list(player: Player, phase: String = "active", offset: Int = 0, limit: Int = 20): DuelPage =
-        client.get().uri("/duels?phase=$phase&offset=$offset&limit=$limit").cookie("session", player.cookie)
+    private fun list(player: Player, phase: String = "active", offset: Int = 0, limit: Int = 20, processor: String? = null): DuelPage =
+        client.get().uri("/duels?phase=$phase&offset=$offset&limit=$limit${processor?.let { "&processor=$it" }.orEmpty()}").cookie("session", player.cookie)
             .exchange().expectStatus().isOk.expectBody(DuelPage::class.java).returnResult().responseBody!!
 
     private fun room(player: Player, id: String): Contest =
@@ -250,25 +257,67 @@ class DuelIntegrationTest {
     fun `queues wait for hardware and invitation acceptance is retriable without it`() {
         val first = player()
         val second = player()
-        given(references.environmentKey()).willReturn(null)
+        given(references.environmentKey(GPU)).willReturn(null)
         val queued = create(first, "random")
         val peer = create(second, "random")
         assertThat(queued.status).isEqualTo(DuelStatus.QUEUED)
         assertThat(peer.problemId).isNull()
-        given(references.environmentKey()).willReturn(ENVIRONMENT)
+        given(references.environmentKey(GPU)).willReturn(ENVIRONMENT)
         assertThat(request(first, queued.id).status).isEqualTo(DuelStatus.MATCHED)
         val incoming = create(first, "invite", second.user.handle)
-        given(references.environmentKey()).willReturn(null)
+        given(references.environmentKey(GPU)).willReturn(null)
         client.post().uri("/duels/${incoming.id}/accept").cookie("session", second.cookie).exchange().expectStatus().isEqualTo(503)
         assertThat(request(first, incoming.id).status).isEqualTo(DuelStatus.INVITED)
         action(first, incoming.id, "cancel")
         client.post().uri("/duels").contentType(MediaType.APPLICATION_JSON).cookie("session", first.cookie)
-            .body(mapOf("mode" to "random", "problemId" to "vector_add")).exchange().expectStatus().isBadRequest
+            .body(mapOf("mode" to "random", "problemId" to "vector_add", "processor" to GPU)).exchange().expectStatus().isBadRequest
         client.get().uri("/duels").exchange().expectStatus().isUnauthorized
     }
 
+    @Test
+    fun `processor scopes matchmaking rooms and the searchable published problem pool`() {
+        val first = player()
+        val second = player()
+        val third = player()
+        val token = UUID.randomUUID().toString().take(8)
+        val gpuTask = task("easy", "duel-$token-gpu")
+        val rtlTask = task("medium", "duel-$token-rtl", processor = RTL)
+        given(references.environmentKey(GPU)).willReturn(null)
+        val gpu = create(first, "random")
+        val rtl = create(second, "random", processor = RTL)
+        assertThat(request(first, gpu.id).status).isEqualTo(DuelStatus.QUEUED)
+        assertThat(request(second, rtl.id).status).isEqualTo(DuelStatus.QUEUED)
+        val matched = create(third, "random", processor = RTL)
+        assertThat(matched.processor).isEqualTo(RTL)
+        assertThat(matched.contestId).isEqualTo(request(second, rtl.id).contestId)
+        assertThat(room(second, matched.contestId!!).processor).isEqualTo(RTL)
+        assertThat(contests.findById(UUID.fromString(matched.contestId)).orElseThrow().benchmarkEnvironmentKey).isEqualTo(RTL_ENVIRONMENT)
+        assertThat(list(first, processor = GPU).total).isEqualTo(1)
+        assertThat(list(second, processor = GPU).total).isZero()
+        assertThat(list(second, processor = RTL).total).isEqualTo(1)
+        val pool = client.get().uri("/duels/problems?processor=$RTL&q=$token").cookie("session", first.cookie)
+            .exchange().expectStatus().isOk.expectBody(DuelProblemPage::class.java).returnResult().responseBody!!
+        assertThat(pool.items.map { it.id }).containsExactly(rtlTask.problemId)
+        client.post().uri("/duels").contentType(MediaType.APPLICATION_JSON).cookie("session", first.cookie)
+            .body(mapOf("mode" to "invite", "processor" to RTL, "opponentHandle" to second.user.handle, "problemId" to gpuTask.problemId))
+            .exchange().expectStatus().isBadRequest
+        client.get().uri("/duels/problems?processor=unknown").cookie("session", first.cookie).exchange().expectStatus().isBadRequest
+        client.get().uri("/duels?processor=unknown").cookie("session", first.cookie).exchange().expectStatus().isBadRequest
+    }
+
     companion object {
+        private const val GPU = "gpu-cuda"
+        private const val RTL = "rtl"
         private val ENVIRONMENT = "e".repeat(64)
+        private val RTL_ENVIRONMENT = "f".repeat(64)
+        private val problemRoot = TestProblems.withRtl()
+
+        @JvmStatic
+        @DynamicPropertySource
+        fun problemDirectory(registry: DynamicPropertyRegistry) {
+            registry.add("platform.problems.directory") { problemRoot.toString() }
+        }
+
         @Container @ServiceConnection @JvmStatic val postgres = PostgreSQLContainer("postgres:18.1-alpine")
     }
 }

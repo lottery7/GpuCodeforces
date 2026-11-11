@@ -32,16 +32,16 @@ class AmqpConfig(private val props: GatewayProperties) {
             events, eventsQueue, BindingBuilder.bind(eventsQueue).to(events).with("#"),
             heartbeats, control,
         )
-        for (profile in props.gpuProfiles) {
-            val queue = jobsQueue(profile)
+        for (processor in props.processors) {
+            val queue = jobsQueue(processor)
             declarables += queue
-            declarables += BindingBuilder.bind(queue).to(jobs).with(profile)
+            declarables += BindingBuilder.bind(queue).to(jobs).with(processor)
         }
         return Declarables(declarables)
     }
 
     companion object {
-        fun jobsQueue(profile: String) = QueueBuilder.durable(Topology.jobsQueue(profile))
+        fun jobsQueue(processor: String) = QueueBuilder.durable(Topology.jobsQueue(processor))
             .quorum()
             .deliveryLimit(Topology.JOB_DELIVERY_LIMIT)
             .deadLetterExchange(Topology.JOBS_DLX)

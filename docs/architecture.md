@@ -17,23 +17,29 @@ flowchart TB
   end
   postgres[("PostgreSQL 18<br/>схема Flyway, JPA")]
   repo["Репозиторий задач<br/>lottery7/GpuCodeforcesProblems"]
-  subgraph judge["Тестирующая система (профили judge, gpu, mock)"]
+  subgraph judge["Тестирующая система (профили judge, gpu, emu, cuda-sim, mock)"]
     gateway["judge-gateway<br/>Spring Boot, :8090"]
     rabbit[["RabbitMQ 4.1<br/>jobs, events, heartbeats, control"]]
-    executor["judge-executor<br/>по одному на GPU-машину"]
+    executor["judge-executor<br/>по одному на машину,<br/>очередь на каждый свой процессор"]
+    emu["judge-executor-emu<br/>тот же сервис без GPU:<br/>rtl (Yosys + Verilator),<br/>riscv-rvv (QEMU + плагин)"]
+    cudasim["judge-executor-cuda-sim<br/>тот же сервис без GPU:<br/>cuda-sim (GPGPU-Sim, QV100)"]
     mock["judge-executor-mock<br/>вердикт из комментария"]
-    sandbox["nsjail + NVIDIA GPU<br/>nvcc, запуск решения"]
+    sandbox["nsjail + процессор<br/>gpu-cuda: nvcc и NVIDIA GPU<br/>эмуляторы: по процессу на тест"]
   end
   browser -->|HTTP| frontend
   frontend -->|"/api, /admin"| backend
   backend -->|JDBC| postgres
   backend -->|"git clone, pull (JGit)"| repo
   backend -->|"POST /api/v1/submissions"| gateway
-  gateway -->|"judge.jobs.&lt;profile&gt;"| rabbit
+  gateway -->|"judge.jobs.&lt;processor&gt;"| rabbit
   rabbit -->|judge.events| backend
   rabbit <-->|"задания, события"| executor
+  rabbit <-->|"judge.jobs.rtl, .riscv-rvv"| emu
+  rabbit <-->|"judge.jobs.cuda-sim"| cudasim
   rabbit <-->|"профиль mock"| mock
   executor --> sandbox
+  emu --> sandbox
+  cudasim --> sandbox
 ```
 
 Служебные обмены RabbitMQ: `judge.heartbeats` (executor → gateway, мониторинг живых исполнителей),
@@ -101,17 +107,17 @@ sequenceDiagram
   participant G as judge-gateway
   participant E as judge-executor
   B->>G: GET /api/v1/executors
-  G-->>B: Живое оборудование профиля
+  G-->>B: Живые исполнители (для gpu-cuda - GPU и драйвер)
   B->>DB: Найти задания версии и отпечатка среды
   B->>DB: Создать недостающие задания исходных кодов
   loop Каждый исходный код
     B->>G: POST /api/v1/submissions с reference ID
-    G->>E: Код, полные тесты и профиль GPU
+    G->>E: Код, процессор и полные тесты
     E-->>B: События judge через RabbitMQ
     B->>DB: Сохранить проверенный замер и оборудование
   end
   B->>DB: Все варианты готовы - открыть поколение
-  Note over B,DB: Новые тесты или GPU создают другие задания
+  Note over B,DB: Новые тесты, процессор или GPU создают другие задания
 ```
 
 Подробности восстановления и актуальности: [reference-measurements.md](backend/reference-measurements.md).
@@ -128,18 +134,19 @@ sequenceDiagram
   B->>DB: insert Submission (queued)
   B-->>U: Submission, status queued
   B->>G: POST /api/v1/submissions
-  Note over B,G: SubmissionRequest: код + ProblemSpec + gpuProfile, повтор каждые 15 с
-  G->>G: SpecValidator, дедупликация
-  G->>MQ: JudgeJob в judge.jobs.#lt;profile#gt;
+  Note over B,G: SubmissionRequest: код + ProblemSpec + processor + language, повтор каждые 15 с
+  G->>G: SpecValidator (процессор, язык, лимит), дедупликация
+  G->>MQ: JudgeJob в judge.jobs.#lt;processor#gt;
   G-)MQ: JudgeEvent QUEUED
   G-->>B: 202 Accepted, jobId
   B->>DB: сохранить job_id
   MQ->>E: JudgeJob (prefetch = 1)
-  E->>E: COMPILING: nvcc, проверки политики
-  E->>E: PREPARING: генерация тестов
-  E->>E: TESTING k/n: nsjail на GPU
+  E->>E: ProcessorBackend по job.processor
+  E->>E: COMPILING: сборка (nvcc у gpu-cuda), проверки политики
+  E->>E: PREPARING: генерация тестов процессора
+  E->>E: TESTING k/n: nsjail на GPU или в эмуляторе
   E-)MQ: JudgeEvent на каждом этапе
-  E-)MQ: FINISHED + JudgeResult, затем ack
+  E-)MQ: FINISHED + JudgeResult (score с типом), затем ack
   MQ-)B: judge.events
   B->>DB: применить по (attempt, seq)
   loop пока статус не окончательный
@@ -183,6 +190,9 @@ classDiagram
     String handle
     String email
     String passwordHash
+  }
+  class UserRating {
+    String processor
     Int rating
     Int rank
     Int ratingDelta
@@ -196,7 +206,7 @@ classDiagram
     String title
     Instant startAt
     Instant endAt
-    String gpu
+    String processor
     String format
     UUID challengerId
     UUID opponentId
@@ -212,6 +222,7 @@ classDiagram
   class DuelRequest {
     UUID id
     String mode
+    String processor
     String status
     UUID problemVersionId
     Instant expiresAt
@@ -222,6 +233,7 @@ classDiagram
     Instant readAt
   }
   class RatingHistory {
+    String processor
     Int rank
     Int ratingDelta
     Int ratingAfter
@@ -238,7 +250,8 @@ classDiagram
     String difficulty
     Boolean draft
     String statementMarkdown
-    String starterCode
+    List~String~ processors
+    Map starters
     String format
     JSON formatData
     String judgeSpec
@@ -253,31 +266,43 @@ classDiagram
     String guessBenchmarkKey
     JSON guessResult
     SubmissionStatus status
-    BigDecimal timeMs
+    String processor
+    String language
+    BigDecimal score
+    ScoreType scoreType
+    Map metrics
     JSON measurement
     Int passedTests
     Int totalTests
     String judgeHash
-    String gpuProfile
     String benchmarkEnvironmentKey
     String jobId
     Int eventAttempt
     Int eventSeq
     Int recheckCount
   }
+  class ProcessorTests {
+    String judgeHash
+    String processor
+    List tests
+  }
   class ReferenceJob {
     UUID id
     UUID problemVersionId
     String environmentKey
     String role
+    String processor
+    String language
     String status
     Int generation
-    BigDecimal timeMs
+    BigDecimal score
+    ScoreType scoreType
     JSON measurement
     String jobId
   }
   ProblemVersion "1" -- "*" ReferenceJob
   Session "*" --> "1" User
+  User "1" *-- "*" UserRating : ratings
   DuelRequest "*" --> "1" User : creator
   DuelRequest "*" --> "0..1" User : opponent
   DuelRequest "*" --> "0..1" Contest
@@ -326,6 +351,17 @@ classDiagram
       sync() SyncResult
     }
     class ProblemPackageReader
+    class ProblemEnvironments {
+      markdown(spec, judgeHash, processor)
+      recordTests()
+    }
+  }
+  namespace processor {
+    class ProcessorsController
+    class ProcessorCatalog {
+      enabled
+      require(id)
+    }
   }
   namespace contest {
     class ContestsController
@@ -392,6 +428,7 @@ classDiagram
   ProblemsController ..> ProblemService
   ProblemsController ..> SubmissionStats
   ProblemsController ..> ExampleChecks
+  ProblemsController ..> ProblemEnvironments
   ProblemsController ..> GuessService
   ProblemsController ..> ComparisonService
   ProblemsController ..> ReferenceMeasurements
@@ -404,6 +441,12 @@ classDiagram
   GuessService ..> SubmissionService
   ProblemService ..> ProblemCatalog
   ProblemService ..> ContestService
+  ProblemService ..> ProcessorCatalog
+  ProcessorsController ..> ProcessorCatalog
+  ProblemEnvironments ..> ProcessorCatalog
+  ContestService ..> ProcessorCatalog
+  SubmissionService ..> ProblemEnvironments
+  UsersController ..> ProcessorCatalog
   ProblemSyncService ..> ProblemPackageReader
   ContestsController ..> ContestService
   ContestService ..> ProblemCatalog
@@ -428,12 +471,16 @@ classDiagram
 
 Фоновые задачи: синхронизация банка задач с репозиторием раз в минуту (`ProblemSyncService`), повторная
 отправка непринятых посылок каждые 15 секунд и поиск зависших раз в минуту (`SubmissionService`),
-финализация рейтинга завершившихся контестов раз в минуту (`ContestRatingFinalizer`).
+финализация рейтинга завершившихся контестов раз в минуту (`ContestRatingFinalizer`, по процессорам: рейтинг
+каждого процессора свой).
 
 ## Компоненты тестирующей системы
 
-`judge-api` — общие контракты gateway, executor и backend. У `JobProcessor` две реализации: настоящий
-конвейер и mock (Spring-профиль `mock`). Конфигурация и утилиты опущены.
+`judge-api` — общие контракты gateway, executor и backend, включая каталог процессоров. У `JobProcessor` две
+реализации: настоящий конвейер и mock (Spring-профиль `mock`). Конвейер выбирает `ProcessorBackend` по процессору
+задания; `GpuCudaBackend` — путь на реальной GPU, `RtlBackend` — схема в Verilator, `RiscvBackend` — RISC-V в QEMU с плагином судьи, `CudaSimBackend` — CUDA в GPGPU-Sim; эмулируемые процессоры
+используют `EmulatorRun`. Конфигурация и
+утилиты опущены.
 
 ```mermaid
 classDiagram
@@ -449,8 +496,15 @@ classDiagram
     }
     class JudgeResult {
       Verdict verdict
+      Score score
+      ProcessorRun processor
     }
     class ProblemSpec
+    class ProcessorSpec
+    class Processors {
+      List~ProcessorInfo~ all
+    }
+    class RtlSignature
     class SpecValidator
     class ExecutorHeartbeat
     class ControlMessage
@@ -474,6 +528,20 @@ classDiagram
     }
     class JudgePipeline
     class MockJudge
+    class ProcessorBackend {
+      <<interface>>
+      judge(JudgeJob, runDir, JudgeHooks) JudgeResult
+    }
+    class GpuCudaBackend
+    class RtlBackend
+    class RtlBuilder
+    class RtlTestbench
+    class RiscvBackend
+    class RiscvBuilder
+    class RiscvHarness
+    class CudaSimBackend
+    class EmulatorRun
+    class SlotPool
     class Builder
     class ProblemStore
     class HarnessRunner
@@ -491,6 +559,9 @@ classDiagram
   }
   SubmissionRequest *-- ProblemSpec
   JudgeJob *-- ProblemSpec
+  ProblemSpec *-- ProcessorSpec
+  SpecValidator ..> Processors
+  SpecValidator ..> RtlSignature
   JudgeEvent *-- JudgeResult
   SubmissionController ..> SubmissionService
   ProblemController ..> SpecValidator
@@ -506,10 +577,31 @@ classDiagram
   JobListener ..> JudgeJob : consumes
   JudgePipeline ..|> JobProcessor
   MockJudge ..|> JobProcessor
-  JudgePipeline ..> Builder
-  JudgePipeline ..> ProblemStore
-  JudgePipeline ..> HarnessRunner
-  JudgePipeline ..> GpuManager
+  JudgePipeline ..> ProcessorBackend
+  GpuCudaBackend ..|> ProcessorBackend
+  GpuCudaBackend ..> Builder
+  GpuCudaBackend ..> ProblemStore
+  GpuCudaBackend ..> HarnessRunner
+  GpuCudaBackend ..> GpuManager
+  GpuManager ..> SlotPool
+  RtlBackend ..|> ProcessorBackend
+  RtlBackend ..> RtlBuilder
+  RtlBackend ..> ProblemStore
+  RtlBackend ..> EmulatorRun
+  RtlBackend ..> SlotPool : работники
+  RtlBuilder ..> RtlTestbench
+  RtlBuilder ..> Sandbox
+  RiscvBackend ..|> ProcessorBackend
+  RiscvBackend ..> RiscvBuilder
+  RiscvBackend ..> ProblemStore
+  RiscvBackend ..> EmulatorRun
+  RiscvBuilder ..> RiscvHarness
+  RiscvBuilder ..> Sandbox
+  CudaSimBackend ..|> ProcessorBackend
+  CudaSimBackend ..> EmulatorRun
+  EmulatorRun ..> Sandbox
+  EmulatorRun ..> OutputChecker
+  ProblemStore ..> SlotPool : GPU-слот, если есть GPU
   JudgePipeline ..> EventPublisher
   JudgePipeline ..> CancelRegistry
   MockJudge ..> EventPublisher
@@ -520,7 +612,7 @@ classDiagram
   NsjailSandbox ..|> Sandbox
   DirectSandbox ..|> Sandbox
   ControlListener ..> CancelRegistry
-  HeartbeatPublisher ..> GpuManager
+  HeartbeatPublisher ..> JobProcessor : статусы процессоров
   HeartbeatPublisher ..> EventPublisher
   EventPublisher ..> JudgeEvent : publishes
 ```

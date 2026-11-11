@@ -7,7 +7,7 @@ import { api } from '../src/api/client';
 import type { Submission as SubmissionRecord, User } from '../src/api/types';
 import Submission from '../src/pages/Submission';
 
-const owner: User = { id: 'owner', handle: 'cuda_user', rating: null, rank: null, ratingDelta: null, ratingContestId: null };
+const owner: User = { id: 'owner', handle: 'cuda_user', ratings: {} };
 
 vi.mock('../src/auth', () => ({ useSession: () => ({ user: owner, isLoading: false, error: null }) }));
 vi.mock('../src/components/CodeEditor', () => ({ default: () => <div>Исходный код</div> }));
@@ -15,7 +15,7 @@ vi.mock('../src/components/CodeEditor', () => ({ default: () => <div>Исход�
 const record: SubmissionRecord = {
   id: '42', problemId: 'vector-add', problemTitle: 'Сложение векторов', format: 'standard', user: owner,
   contestId: null, contestTitle: null, createdAt: '2026-01-01T10:00:00Z', status: 'system_error',
-  timeMs: null, comparable: false, code: 'void solve() {}', diagnostic: 'GPU недоступна.\n'.repeat(100),
+  processor: 'gpu-cuda', language: 'cuda', score: null, comparable: false, code: 'void solve() {}', diagnostic: 'GPU недоступна.\n'.repeat(100),
 };
 
 describe('Результат повторной проверки', () => {

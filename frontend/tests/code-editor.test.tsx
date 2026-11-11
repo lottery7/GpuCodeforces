@@ -68,3 +68,14 @@ describe('История редактора', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 });
+
+describe('Язык редактора', () => {
+  it.each([
+    ['systemverilog', 'Код схемы на SystemVerilog', 'SystemVerilog / UTF-8'],
+    ['asm', 'Код решения на ассемблере RISC-V', 'RISC-V assembly / UTF-8'],
+  ])('%s: подпись и строка состояния по языку', (language, label, status) => {
+    render(<CodeEditor value="module solve; endmodule" language={language} />);
+    expect(screen.getByRole('textbox', { name: label })).toBeVisible();
+    expect(screen.getByText(status)).toBeVisible();
+  });
+});

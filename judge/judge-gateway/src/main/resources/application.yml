@@ -22,8 +22,8 @@ spring:
 
 judge:
   gateway:
-    gpu-profiles: ${JUDGE_GPU_PROFILES:rtx3060}
-    default-gpu-profile: ${JUDGE_DEFAULT_GPU_PROFILE:rtx3060}
+    # processors submissions are accepted for (ids of judge-api Processors), comma-separated
+    processors: ${JUDGE_PROCESSORS:gpu-cuda}
     heartbeat-timeout: 15s
     dedup-ttl: 10m
 

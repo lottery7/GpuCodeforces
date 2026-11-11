@@ -1,8 +1,11 @@
 package dev.gpucodeforces.backend.benchmark
 
 import dev.gpucodeforces.backend.problem.ProblemVersion
+import dev.gpucodeforces.judge.api.ScoreType
 import jakarta.persistence.Column
 import jakarta.persistence.Entity
+import jakarta.persistence.EnumType
+import jakarta.persistence.Enumerated
 import jakarta.persistence.Id
 import jakarta.persistence.LockModeType
 import jakarta.persistence.Table
@@ -16,6 +19,10 @@ import java.math.BigDecimal
 import java.time.Instant
 import java.util.UUID
 
+/**
+ * One reference solution of a format measured on one [processor] in one environment ([environmentKey]): the baseline
+ * of an optimization, or a variant of a guess. [score] is in the processor's [scoreType].
+ */
 @Entity
 @Table(name = "reference_jobs", schema = "gpucodeforces")
 class ReferenceJob(
@@ -23,6 +30,8 @@ class ReferenceJob(
     @Column(name = "problem_version_id") val problemVersionId: UUID,
     @Column(name = "environment_key") val environmentKey: String,
     val role: String,
+    val processor: String,
+    val language: String,
     var status: String = "pending",
     var generation: Int = 0,
     var failures: Int = 0,
@@ -34,7 +43,8 @@ class ReferenceJob(
     @Column(name = "next_attempt_at") var nextAttemptAt: Instant = Instant.now(),
     @Column(name = "lease_until") var leaseUntil: Instant? = null,
     @Column(name = "updated_at") var updatedAt: Instant = Instant.now(),
-    @Column(name = "time_ms") var timeMs: BigDecimal? = null,
+    var score: BigDecimal? = null,
+    @Enumerated(EnumType.STRING) @Column(name = "score_type") var scoreType: ScoreType? = null,
     @JdbcTypeCode(SqlTypes.JSON) var measurement: String? = null,
     @Column(name = "measured_at") var measuredAt: Instant? = null,
     var diagnostic: String? = null,

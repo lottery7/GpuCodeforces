@@ -107,6 +107,18 @@ function environmentMarkdown(benchmark) {
   ].join('\n');
 }
 
+const RTL_LIMIT = 100000;
+const RTL_SCORE = 4096;
+
+function rtlEnvironment() {
+  return [
+    '| Параметр | Значение |', '| --- | --- |',
+    '| Процессор | RTL (Verilator + Yosys) |', '| Score | такты до `done` × глубина логики × транзисторы схемы |',
+    `| Лимит | ${RTL_LIMIT} тактов × глубины × транзисторов на замерный тест |`,
+    '', 'Тесты: список появится после первой принятой посылки на этом процессоре.',
+  ].join('\n');
+}
+
 function outcomeFor(code) {
   if (code.includes('FIXTURE_LONG_DIAGNOSTIC')) return 'system';
   for (const [wire, model] of Object.entries(modelStatuses)) {
@@ -129,9 +141,37 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
   }
   const source = model.submission(1042).code;
   mutateModel(state => {
-    state.preparedProblems.push({ ...model.problem('vector-addition'), id: 'optimize-vector', code: '010', title: 'Оптимизируйте сложение векторов', format: 'optimization', starter: source.replaceAll('255', '127').replaceAll('256', '128'), baselineTimeMs: 0.08 });
-    state.preparedProblems.push({ ...model.problem('vector-addition'), id: 'guess-vector', code: '011', title: 'Какое сложение быстрее?', format: 'guess', firstCode: source, secondCode: source.replaceAll('255', '127').replaceAll('256', '128'), firstTimeMs: 0.052, secondTimeMs: 0.08, explanation: 'В этом замере вариант с блоком из 256 потоков быстрее.' });
+    state.preparedProblems.push({ ...model.problem('vector-addition'), id: 'optimize-vector', code: '010', title: 'Оптимизируйте сложение векторов', format: 'optimization', processors: ['gpu-cuda'], starter: source.replaceAll('255', '127').replaceAll('256', '128'), baselineTimeMs: 0.08 });
+    state.preparedProblems.push({ ...model.problem('vector-addition'), id: 'guess-vector', code: '011', title: 'Какое сложение быстрее?', format: 'guess', processors: ['gpu-cuda'], firstCode: source, secondCode: source.replaceAll('255', '127').replaceAll('256', '128'), firstTimeMs: 0.052, secondTimeMs: 0.08, explanation: 'В этом замере вариант с блоком из 256 потоков быстрее.' });
   });
+  const catalog = model.processors();
+  // Processor and language of submissions sent through this server; the model's own ones are CUDA on the GPU.
+  const targets = new Map();
+  const targetOf = submission => targets.get(String(submission.id)) ?? { processor: 'gpu-cuda', language: 'cuda' };
+  const processorsOf = (problem, contestId) => {
+    const all = problem.processors ?? ['gpu-cuda'];
+    return contestId ? all.filter(id => id === processorOf(contestById(contestId))) : all;
+  };
+  // The model keeps no processor for contests: the seeded ones run on the real GPU.
+  const contestProcessors = new Map();
+  const processorOf = contest => contestProcessors.get(contest.id) ?? 'gpu-cuda';
+  const timeScore = value => value === null || value === undefined ? null : { value, type: 'TIME_MS' };
+
+  function requireTarget(problem, contestId, body) {
+    const processor = textBody(body, 'processor');
+    const language = textBody(body, 'language');
+    if (!processorsOf(problem, contestId).includes(processor)) throw new ApiError(400, `Задачу нельзя сдавать на процессоре ${processor}.`);
+    const languages = catalog.find(item => item.id === processor).languages.map(item => item.id);
+    if (!languages.includes(language)) throw new ApiError(400, `На процессоре ${processor} задача принимает ${languages.join(', ')}.`);
+    return { processor, language };
+  }
+
+  /** The model ranks every accepted submission by time; a processor ranks only its own. */
+  function leaderboard(problemId, contestId, processor) {
+    if (processor !== 'gpu-cuda') return [];
+    const rows = model.leaderboard(problemId, contestId).filter(row => targetOf(row.submission).processor === 'gpu-cuda');
+    return rows.map(row => ({ ...row, rank: 1 + rows.filter(other => other.submission.timeMs < row.submission.timeMs).length }));
+  }
   const sessions = new Map();
   const passwords = new Map(model.users().map(user => [user.id, passwordHash('password123')]));
   const timers = new Set();
@@ -141,6 +181,13 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
 
   function referenceState(problem) {
     return { key: `fixture-${problem.id}-v1-environment-v1`, status: 'ready', measuredAt: referenceStartedAt, diagnostic: null, baselineTimeMs: problem.baselineTimeMs, firstTimeMs: problem.firstTimeMs, secondTimeMs: problem.secondTimeMs, ...referenceMeasurements.get(problem.id) };
+  }
+
+  /** The model keeps the times of both variants; the contract has them as scores. */
+  function guessResultDto(result) {
+    if (!result) return result;
+    const { firstTimeMs, secondTimeMs, ...rest } = result;
+    return { ...rest, firstScore: timeScore(firstTimeMs), secondScore: timeScore(secondTimeMs) };
   }
 
   function referenceDto(problem) {
@@ -163,7 +210,7 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
   function duelDto(duel) {
     const contest = duel.contestId ? model.contest(duel.contestId) : null;
     const problem = duel.problemId ? model.problem(duel.problemId) : null;
-    return { id: duel.id, mode: duel.mode, status: duel.status, creator: publicUser(userById(duel.creatorId)), opponent: duel.opponentId ? publicUser(userById(duel.opponentId)) : null, createdAt: duel.createdAt, expiresAt: duel.expiresAt, contestId: duel.contestId, problemId: problem?.id ?? null, problemTitle: problem?.title ?? null, difficulty: problem?.difficulty ?? null, startAt: contest?.startAt ?? null, surrenderedUserId: contest?.surrenderedUserId ?? null };
+    return { id: duel.id, mode: duel.mode, processor: duel.processor, status: duel.status, creator: publicUser(userById(duel.creatorId)), opponent: duel.opponentId ? publicUser(userById(duel.opponentId)) : null, createdAt: duel.createdAt, expiresAt: duel.expiresAt, contestId: duel.contestId, problemId: problem?.id ?? null, problemTitle: problem?.title ?? null, difficulty: problem?.difficulty ?? null, startAt: contest?.startAt ?? null, surrenderedUserId: contest?.surrenderedUserId ?? null };
   }
 
   function visibleDuel(id, user) {
@@ -183,11 +230,12 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
     if (duel.mode === 'invite') notify(duel.opponentId, 'duel_cancelled', 'Приглашение на дуэль отменено.', duel);
   }
 
-  function codingPool() {
-    return model.problems().filter(problem => problem.format !== 'guess');
+  function codingPool(processor = null) {
+    if (processor && !catalog.some(item => item.id === processor)) throw new ApiError(400, 'Неизвестный процессор.');
+    return model.problems().filter(problem => problem.format !== 'guess' && (!processor || processorsOf(problem, null).includes(processor)));
   }
 
-  function startDuel(firstId, secondId, candidates) {
+  function startDuel(firstId, secondId, candidates, processor) {
     const problem = candidates[Math.floor(Math.random() * candidates.length)];
     const start = Date.now();
     const hours = { easy: 1, medium: 2, hard: 3 }[problem.difficulty];
@@ -196,6 +244,7 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
       state.contests.push(contest);
       state.registrations.push(...[firstId, secondId].map(userId => ({ userId, contestId: contest.id })));
     });
+    contestProcessors.set(contest.id, processor);
     return contest;
   }
 
@@ -203,14 +252,19 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
     Object.assign(duel, { status: 'matched', opponentId, contestId: contest.id, expiresAt: contest.endAt, problemId: contest.problemIds[0] });
   }
 
+  /** The model's single rating was earned on the real GPU. */
   function publicUser(user) {
     if (!user) return null;
     const ranked = model.users().filter(person => person.rating !== null)
       .sort((a, b) => b.rating - a.rating || a.handle.localeCompare(b.handle));
     return {
-      id: user.id, handle: user.handle, rating: user.rating,
-      rank: user.rating === null ? null : ranked.findIndex(person => person.rating === user.rating) + 1,
-      ratingDelta: user.ratingDelta, ratingContestId: user.ratingContestId,
+      id: user.id, handle: user.handle,
+      ratings: user.rating === null ? {} : {
+        'gpu-cuda': {
+          rating: user.rating, rank: ranked.findIndex(person => person.rating === user.rating) + 1,
+          ratingDelta: user.ratingDelta, ratingContestId: user.ratingContestId,
+        },
+      },
     };
   }
 
@@ -250,19 +304,38 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
 
   function problemDto(problem, contestId, targetId) {
     const last = targetId ? model.submissions({ problemId: problem.id, userId: targetId, contestId })[0] : null;
-    const best = targetId ? problem.format === 'guess' ? model.submissions({ problemId: problem.id, userId: targetId, ...(contestId ? { contestId } : {}) }).find(item => item.status === 'accepted') : model.best(problem.id, { userId: targetId, contestId }) : null;
     return {
       id: problem.id, code: problem.code, title: problem.title,
       format: ['optimization', 'guess'].includes(problem.format) ? problem.format : 'standard',
-      baselineTimeMs: problem.format === 'optimization' && referenceState(problem).status === 'ready' ? referenceState(problem).baselineTimeMs ?? null : null,
-      referenceMeasurement: referenceDto(problem),
       difficulty: problem.difficulty, tags: problem.tags,
       solved: targetId ? model.solved(problem.id, targetId, contestId) : false,
       solvedCount: model.users().filter(user => model.solved(problem.id, user.id, contestId)).length,
       lastSubmissionId: last ? String(last.id) : null, lastStatus: last ? wireStatuses[last.status] : null,
-      bestSubmissionId: best ? String(best.id) : null, bestTimeMs: best?.timeMs ?? null,
-      recordTimeMs: model.leaderboard(problem.id, contestId)[0]?.submission.timeMs ?? null,
+      processors: processorsOf(problem, contestId).map(processor => {
+        const rows = leaderboard(problem.id, contestId, processor);
+        const best = rows.find(row => row.user.id === targetId)?.submission ?? null;
+        return {
+          id: processor, languages: catalog.find(item => item.id === processor).languages.map(item => item.id),
+          bestSubmissionId: best ? String(best.id) : null, bestScore: timeScore(best?.timeMs),
+          recordScore: timeScore(rows[0]?.submission.timeMs),
+          // the formats of this fixture run on the real GPU
+          ...(processor === 'gpu-cuda' ? {
+            baselineScore: problem.format === 'optimization' && referenceState(problem).status === 'ready' ? timeScore(referenceState(problem).baselineTimeMs) : null,
+            referenceMeasurement: referenceDto(problem) ?? null,
+          } : {}),
+        };
+      }),
     };
+  }
+
+  function processorDetails(problem, contestId) {
+    return processorsOf(problem, contestId).map(processor => processor === 'rtl'
+      ? { id: 'rtl', starters: { systemverilog: problem.rtlStarter }, limit: { value: RTL_LIMIT, type: 'CYCLES_X_DEPTH_X_TRANSISTORS' }, environmentMarkdown: rtlEnvironment() }
+      : {
+        id: 'gpu-cuda', starters: { cuda: problem.starter }, limit: { value: problem.limits.timeSeconds * 1000, type: 'TIME_MS' },
+        environmentMarkdown: environmentMarkdown(problem.benchmark),
+        benchmark: { inputDescription: problem.benchmark.caseLabel, aggregation: 'geometric_mean', timingMode: 'wall', warmupRuns: 1, maxRuns: 3, model: null, synthetic: true },
+      });
   }
 
   function statementMarkdown(problem) {
@@ -281,9 +354,8 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
   function rulesMarkdown(contest) {
     if (contest.format === 'duel') return 'Побеждает участник с самым быстрым принятым решением общей задачи за время дуэли. Сдача завершает дуэль поражением.';
     const general = [
-      'Решения принимаются на C++/CUDA и проверяются на корректность в пределах лимита времени.',
-      '', `Все задачи контеста проверяются на ${model.gpuProfiles().find(gpu => gpu.id === contest.gpuId)?.label ?? 'NVIDIA A100 80 GB'}.`,
-      '', 'Сначала сравнивается число решенных задач, затем меньшее суммарное время сдачи: для каждой решенной задачи время от начала контеста до отправки первой принятой посылки. Время работы на GPU и неверные попытки не учитываются. Одинаковые результаты получают одинаковое место.',
+      `Все посылки проверяются на процессоре ${catalog.find(item => item.id === processorOf(contest)).title}: задача решена, если ответ верный и лимит задачи соблюден.`,
+      '', 'Сначала сравнивается число решенных задач, затем меньшее суммарное время сдачи: для каждой решенной задачи время от начала контеста до отправки первой принятой посылки. Score посылки и неверные попытки не учитываются. Одинаковые результаты получают одинаковое место.',
       '', 'Конкурсная отправка доступна зарегистрированным участникам во время соревнования. После завершения задачи можно решать в практике без изменения результатов контеста.',
     ];
     if (model.phase(contest.id) === 'upcoming' && !model.isContestAuthor(contest.id)) return general.join('\n');
@@ -296,14 +368,14 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
     if (contest.format === 'duel') {
       const problemId = contest.problemIds[0];
       const rows = [contest.challengerId, contest.opponentId].map(id => {
-        const accepted = model.submissions({ userId: id, problemId, contestId: contest.id }).filter(item => model.canCompare(item) && Date.parse(item.createdAt) >= Date.parse(contest.startAt) && Date.parse(item.createdAt) < Date.parse(contest.endAt));
-        const bestTimeMs = accepted.length ? Math.min(...accepted.map(item => item.timeMs)) : null;
-        return { user: publicUser(userById(id)), solved: bestTimeMs == null ? 0 : 1, totalSeconds: 0, times: {}, bestTimeMs, surrendered: contest.surrenderedUserId === id };
+        const accepted = model.submissions({ userId: id, problemId, contestId: contest.id }).filter(item => model.canCompare(item) && targetOf(item).processor === processorOf(contest) && Date.parse(item.createdAt) >= Date.parse(contest.startAt) && Date.parse(item.createdAt) < Date.parse(contest.endAt));
+        const bestScore = accepted.map(item => submissionDto(item).score).filter(Boolean).sort((a, b) => a.value - b.value)[0] ?? null;
+        return { user: publicUser(userById(id)), solved: bestScore == null ? 0 : 1, totalSeconds: 0, times: {}, bestScore, surrendered: contest.surrenderedUserId === id };
       });
-      rows.sort((a, b) => Number(a.surrendered) - Number(b.surrendered) || (a.bestTimeMs ?? Infinity) - (b.bestTimeMs ?? Infinity));
+      rows.sort((a, b) => Number(a.surrendered) - Number(b.surrendered) || (a.bestScore?.value ?? Infinity) - (b.bestScore?.value ?? Infinity));
       let previous;
       let rank;
-      return rows.map((row, index) => { const key = `${row.surrendered}|${row.bestTimeMs}`; if (key !== previous) rank = index + 1; previous = key; return { rank, ...row }; });
+      return rows.map((row, index) => { const key = `${row.surrendered}|${row.bestScore?.value}`; if (key !== previous) rank = index + 1; previous = key; return { rank, ...row }; });
     }
     return model.standings(contest.id).map(row => ({
       rank: row.rank, user: publicUser(row.user), solved: row.solved, totalSeconds: row.totalSeconds, times: row.times,
@@ -320,7 +392,7 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
       authors: contest.authorIds.map(id => publicUser(userById(id))),
       problemIds: hidden ? [] : contest.problemIds, problemCount: contest.problemIds.length,
       registered: model.joined(contest.id),
-      gpu: model.gpuProfiles().find(profile => profile.id === contest.gpuId)?.label ?? 'NVIDIA A100 80 GB',
+      processor: processorOf(contest),
       ...(detail ? { rulesMarkdown: rulesMarkdown(contest) } : {}),
     };
   }
@@ -335,19 +407,24 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
     const benchmark = submission.benchmarkSnapshot ?? submission.benchmark;
     const diagnostic = typeof submission.diagnostic === 'string' ? submission.diagnostic
       : submission.diagnostic?.message ?? '';
+    const target = targetOf(submission);
+    const rtl = target.processor === 'rtl';
+    const accepted = submission.status === 'accepted';
     return {
       id: String(submission.id), problemId: problem.id, problemTitle: problem.title,
       format: ['optimization', 'guess'].includes(problem.format) ? problem.format : 'standard',
       user: publicUser(userById(submission.userId)), contestId: submission.contestId,
       contestTitle: submission.contestId ? contestById(submission.contestId).title : null,
       createdAt: submission.createdAt, status: wireStatuses[submission.status],
-      timeMs: submission.status === 'accepted' ? submission.timeMs : null,
+      ...target,
+      score: !accepted || problem.format === 'guess' ? null : rtl ? { value: RTL_SCORE, type: 'CYCLES_X_DEPTH_X_TRANSISTORS' } : timeScore(submission.timeMs),
       comparable: problem.format === 'guess' ? true : model.canCompare(submission),
       ...(detail ? {
         passedTests: submission.passedTests, totalTests: submission.totalTests,
-        measurement: { aggregation: 'geometric_mean', timingMode: 'wall', gpuName: null, synthetic: true, testCount: 1 },
-        previousBestTimeMs: previous, environmentMarkdown: environmentMarkdown(benchmark),
-        ...(owner ? problem.format === 'guess' ? { guessResult: submission.guessResult } : { code: submission.code, diagnostic } : {}),
+        measurement: { aggregation: 'geometric_mean', timingMode: rtl ? null : 'wall', model: null, synthetic: true, testCount: 1 },
+        previousBestScore: rtl ? null : timeScore(previous), metrics: accepted && rtl ? { cycles: 64, depth: 4, transistors: 16, cells: 6 } : {},
+        environmentMarkdown: rtl ? rtlEnvironment() : environmentMarkdown(benchmark),
+        ...(owner ? problem.format === 'guess' ? { guessResult: guessResultDto(submission.guessResult) } : { code: submission.code, diagnostic } : {}),
       } : {}),
     };
   }
@@ -388,7 +465,11 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
         throw new ApiError(400, `Выберите ${key === 'authorIds' ? 'хотя бы одного автора' : 'хотя бы одну задачу'}.`);
       }
     }
-    for (const id of body.problemIds) problemById(id);
+    const processor = textBody(body, 'processor');
+    if (!catalog.some(item => item.id === processor)) throw new ApiError(400, `Процессор ${processor} недоступен на платформе.`);
+    for (const id of body.problemIds) {
+      if (!(problemById(id).processors ?? ['gpu-cuda']).includes(processor)) throw new ApiError(400, `Задачу ${id} нельзя сдавать на процессоре ${processor}.`);
+    }
     const format = body.format ?? 'standard';
     if (format !== 'standard' || body.opponentId) throw new ApiError(400, 'Для дуэли используйте подбор соперника.');
     return { ...body, format, durationMinutes: (end - start) / 60000, gpuId: 'a100' };
@@ -426,13 +507,15 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
           const difficulty = query.get('difficulty');
           if (difficulty !== null && !['easy', 'medium', 'hard'].includes(difficulty)) throw new ApiError(400, 'Неизвестная сложность.');
           const q = (query.get('q') ?? '').trim().toLowerCase();
-          const items = codingPool().filter(problem => (!difficulty || problem.difficulty === difficulty) && `${problem.code} ${problem.title} ${problem.id}`.toLowerCase().includes(q)).sort((a, b) => a.code.localeCompare(b.code) || a.title.localeCompare(b.title) || a.id.localeCompare(b.id)).map(problem => ({ id: problem.id, code: problem.code, title: problem.title, difficulty: problem.difficulty }));
+          const items = codingPool(query.get('processor')).filter(problem => (!difficulty || problem.difficulty === difficulty) && `${problem.code} ${problem.title} ${problem.id}`.toLowerCase().includes(q)).sort((a, b) => a.code.localeCompare(b.code) || a.title.localeCompare(b.title) || a.id.localeCompare(b.id)).map(problem => ({ id: problem.id, code: problem.code, title: problem.title, difficulty: problem.difficulty }));
           return send(response, 200, page(items, query));
         }
         if (method === 'GET' && !id) {
           const phase = query.get('phase') ?? 'active';
           if (!['active', 'finished', 'all'].includes(phase)) throw new ApiError(400, 'Неизвестный список дуэлей.');
-          const visible = [...duelRequests.values()].filter(item => [item.creatorId, item.opponentId].includes(user.id));
+          const processor = query.get('processor');
+          codingPool(processor);
+          const visible = [...duelRequests.values()].filter(item => [item.creatorId, item.opponentId].includes(user.id) && (!processor || item.processor === processor));
           const byRoom = new Map();
           for (const duel of visible) { const key = duel.contestId ?? duel.id; if (!byRoom.has(key) || duel.creatorId === user.id) byRoom.set(key, duel); }
           const items = [...byRoom.values()].filter(duel => { const active = ['queued', 'invited', 'matched'].includes(duel.status) && Date.parse(duel.expiresAt) > Date.now(); return phase === 'all' || (phase === 'active') === active; }).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || a.id.localeCompare(b.id)).map(duelDto);
@@ -444,23 +527,27 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
         }
         if (method === 'POST' && !id) {
           if (!['random', 'invite'].includes(body.mode)) throw new ApiError(400, 'Выберите способ поиска соперника.');
+          const processor = textBody(body, 'processor');
           if (body.mode === 'random' && (body.opponentHandle !== undefined || body.problemId != null)) throw new ApiError(400, 'Случайный поиск сам выбирает соперника и задачу.');
           const existing = [...duelRequests.values()].find(item => item.mode === 'random' && item.creatorId === user.id && item.status === 'queued');
-          if (body.mode === 'random' && existing) return send(response, 201, duelDto(existing));
-          const candidates = body.problemId ? codingPool().filter(problem => problem.id === body.problemId) : codingPool();
+          if (body.mode === 'random' && existing) {
+            if (existing.processor !== processor) throw new ApiError(400, 'Сначала отмените поиск на другом процессоре.');
+            return send(response, 201, duelDto(existing));
+          }
+          const candidates = body.problemId ? codingPool(processor).filter(problem => problem.id === body.problemId) : codingPool(processor);
           if (!candidates.length) throw new ApiError(400, 'Задача недоступна для дуэли.');
           const opponent = body.mode === 'invite' ? model.users().find(person => person.handle.toLowerCase() === textBody(body, 'opponentHandle').trim().toLowerCase()) : null;
           if (body.mode === 'invite' && (!opponent || opponent.id === user.id)) throw new ApiError(400, 'Укажите ник другого участника.');
-          const invitation = [...duelRequests.values()].find(item => item.mode === 'invite' && item.status === 'invited' && item.creatorId === user.id && item.opponentId === opponent?.id && item.problemId === (body.problemId ?? null));
+          const invitation = [...duelRequests.values()].find(item => item.mode === 'invite' && item.status === 'invited' && item.creatorId === user.id && item.opponentId === opponent?.id && item.processor === processor && item.problemId === (body.problemId ?? null));
           if (body.mode === 'invite' && invitation) return send(response, 201, duelDto(invitation));
           const now = Date.now();
-          const duel = { id: randomUUID(), mode: body.mode, status: body.mode === 'random' ? 'queued' : 'invited', creatorId: user.id, opponentId: opponent?.id ?? null, problemId: body.problemId ?? null, createdAt: new Date(now).toISOString(), expiresAt: new Date(now + (body.mode === 'random' ? 15 * 60000 : 24 * 3600000)).toISOString(), contestId: null };
+          const duel = { id: randomUUID(), mode: body.mode, processor, status: body.mode === 'random' ? 'queued' : 'invited', creatorId: user.id, opponentId: opponent?.id ?? null, problemId: body.problemId ?? null, createdAt: new Date(now).toISOString(), expiresAt: new Date(now + (body.mode === 'random' ? 15 * 60000 : 24 * 3600000)).toISOString(), contestId: null };
           duelRequests.set(duel.id, duel);
           if (opponent) notify(opponent.id, 'duel_invitation', `${user.handle} приглашает вас на дуэль.`, duel);
           else {
-            const peer = [...duelRequests.values()].find(item => item.id !== duel.id && item.mode === 'random' && item.status === 'queued');
+            const peer = [...duelRequests.values()].find(item => item.id !== duel.id && item.mode === 'random' && item.status === 'queued' && item.processor === processor);
             if (peer) {
-              const contest = startDuel(peer.creatorId, user.id, candidates);
+              const contest = startDuel(peer.creatorId, user.id, candidates, processor);
               matched(peer, user.id, contest); matched(duel, peer.creatorId, contest);
               notify(peer.creatorId, 'duel_started', 'Соперник найден. Дуэль началась.', peer);
               notify(user.id, 'duel_started', 'Соперник найден. Дуэль началась.', duel);
@@ -485,9 +572,9 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
               duel.status = 'declined';
               notify(duel.creatorId, 'duel_declined', `${user.handle} отклонил приглашение.`, duel);
             } else {
-              const candidates = duel.problemId ? codingPool().filter(problem => problem.id === duel.problemId) : codingPool();
+              const candidates = duel.problemId ? codingPool(duel.processor).filter(problem => problem.id === duel.problemId) : codingPool(duel.processor);
               if (!candidates.length) throw new ApiError(400, 'Задача недоступна для дуэли.');
-              const contest = startDuel(duel.creatorId, user.id, candidates);
+              const contest = startDuel(duel.creatorId, user.id, candidates, duel.processor);
               matched(duel, user.id, contest);
               notify(duel.creatorId, 'duel_started', `${user.handle} принял приглашение. Дуэль началась.`, duel);
               notify(user.id, 'duel_started', 'Вы приняли приглашение. Дуэль началась.', duel);
@@ -533,13 +620,17 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
         }
       }
 
+      if (resource === 'processors' && segments.length === 1 && method === 'GET') return send(response, 200, catalog);
+
       if (resource === 'users' && segments.length === 1) {
         if (method === 'GET') {
           const sort = query.get('sort') ?? 'handle';
           if (!['handle', 'rating'].includes(sort)) throw new ApiError(400, 'Неизвестная сортировка.');
+          const processor = query.get('processor');
+          if (sort === 'rating' && !catalog.some(item => item.id === processor)) throw new ApiError(400, 'Рейтинг требует процессор.');
           const q = (query.get('q') ?? '').trim().toLowerCase();
-          const users = model.users().map(publicUser).filter(user => (sort !== 'rating' || user.rating !== null) && user.handle.toLowerCase().includes(q));
-          users.sort((a, b) => sort === 'rating' ? b.rating - a.rating || a.handle.localeCompare(b.handle) : a.handle.localeCompare(b.handle));
+          const users = model.users().map(publicUser).filter(user => (sort !== 'rating' || user.ratings[processor]) && user.handle.toLowerCase().includes(q));
+          users.sort((a, b) => sort === 'rating' ? b.ratings[processor].rating - a.ratings[processor].rating || a.handle.localeCompare(b.handle) : a.handle.localeCompare(b.handle));
           return send(response, 200, page(users, query));
         }
         if (method === 'POST') {
@@ -562,7 +653,7 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
           .sort((a, b) => Date.parse(b.startAt) - Date.parse(a.startAt)).map(contest => {
             const historical = profile.contestHistory.find(item => item.contestId === contest.id);
             return {
-              id: contest.id, title: contest.title, phase: model.phase(contest.id),
+              id: contest.id, title: contest.title, phase: model.phase(contest.id), processor: processorOf(contest),
               rank: model.standings(contest.id).find(row => row.user.id === id)?.rank ?? null,
               ratingDelta: historical?.ratingDelta ?? null, ratingAfter: historical?.ratingAfter ?? null,
             };
@@ -582,17 +673,22 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
         const solved = query.get('solved');
         if (difficulty !== null && !['easy', 'medium', 'hard'].includes(difficulty)) throw new ApiError(400, 'Неизвестная сложность.');
         if (solved !== null && !['true', 'false'].includes(solved)) throw new ApiError(400, 'Некорректный фильтр решения.');
+        const processor = query.get('processor');
+        if (processor !== null && !catalog.some(item => item.id === processor)) throw new ApiError(400, `Процессор ${processor} недоступен на платформе.`);
         let items = all.map(problem => problemDto(problem, contestId, target)).filter(problem =>
           `${problem.code} ${problem.title}`.toLowerCase().includes(q)
           && (difficulty === null || problem.difficulty === difficulty)
           && (format === null || problem.format === format)
           && (!query.has('tag') || problem.tags.includes(query.get('tag')))
+          && (processor === null || problem.processors.some(item => item.id === processor))
           && (solved === null || problem.solved === truth(solved)));
         const sort = query.get('sort') ?? 'code';
-        if (!['code', 'difficulty', 'bestTime'].includes(sort)) throw new ApiError(400, 'Неизвестная сортировка.');
+        if (!['code', 'difficulty', 'bestScore'].includes(sort)) throw new ApiError(400, 'Неизвестная сортировка.');
+        if (sort === 'bestScore' && processor === null) throw new ApiError(400, 'Сортировка по score требует процессор.');
         if (!contestId) {
           const order = { easy: 0, medium: 1, hard: 2 };
-          items.sort((a, b) => (sort === 'difficulty' ? order[a.difficulty] - order[b.difficulty] : sort === 'bestTime' ? (a.bestTimeMs ?? Infinity) - (b.bestTimeMs ?? Infinity) : 0) || a.code.localeCompare(b.code));
+          const best = problem => problem.processors.find(item => item.id === processor)?.bestScore?.value ?? Infinity;
+          items.sort((a, b) => (sort === 'difficulty' ? order[a.difficulty] - order[b.difficulty] : sort === 'bestScore' ? best(a) - best(b) : 0) || a.code.localeCompare(b.code));
         }
         return send(response, 200, { ...page(items, query), tags });
       }
@@ -603,22 +699,23 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
         if (method === 'GET' && !action) {
           return send(response, 200, {
             ...problemDto(problem, contestId, model.user()?.id ?? null),
-            versionId: `fixture-${problem.id}-v1`, statementMarkdown: statementMarkdown(problem), starterCode: problem.starter,
-            timeLimitSeconds: problem.limits.timeSeconds, memoryLimitMb: problem.limits.memoryMb,
-            environmentMarkdown: environmentMarkdown(problem.benchmark),
-            benchmark: { inputDescription: problem.benchmark.caseLabel, aggregation: 'geometric_mean', timingMode: 'wall', warmupRuns: 1, maxRuns: 3, gpuName: null, synthetic: true },
+            versionId: `fixture-${problem.id}-v1`, statementMarkdown: statementMarkdown(problem), memoryLimitMb: problem.limits.memoryMb,
+            processorDetails: processorDetails(problem, contestId),
             firstCode: problem.firstCode ?? null, secondCode: problem.secondCode ?? null,
             guessSubmissionId: problem.format === 'guess' && referenceState(problem).status === 'ready' && model.user() ? String(model.submissions({ userId: model.user().id, problemId: id, contestId }).find(item => item.guessResult?.benchmarkKey === referenceState(problem).key)?.id ?? '') || null : null,
           });
         }
         if (method === 'GET' && action === 'leaders') {
-          return send(response, 200, model.leaderboard(id, contestId).map(row => ({
-            rank: row.rank, user: publicUser(row.user), timeMs: row.submission.timeMs,
+          const processor = query.get('processor');
+          if (!processorsOf(problem, contestId).includes(processor)) throw new ApiError(400, `Задачу нельзя сдавать на процессоре ${processor}.`);
+          return send(response, 200, leaderboard(id, contestId, processor).map(row => ({
+            rank: row.rank, user: publicUser(row.user), score: timeScore(row.submission.timeMs),
             submissionId: String(row.submission.id),
           })));
         }
         if (method === 'POST' && action === 'example') {
           if (problem.format === 'guess') throw new ApiError(400, 'В этой задаче нужно выбрать ответ.');
+          requireTarget(problem, contestId, body);
           const code = textBody(body, 'code');
           const outcome = outcomeFor(code);
           return send(response, 200, { passed: outcome === 'accepted', diagnostic: code.includes('FIXTURE_LONG_DIAGNOSTIC') ? longDiagnostic : diagnostics[outcome] ?? '' });
@@ -676,9 +773,11 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
           const problemId = textBody(body, 'problemId');
           const contestId = body.contestId === undefined ? null : textBody(body, 'contestId');
           if (problemById(problemId, contestId).format === 'guess') throw new ApiError(400, 'В этой задаче нужно выбрать ответ.');
+          const target = requireTarget(problemById(problemId, contestId), contestId, body);
           const code = textBody(body, 'code');
           const result = model.submit({ problemId, contestId, code });
           if (!result.ok) throw new ApiError(400, result.error);
+          targets.set(String(result.submission.id), target);
           const dto = submissionDto(result.submission);
           enqueue(result.submission.id, outcomeFor(code));
           return send(response, 202, dto);
@@ -706,9 +805,10 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
           if (phase !== null && !['upcoming', 'live', 'finished'].includes(phase)) throw new ApiError(400, 'Неизвестная фаза контеста.');
           if (mine !== null && !['true', 'false'].includes(mine)) throw new ApiError(400, 'Некорректный фильтр автора.');
           if (truth(mine)) requireUser();
+          const processor = query.get('processor');
           const q = (query.get('q') ?? '').trim().toLowerCase();
           const items = model.contests().filter(contest => contest.format !== 'duel' && (!phase || model.phase(contest.id) === phase)
-            && (!truth(mine) || model.isContestAuthor(contest.id)) && contest.title.toLowerCase().includes(q));
+            && (!processor || processorOf(contest) === processor) && (!truth(mine) || model.isContestAuthor(contest.id)) && contest.title.toLowerCase().includes(q));
           items.sort((a, b) => phase === 'finished' ? Date.parse(b.startAt) - Date.parse(a.startAt) : Date.parse(a.startAt) - Date.parse(b.startAt));
           return send(response, 200, items.map(contest => contestDto(contest)));
         }
@@ -717,6 +817,7 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
           const values = validateContestInput(body);
           const result = model.saveContest(null, values);
           if (!result.ok) throw new ApiError(400, result.error);
+          contestProcessors.set(result.contest.id, values.processor);
           return send(response, 201, contestDto(contestById(result.contest.id), true));
         }
       }
@@ -745,6 +846,7 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
           if (values.format !== (contest.format ?? 'standard') || contest.format === 'duel' && values.opponentId !== contest.opponentId) throw new ApiError(400, 'Формат и участников менять нельзя.');
           const result = model.saveContest(id, values);
           if (!result.ok) throw new ApiError(400, result.error);
+          contestProcessors.set(result.contest.id, values.processor);
           return send(response, 200, contestDto(result.contest, true));
         }
         if (method === 'PUT' && action === 'registration') {

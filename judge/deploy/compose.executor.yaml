@@ -1,12 +1,13 @@
-# One more judge executor on another machine, for another GPU type. It needs only the broker of the main
-# deployment (compose.yaml in the repository root); it takes submissions of its own GPU profile and nothing else.
+# One more gpu-cuda executor on another machine. It needs only the broker of the main deployment (compose.yaml in
+# the repository root) and shares the gpu-cuda queue with the other executors of that processor.
 #
 #   RABBITMQ_HOST=10.0.0.5 RABBITMQ_USER=judge RABBITMQ_PASSWORD=... JUDGE_EXECUTOR_ID=gpu-node-2 \
-#   JUDGE_GPU_PROFILE=rtx4090 JUDGE_GPU_ARCH=sm_89 JUDGE_GPU_NAME="NVIDIA GeForce RTX 4090" \
+#   JUDGE_GPU_PROFILE=rtx3060 JUDGE_GPU_ARCH=sm_86 JUDGE_GPU_NAME="NVIDIA GeForce RTX 3060" \
 #   docker compose -f judge/deploy/compose.executor.yaml up -d --build
 #
-# The profile also has to be listed in JUDGE_GPU_PROFILES of the gateway. JUDGE_GPU_NAME is the device name CUDA
-# reports (`nvidia-smi --query-gpu=name --format=csv`): the executor refuses to start if the card is another one.
+# Times of gpu-cuda are compared with each other, so its executors must all have the same GPU: the one these
+# variables describe. JUDGE_GPU_NAME is the device name CUDA reports (`nvidia-smi --query-gpu=name --format=csv`):
+# the executor refuses to start if the card is another one. gpu-cuda has to be in JUDGE_PROCESSORS of the gateway.
 services:
   judge-executor:
     build:
@@ -24,8 +25,9 @@ services:
       RABBITMQ_HOST: ${RABBITMQ_HOST:?address of the RabbitMQ of the main deployment}
       RABBITMQ_USER: ${RABBITMQ_USER:?}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?}
-      JUDGE_GPU_PROFILE: ${JUDGE_GPU_PROFILE:?GPU type of this machine, e.g. rtx4090}
-      JUDGE_GPU_ARCH: ${JUDGE_GPU_ARCH:?architecture of the GPU, e.g. sm_89}
+      JUDGE_PROCESSORS: gpu-cuda
+      JUDGE_GPU_PROFILE: ${JUDGE_GPU_PROFILE:?GPU type of this machine, e.g. rtx3060}
+      JUDGE_GPU_ARCH: ${JUDGE_GPU_ARCH:?architecture of the GPU, e.g. sm_86}
       JUDGE_GPU_NAME: ${JUDGE_GPU_NAME:?device name of the GPU as CUDA reports it}
       JUDGE_EXECUTOR_ID: ${JUDGE_EXECUTOR_ID:?unique among all executors, e.g. gpu-node-2}
       JUDGE_LOCK_CLOCKS: ${JUDGE_LOCK_CLOCKS:-}

@@ -4,25 +4,29 @@ import dev.gpucodeforces.backend.api.model.GetContestStandings200ResponseInner
 import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
 import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.common.ForbiddenException
-import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.common.NotFoundApiException
 import dev.gpucodeforces.backend.common.UnauthorizedException
 import dev.gpucodeforces.backend.common.toUuidOrBadRequest
 import dev.gpucodeforces.backend.common.toUuidOrNotFound
 import dev.gpucodeforces.backend.problem.ProblemCatalog
+import dev.gpucodeforces.backend.problem.ProblemVersion
+import dev.gpucodeforces.backend.problem.limitName
+import dev.gpucodeforces.backend.processor.ProcessorCatalog
+import dev.gpucodeforces.backend.processor.scoreApiModel
 import dev.gpucodeforces.backend.rating.RatingFinalizationService
 import dev.gpucodeforces.backend.submission.ResultScope
 import dev.gpucodeforces.backend.submission.SubmissionStats
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.backend.user.UserRepository
 import dev.gpucodeforces.backend.user.toApiModel
-import org.slf4j.LoggerFactory
-import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
+import dev.gpucodeforces.judge.api.Processors
 import java.math.BigDecimal
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
+import org.slf4j.LoggerFactory
+import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
 import dev.gpucodeforces.backend.api.model.ContestInput as ContestInputApi
 
 @Service
@@ -32,18 +36,20 @@ class ContestService(
     private val contestRegistrationRepository: ContestRegistrationRepository,
     private val userRepository: UserRepository,
     private val problemCatalog: ProblemCatalog,
-    private val gpuProperties: GpuProperties,
+    private val processorCatalog: ProcessorCatalog,
     private val submissionStats: SubmissionStats,
     private val references: ReferenceMeasurements,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    fun list(query: String?, phase: String?, mine: Boolean, viewer: User?): List<Contest> {
+    fun list(query: String?, phase: String?, mine: Boolean, processor: String?, viewer: User?): List<Contest> {
         if (mine && viewer == null) throw UnauthorizedException("Нужен вход")
+        processor?.let(processorCatalog::require)
         val now = Instant.now()
         val trimmed = query?.trim()?.lowercase().orEmpty()
         val filtered = contestRepository.findAll().filter { contest ->
             contest.format == "standard" && (phase == null || contest.phaseAt(now).value == phase) &&
+                (processor == null || contest.processor == processor) &&
                 (!mine || contest.authors.any { it.id == viewer!!.id }) &&
                 (
                     trimmed.isEmpty() ||
@@ -57,18 +63,22 @@ class ContestService(
     @Transactional
     fun create(input: ContestInputApi, creator: User): Contest {
         validate(input)
+        val versions = problemsFor(input)
         val contest = contestRepository.save(
             Contest(
                 id = UUID.randomUUID(),
                 title = input.title,
                 startAt = input.startAt.toInstant(),
                 endAt = input.endAt.toInstant(),
-                gpu = gpuProperties.name,
+                processor = input.processor,
                 authors = resolveAuthors(input.authorIds).toMutableSet(),
             ),
         )
-        saveProblems(contest.id, input.problemIds)
-        log.info("Contest {} created by {}: {} - {}, problems {}", contest.id, creator.handle, contest.startAt, contest.endAt, input.problemIds)
+        saveProblems(contest.id, versions)
+        log.info(
+            "Contest {} created by {}: {} - {} on {}, problems {}",
+            contest.id, creator.handle, contest.startAt, contest.endAt, contest.processor, input.problemIds,
+        )
         return contest
     }
 
@@ -92,12 +102,18 @@ class ContestService(
             throw ForbiddenException("Контест нельзя изменить после начала")
         }
         validate(input)
+        val versions = problemsFor(input)
         contest.title = input.title
         contest.startAt = input.startAt.toInstant()
         contest.endAt = input.endAt.toInstant()
+        // Only before the start, checked above: once it runs, submissions are judged on this processor.
+        contest.processor = input.processor
         contest.authors = resolveAuthors(input.authorIds).toMutableSet()
-        saveProblems(contest.id, input.problemIds)
-        log.info("Contest {} updated by {}: {} - {}, problems {}", contest.id, currentUser.handle, contest.startAt, contest.endAt, input.problemIds)
+        saveProblems(contest.id, versions)
+        log.info(
+            "Contest {} updated by {}: {} - {} on {}, problems {}",
+            contest.id, currentUser.handle, contest.startAt, contest.endAt, contest.processor, input.problemIds,
+        )
         return contestRepository.save(contest)
     }
 
@@ -144,38 +160,41 @@ class ContestService(
         val problem = problemsOf(contest.id).singleOrNull() ?: throw NotFoundApiException("Общая задача дуэли не найдена")
         val version = problem.problemVersionId?.let { problemCatalog.versions(listOf(it))[it] }
             ?: problemCatalog.currentVersion(problem.id.problemId) ?: throw NotFoundApiException("Версия задачи дуэли не найдена")
-        val times = submissionStats.duelBestTimes(
+        val scores = submissionStats.duelBestScores(
             ResultScope(
-                contest.id, mapOf(version.problemId to version.judgeHash), gpuProperties.profile,
-                contest.benchmarkEnvironmentKey ?: references.environmentKey(),
+                contest.id, mapOf(version.problemId to version.judgeHash),
+                contest.benchmarkEnvironmentKey ?: references.environmentKey(contest.processor),
             ),
-            version.id, contest.startAt, contest.endAt,
+            version.id, contest.processor, contest.startAt, contest.endAt,
         )
         val participants = listOfNotNull(contest.challengerId, contest.opponentId).distinct()
         val rows = userRepository.findAllById(participants).map { user ->
-            DuelStanding(user, times[user.id], contest.surrenderedUserId == user.id)
+            DuelStanding(user, scores[user.id], contest.surrenderedUserId == user.id)
         }
-        val order = compareBy<DuelStanding> { it.surrendered }.thenBy(nullsLast<BigDecimal>()) { it.bestTimeMs }
+        val order = compareBy<DuelStanding> { it.surrendered }.thenBy(nullsLast<BigDecimal>()) { it.bestScore }
         return rows.sortedWith(order.thenBy { it.user.handle.lowercase() }).map { row ->
             val rank = 1 + rows.count { order.compare(it, row) < 0 }
-            GetContestStandings200ResponseInner(rank, row.user.toApiModel(), if (row.bestTimeMs != null) 1 else 0, 0, emptyMap())
-                .bestTimeMs(row.bestTimeMs).surrendered(row.surrendered)
+            GetContestStandings200ResponseInner(rank, row.user.toApiModel(), if (row.bestScore != null) 1 else 0, 0, emptyMap())
+                .bestScore(row.bestScore?.let { scoreApiModel(it, Processors.get(contest.processor).scoreType) }).surrendered(row.surrendered)
         }
     }
 
     fun buildRulesMarkdown(contest: Contest, problems: List<ContestProblem>, viewer: User?): String {
-        val header = "## Правила\n\n" + if (contest.format == "duel") {
-            "Побеждает участник с меньшим лучшим временем принятого решения. Учитываются посылки общей задачи, " +
+        val processor = Processors.get(contest.processor)
+        val processorRule = "Все посылки проверяются на процессоре ${processor.title} (`${processor.id}`, модель - ${processorCatalog.model(processor.id)}). "
+        val header = "## Правила\n\n" + processorRule + if (contest.format == "duel") {
+            "Побеждает участник с меньшим результатом принятого решения. Учитываются посылки общей задачи, " +
                 "отправленные от начала до конца дуэли в одном окружении проверки. Время отправки и неверные попытки " +
-                "не влияют на место. Принятое решение побеждает отсутствие решения; равные времена или отсутствие " +
+                "не влияют на место. Принятое решение побеждает отсутствие решения; равные результаты или отсутствие " +
                 "решений у обоих дают ничью. Сдавшийся участник проигрывает независимо от результатов, соперник побеждает."
         } else {
-            "Задача решена, если принята хотя бы одна посылка: верный ответ на всех тестах в пределах лимита времени. " +
+            "Задача решена, если принята хотя бы одна посылка: верный ответ на всех тестах и ${processor.scoreType.limitName()} задачи соблюден. " +
                 "Правильный ответ в угадывании считается принятой посылкой. " +
                 "Место определяется числом решённых задач, затем меньшим суммарным временем сдачи. Время сдачи задачи - " +
-                "от начала контеста до отправки первой принятой посылки; длительность проверки, время работы решения на GPU " +
+                "от начала контеста до отправки первой принятой посылки; длительность проверки, результат посылки " +
                 "и неверные попытки на место не влияют. Равные результаты делят место."
         }
+
         val isAuthor = viewer != null && contest.authors.any { it.id == viewer.id }
         if (contest.phaseAt(Instant.now()) == ContestPhase.UPCOMING && !isAuthor) return header
         val versions = problemCatalog.versions(problems.mapNotNull { it.problemVersionId })
@@ -187,6 +206,7 @@ class ContestService(
     }
 
     private fun validate(input: ContestInputApi) {
+        processorCatalog.require(input.processor)
         val format = input.format?.value ?: "standard"
         if (format != "standard" || input.opponentId != null) throw BadRequestException("Для дуэли используйте поиск соперника")
         val now = Instant.now()
@@ -201,8 +221,16 @@ class ContestService(
         userRepository.findById(uuid).orElseThrow { BadRequestException("Автор не найден") }
     }
 
-    private fun saveProblems(contestId: UUID, problemIds: Set<String>) {
-        val versions = problemCatalog.publishedVersions(problemIds)
+    /** Published versions of the contest's problems; each has to support the contest's processor. */
+    private fun problemsFor(input: ContestInputApi): List<ProblemVersion> {
+        val versions = problemCatalog.publishedVersions(input.problemIds)
+        versions.filter { input.processor !in it.processors }.map { it.problemId }.takeIf { it.isNotEmpty() }?.let {
+            throw BadRequestException("Задачи ${it.joinToString()} нельзя сдавать на процессоре ${input.processor}")
+        }
+        return versions
+    }
+
+    private fun saveProblems(contestId: UUID, versions: List<ProblemVersion>) {
         contestProblemRepository.deleteByIdContestId(contestId)
         contestProblemRepository.flush()
         contestProblemRepository.saveAll(
@@ -211,4 +239,4 @@ class ContestService(
     }
 }
 
-private class DuelStanding(val user: User, val bestTimeMs: BigDecimal?, val surrendered: Boolean)
+private class DuelStanding(val user: User, val bestScore: BigDecimal?, val surrendered: Boolean)

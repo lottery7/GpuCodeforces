@@ -3,11 +3,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { Contest, Standing } from '../api/types';
 import { useSession } from '../auth';
-import { ErrorMessage, TimeValue, UserLink } from '../ui';
+import { useProcessors } from '../processors';
+import { ErrorMessage, ScoreValue, UserLink } from '../ui';
 import { solveTime } from '../utils';
 
 export default function DuelBoard({ contest, finished, contestUpdatedAt, showHeading = true }: { contest: Contest; finished: boolean; contestUpdatedAt?: number; showHeading?: boolean }) {
   const { user } = useSession();
+  const processors = useProcessors();
   const cache = useQueryClient();
   const [now, setNow] = useState(Date.now);
   const [confirm, setConfirm] = useState(false);
@@ -41,7 +43,7 @@ export default function DuelBoard({ contest, finished, contestUpdatedAt, showHea
   const draw = !winner || rows.data?.filter(row => row.rank === winner.rank).length !== 1;
   const participant = user && [contest.challengerId, contest.opponentId].includes(user.id);
   return <section className="panel duel-board" aria-label="Результаты дуэли">
-    <div className="duel-board-heading">{showHeading && <h2>{ended ? 'Результат дуэли' : 'Дуэль'}</h2>}
+    <div className="duel-board-heading">{showHeading && <h2>{ended ? 'Результат дуэли' : 'Дуэль'}</h2>}<span className="small muted">{processors.title(contest.processor)}</span>
       {!ended && <time dateTime={contest.endAt}>До конца: {solveTime(Math.max(0, Math.ceil((Date.parse(contest.endAt) - now) / 1000)))}</time>}
       {participant && !ended && Date.parse(contest.startAt) <= now && !confirm && <button className="text-link duel-surrender" onClick={() => setConfirm(true)}>Сдаться</button>}
     </div>
@@ -50,7 +52,7 @@ export default function DuelBoard({ contest, finished, contestUpdatedAt, showHea
     {rows.isPending && !ended && <p role="status">Загрузка результатов...</p>}
     <div className="duel-players">{rows.data?.map(row => <div key={row.user.id} className={row.surrendered ? 'surrendered' : undefined}>
       <div className="duel-player-heading"><span className="duel-place">{row.rank}</span><UserLink user={row.user} /></div>
-      <p>{row.bestTimeMs != null ? <><TimeValue value={row.bestTimeMs} /> мс</> : 'Нет принятого решения'}</p>
+      <p>{row.bestScore ? <ScoreValue score={row.bestScore} /> : 'Нет принятого решения'}</p>
       {row.surrendered && <span className="small muted">Сдался</span>}
     </div>)}</div>
     {pending ? <p role="status">Проверяются посылки</p> : ended && !finalReady ? !rows.error && <p role="status">Загрузка результатов...</p> : ended && rows.data && <p role="status">{draw ? 'Ничья.' : <>Победитель: <UserLink user={winner.user} />.</>}</p>}

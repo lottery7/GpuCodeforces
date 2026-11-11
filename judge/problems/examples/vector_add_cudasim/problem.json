@@ -1,0 +1,17 @@
+{
+  "id": "vector-add-cudasim",
+  "version": "1",
+  "signature": {
+    "function": "solve",
+    "params": [
+      {"name": "A", "type": "FLOAT32", "role": "INPUT", "memory": "DEVICE", "size": "N"},
+      {"name": "B", "type": "FLOAT32", "role": "INPUT", "memory": "DEVICE", "size": "N"},
+      {"name": "C", "type": "FLOAT32", "role": "OUTPUT", "memory": "DEVICE", "size": "N"},
+      {"name": "N", "type": "INT32", "role": "SCALAR"}
+    ]
+  },
+  "checker": {"mode": "TOLERANCE", "rtol": 1e-6, "atol": 1e-6},
+  "processors": [
+    {"id": "cuda-sim", "languages": ["cuda"], "limit": 50000}
+  ]
+}

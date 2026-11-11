@@ -1,33 +1,35 @@
 package dev.gpucodeforces.backend.submission
 
 import dev.gpucodeforces.backend.api.SubmissionsApi
-import dev.gpucodeforces.backend.api.model.ListSubmissions200Response
-import dev.gpucodeforces.backend.api.model.SubmitSolutionRequest
+import dev.gpucodeforces.backend.api.model.BenchmarkAggregation
 import dev.gpucodeforces.backend.api.model.GuessChoice
 import dev.gpucodeforces.backend.api.model.GuessResult
+import dev.gpucodeforces.backend.api.model.ListSubmissions200Response
 import dev.gpucodeforces.backend.api.model.MeasurementSummary
-import dev.gpucodeforces.backend.api.model.BenchmarkAggregation
 import dev.gpucodeforces.backend.api.model.MeasurementTiming
-import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
+import dev.gpucodeforces.backend.api.model.SubmitSolutionRequest
 import dev.gpucodeforces.backend.auth.CurrentUser
+import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
 import dev.gpucodeforces.backend.common.BadRequestException
-import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.common.UnauthorizedException
 import dev.gpucodeforces.backend.common.toUuidOrBadRequest
 import dev.gpucodeforces.backend.contest.ContestRepository
 import dev.gpucodeforces.backend.contest.ContestService
 import dev.gpucodeforces.backend.problem.ProblemCatalog
+import dev.gpucodeforces.backend.processor.scoreApiModel
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.backend.user.UserRepository
 import dev.gpucodeforces.backend.user.UserService
 import dev.gpucodeforces.backend.user.toApiModel
+import dev.gpucodeforces.judge.api.Processors
+import java.math.BigDecimal
+import java.time.ZoneOffset
+import java.util.UUID
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.stereotype.Component
 import org.springframework.web.bind.annotation.RestController
 import tools.jackson.databind.json.JsonMapper
-import java.time.ZoneOffset
-import java.util.UUID
 import dev.gpucodeforces.backend.api.model.Submission as SubmissionApiModel
 
 @RestController
@@ -55,7 +57,7 @@ class SubmissionsController(
     // SecurityConfig requires a session for submitting and rechecking.
     override fun submitSolution(submitSolutionRequest: SubmitSolutionRequest): ResponseEntity<SubmissionApiModel> {
         val author = CurrentUser.resolve()!!
-        val submission = with(submitSolutionRequest) { submissionService.submit(problemId, contestId, code, author) }
+        val submission = with(submitSolutionRequest) { submissionService.submit(problemId, contestId, processor, language, code, author) }
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(views.detail(submission, author))
     }
 
@@ -80,7 +82,6 @@ class SubmissionViews(
     private val contestService: ContestService,
     private val contestRepository: ContestRepository,
     private val userRepository: UserRepository,
-    private val gpuProperties: GpuProperties,
     private val jsonMapper: JsonMapper,
     private val references: ReferenceMeasurements,
 ) {
@@ -89,11 +90,11 @@ class SubmissionViews(
         val users = userRepository.findAllById(rows.map { it.userId }.toSet()).associateBy { it.id }
         val contests = contestRepository.findAllById(rows.mapNotNull { it.contestId }.toSet()).associateBy { it.id }
         val comparableHashes = mutableMapOf<Pair<String, UUID?>, String?>()
-        val environmentKey = references.environmentKey()
+        val gpuEnvironmentKey = references.environmentKey(Processors.GPU_CUDA)
         return rows.map { row ->
             val contest = row.contestId?.let { contests.getValue(it) }
             val duel = contest?.takeIf { it.format == "duel" }
-            val comparableEnvironment = duel?.benchmarkEnvironmentKey ?: environmentKey
+            val comparableEnvironment = duel?.benchmarkEnvironmentKey ?: gpuEnvironmentKey
             // Accepted results are comparable while the context still judges this problem the same way.
             val contextHash = comparableHashes.getOrPut(row.problemId to row.contestId) { contextJudgeHash(row.problemId, row.contestId) }
             SubmissionApiModel(
@@ -105,10 +106,14 @@ class SubmissionViews(
                 contest?.title,
                 row.createdAt.atOffset(ZoneOffset.UTC),
                 SubmissionApiModel.StatusEnum.fromValue(row.status.value),
-                row.timeMs,
-                row.status == SubmissionStatus.ACCEPTED && row.timeMs != null && row.judgeHash == contextHash &&
-                    comparableEnvironment != null && row.benchmarkEnvironmentKey == comparableEnvironment &&
-                    (duel == null || !row.createdAt.isBefore(duel.startAt) && row.createdAt.isBefore(duel.endAt)),
+                row.processor,
+                row.language,
+                // The judge sets a score and its type together, and SubmissionService stores them so.
+                row.score?.let { scoreApiModel(it, row.scoreType!!) },
+                // Scores are compared within a processor; on the real GPU also within the current environment.
+                row.status == SubmissionStatus.ACCEPTED && row.score != null && row.judgeHash == contextHash &&
+                    (row.processor != Processors.GPU_CUDA || comparableEnvironment != null && row.benchmarkEnvironmentKey == comparableEnvironment) &&
+                    (duel == null || row.processor == duel.processor && !row.createdAt.isBefore(duel.startAt) && row.createdAt.isBefore(duel.endAt)),
             ).format(SubmissionApiModel.FormatEnum.fromValue(versions.getValue(row.problemVersionId).format))
         }
     }
@@ -118,14 +123,15 @@ class SubmissionViews(
         val summary = summaries(listOf(submission.toRow())).single()
             .passedTests(submission.passedTests)
             .totalTests(submission.totalTests)
-            .previousBestTimeMs(submission.previousBestTimeMs)
+            .previousBestScore(submission.previousBestScore?.let { scoreApiModel(it, Processors.get(submission.processor).scoreType) })
+            .metrics(submission.metrics.mapValues { BigDecimal.valueOf(it.value) })
             .environmentMarkdown(submission.environmentMarkdown)
         submission.measurement?.let { source ->
             val measured = jsonMapper.readValue(source, MeasurementData::class.java)
             summary.measurement(
                 MeasurementSummary().aggregation(BenchmarkAggregation.fromValue(measured.aggregation))
-                    .timingMode(MeasurementTiming.fromValue(measured.timingMode))
-                    .gpuName(measured.gpuName.takeUnless { measured.synthetic })
+                    .timingMode(measured.timingMode?.let(MeasurementTiming::fromValue))
+                    .model(measured.model.takeUnless { measured.synthetic })
                     .synthetic(measured.synthetic)
                     .testCount(measured.tests.size),
             )
@@ -136,7 +142,7 @@ class SubmissionViews(
             val data = submission.guessResult?.let { jsonMapper.readValue(it, GuessSnapshot::class.java) } ?: return summary
             summary.guessResult(GuessResult(
                 GuessChoice.fromValue(choice), GuessChoice.fromValue(data.correctChoice()),
-                data.firstTimeMs, data.secondTimeMs, data.explanation,
+                scoreApiModel(data.firstScore, data.scoreType), scoreApiModel(data.secondScore, data.scoreType), data.explanation,
             ).benchmarkKey(data.benchmarkKey).synthetic(data.synthetic))
         }
         return summary

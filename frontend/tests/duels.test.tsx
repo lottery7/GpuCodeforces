@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../src/api/client';
-import type { AppNotification, Contest, DuelRequest, Problem, Standing, User } from '../src/api/types';
+import type { AppNotification, Contest, DuelProblem, DuelRequest, Processor, Standing, User } from '../src/api/types';
 import Duels from '../src/pages/Duels';
 import NewDuel from '../src/pages/NewDuel';
 import DuelBoard from '../src/components/DuelBoard';
@@ -13,13 +13,13 @@ import RuntimeNotice from '../src/components/RuntimeNotice';
 
 const session = vi.hoisted(() => ({ user: null as User | null }));
 vi.mock('../src/auth', () => ({ useSession: () => ({ user: session.user, isLoading: false, error: null }) }));
-const creator: User = { id: 'creator', handle: 'alex_cuda', rating: null, rank: null, ratingDelta: null, ratingContestId: null };
+const creator: User = { id: 'creator', handle: 'alex_cuda', ratings: {} };
 const opponent: User = { ...creator, id: 'opponent', handle: 'new_cuda' };
-const queued: DuelRequest = { id: 'request', mode: 'random', status: 'queued', creator, opponent: null, contestId: null, createdAt: '2026-11-11T10:00:00Z', expiresAt: new Date(Date.now() + 3600000).toISOString(), problemId: null, problemTitle: null, difficulty: null, startAt: null, surrenderedUserId: null };
+const queued: DuelRequest = { id: 'request', mode: 'random', processor: 'gpu-cuda', status: 'queued', creator, opponent: null, contestId: null, createdAt: '2026-11-11T10:00:00Z', expiresAt: new Date(Date.now() + 3600000).toISOString(), problemId: null, problemTitle: null, difficulty: null, startAt: null, surrenderedUserId: null };
 const invited: DuelRequest = { ...queued, mode: 'invite', status: 'invited', opponent };
 const matched: DuelRequest = { ...invited, status: 'matched', contestId: 'room', problemId: 'vector', problemTitle: 'Сумма векторов', difficulty: 'easy' };
 const invitation: AppNotification = { id: 'note', type: 'duel_invitation', message: 'alex_cuda приглашает вас на дуэль.', duelRequestId: invited.id, duelStatus: 'invited', contestId: null, createdAt: queued.createdAt, readAt: null };
-const problem: Problem = { id: 'vector', code: 'A', title: 'Сумма векторов', difficulty: 'easy', format: 'standard', tags: [], solved: false, solvedCount: 0, lastSubmissionId: null, lastStatus: null, bestSubmissionId: null, bestTimeMs: null, recordTimeMs: null };
+const problem: DuelProblem = { id: 'vector', code: 'A', title: 'Сумма векторов', difficulty: 'easy' };
 
 function open(path = '/duels/new') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } });
@@ -53,9 +53,25 @@ describe('Подбор дуэли', () => {
     expect(api.listDuelProblems).not.toHaveBeenCalled();
     expect(screen.getByText('Длительность: от 1 до 3 часов.')).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: 'Найти соперника' }));
-    expect(create).toHaveBeenCalledWith({ mode: 'random' });
+    expect(create).toHaveBeenCalledWith({ mode: 'random', processor: 'gpu-cuda' });
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Поиск соперника' })).toBeVisible());
     expect(screen.getByRole('button', { name: 'Отменить поиск' })).toBeVisible();
+  });
+
+  it('дожидается каталога и выбирает единственный доступный RTL для новой дуэли', async () => {
+    let finish!: (value: Processor[]) => void;
+    vi.mocked(api.listProcessors).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const create = vi.spyOn(api, 'createDuel').mockResolvedValue({ ...queued, processor: 'rtl' });
+    open();
+    const submit = screen.getByRole('button', { name: 'Найти соперника' });
+    expect(submit).toBeDisabled();
+    await userEvent.click(submit);
+    expect(create).not.toHaveBeenCalled();
+    await act(async () => finish([{ id: 'rtl', title: 'RTL', model: 'Verilator', languages: [{ id: 'systemverilog', title: 'SystemVerilog', extension: '.sv' }], scoreType: 'CYCLES_X_DEPTH_X_TRANSISTORS', emulated: true }]));
+    await waitFor(() => expect(submit).toBeEnabled());
+    expect(screen.queryByRole('combobox', { name: 'Процессор дуэли' })).not.toBeInTheDocument();
+    await userEvent.click(submit);
+    expect(create).toHaveBeenCalledWith({ mode: 'random', processor: 'rtl' });
   });
 
   it('восстанавливает очередь и автоматически открывает подобранную комнату', async () => {
@@ -86,7 +102,7 @@ describe('Подбор дуэли', () => {
     expect(screen.queryByRole('searchbox', { name: 'Найти задачу' })).not.toBeInTheDocument();
     expect(screen.getByText('Длительность: 2 часа.')).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: 'Пригласить на дуэль' }));
-    expect(create).toHaveBeenCalledWith({ mode: 'invite', opponentHandle: opponent.handle, problemId: 'medium' });
+    expect(create).toHaveBeenCalledWith({ mode: 'invite', processor: 'gpu-cuda', opponentHandle: opponent.handle, problemId: 'medium' });
     await waitFor(() => expect(screen.getByText('Приглашение отправлено')).toBeVisible());
     await userEvent.click(screen.getByRole('button', { name: 'Отменить приглашение' }));
     expect(cancel).toHaveBeenCalledWith(invited.id);
@@ -127,7 +143,7 @@ describe('Подбор дуэли', () => {
     expect(screen.getByRole('radio', { name: 'Случайная задача' })).toBeChecked();
     await userEvent.type(screen.getByRole('combobox', { name: 'Ник соперника' }), opponent.handle);
     await userEvent.click(screen.getByRole('button', { name: 'Пригласить на дуэль' }));
-    expect(create).toHaveBeenCalledWith({ mode: 'invite', opponentHandle: opponent.handle });
+    expect(create).toHaveBeenCalledWith({ mode: 'invite', processor: 'gpu-cuda', opponentHandle: opponent.handle });
     expect(api.listDuelProblems).not.toHaveBeenCalled();
   });
 
@@ -156,7 +172,7 @@ describe('Подбор дуэли', () => {
     expect(screen.getByText('Длительность: 1 час.')).toBeVisible();
     expect(screen.queryByRole('searchbox', { name: 'Найти задачу' })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Пригласить на дуэль' }));
-    expect(create).toHaveBeenCalledWith({ mode: 'invite', opponentHandle: opponent.handle, problemId: problem.id });
+    expect(create).toHaveBeenCalledWith({ mode: 'invite', processor: 'gpu-cuda', opponentHandle: opponent.handle, problemId: problem.id });
   });
 
   it('возврат к случайной задаче убирает прежний выбор из приглашения', async () => {
@@ -170,7 +186,7 @@ describe('Подбор дуэли', () => {
     await userEvent.click(screen.getByRole('radio', { name: 'Случайная задача' }));
     expect(screen.getByText('Длительность: от 1 до 3 часов.')).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: 'Пригласить на дуэль' }));
-    expect(create).toHaveBeenCalledWith({ mode: 'invite', opponentHandle: opponent.handle });
+    expect(create).toHaveBeenCalledWith({ mode: 'invite', processor: 'gpu-cuda', opponentHandle: opponent.handle });
   });
 
   it('повторяет поиск после ошибки и не отправляет приглашение со старой выбранной задачей', async () => {
@@ -202,6 +218,24 @@ describe('Подбор дуэли', () => {
     expect(screen.getByText('Длительность: 2 часа.')).toBeVisible();
   });
 
+  it('сбрасывает выбранную задачу при смене процессора и ищет в новом пуле', async () => {
+    const rtl = { ...problem, id: 'rtl-vector', code: '002', title: 'Сумма на RTL' };
+    const list = vi.mocked(api.listDuelProblems).mockImplementation(async query => ({ items: [query?.processor === 'rtl' ? rtl : problem], total: 1 }));
+    const create = vi.spyOn(api, 'createDuel').mockResolvedValue(invited);
+    open();
+    await userEvent.click(screen.getByRole('radio', { name: 'Выбрать соперника' }));
+    await userEvent.type(screen.getByRole('combobox', { name: 'Ник соперника' }), opponent.handle);
+    await userEvent.click(screen.getByRole('radio', { name: 'Выбрать задачу' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'A. Сумма векторов' }));
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Процессор дуэли' }), 'rtl');
+    expect(screen.queryByText('A. Сумма векторов')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Пригласить на дуэль' })).toBeDisabled();
+    await userEvent.click(await screen.findByRole('button', { name: '002. Сумма на RTL' }));
+    expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ processor: 'rtl', offset: 0, limit: 10 }), expect.any(AbortSignal));
+    await userEvent.click(screen.getByRole('button', { name: 'Пригласить на дуэль' }));
+    expect(create).toHaveBeenCalledWith({ mode: 'invite', processor: 'rtl', opponentHandle: opponent.handle, problemId: rtl.id });
+  });
+
   it('показывает несколько дуэлей списком без автоматического перехода и не блокирует новую', async () => {
     vi.mocked(api.listDuels).mockResolvedValue({ items: [matched, { ...matched, id: 'second', contestId: 'room2' }, invited], total: 3 });
     open('/duels');
@@ -231,10 +265,20 @@ describe('Подбор дуэли', () => {
     await userEvent.click(screen.getByRole('link', { name: 'Текущие' }));
     await waitFor(() => expect(list).toHaveBeenCalledWith({ phase: 'active', offset: 0, limit: 20 }, expect.any(AbortSignal)));
   });
+
+  it('сохраняет процессор при переходе между страницами и вкладками списка', async () => {
+    const list = vi.mocked(api.listDuels).mockResolvedValue({ items: [{ ...matched, processor: 'rtl' }], total: 21 });
+    open('/duels?processor=rtl&tab=history');
+    await screen.findByRole('table', { name: 'Мои дуэли' });
+    await userEvent.click(screen.getByRole('button', { name: '2' }));
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith({ processor: 'rtl', phase: 'finished', offset: 20, limit: 20 }, expect.any(AbortSignal)));
+    await userEvent.click(screen.getByRole('link', { name: 'Текущие' }));
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith({ processor: 'rtl', phase: 'active', offset: 0, limit: 20 }, expect.any(AbortSignal)));
+  });
 });
 
 describe('Сдача дуэли', () => {
-  const room: Contest = { id: 'room', title: 'Дуэль', format: 'duel', startAt: new Date(Date.now() - 60000).toISOString(), endAt: new Date(Date.now() + 3600000).toISOString(), authors: [creator], problemIds: ['vector'], problemCount: 1, registered: true, challengerId: creator.id, opponentId: opponent.id, gpu: 'Test GPU', rulesMarkdown: '' };
+  const room: Contest = { id: 'room', title: 'Дуэль', format: 'duel', startAt: new Date(Date.now() - 60000).toISOString(), endAt: new Date(Date.now() + 3600000).toISOString(), authors: [creator], problemIds: ['vector'], problemCount: 1, registered: true, challengerId: creator.id, opponentId: opponent.id, processor: 'gpu-cuda', rulesMarkdown: '' };
 
   function board(contest = room) {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -243,7 +287,7 @@ describe('Сдача дуэли', () => {
   }
 
   it('подтверждает сдачу на странице и обновляет комнату, список и результаты', async () => {
-    vi.spyOn(api, 'contestStandings').mockResolvedValueOnce([{ rank: 1, user: creator, solved: 1, totalSeconds: 0, times: {}, bestTimeMs: 0.05 }, { rank: 2, user: opponent, solved: 0, totalSeconds: 0, times: {}, bestTimeMs: null }]).mockResolvedValue([{ rank: 1, user: opponent, solved: 0, totalSeconds: 0, times: {}, bestTimeMs: null }, { rank: 2, user: creator, solved: 1, totalSeconds: 0, times: {}, bestTimeMs: 0.05, surrendered: true }]);
+    vi.spyOn(api, 'contestStandings').mockResolvedValueOnce([{ rank: 1, user: creator, solved: 1, totalSeconds: 0, times: {}, bestScore: { value: 0.05, type: 'TIME_MS' } }, { rank: 2, user: opponent, solved: 0, totalSeconds: 0, times: {}, bestScore: null }]).mockResolvedValue([{ rank: 1, user: opponent, solved: 0, totalSeconds: 0, times: {}, bestScore: null }, { rank: 2, user: creator, solved: 1, totalSeconds: 0, times: {}, bestScore: { value: 0.05, type: 'TIME_MS' }, surrendered: true }]);
     const surrender = vi.spyOn(api, 'surrenderContest').mockResolvedValue(undefined);
     const client = board();
     const invalidate = vi.spyOn(client, 'invalidateQueries');
@@ -262,7 +306,7 @@ describe('Сдача дуэли', () => {
   });
 
   it('присуждает победу без принятого решения после сдачи соперника', async () => {
-    vi.spyOn(api, 'contestStandings').mockResolvedValue([{ rank: 1, user: opponent, solved: 0, totalSeconds: 0, times: {}, bestTimeMs: null }, { rank: 2, user: creator, solved: 0, totalSeconds: 0, times: {}, bestTimeMs: null, surrendered: true }]);
+    vi.spyOn(api, 'contestStandings').mockResolvedValue([{ rank: 1, user: opponent, solved: 0, totalSeconds: 0, times: {}, bestScore: null }, { rank: 2, user: creator, solved: 0, totalSeconds: 0, times: {}, bestScore: null, surrendered: true }]);
     board({ ...room, surrenderedUserId: creator.id });
     expect(await screen.findByText(/Победитель:/)).toHaveTextContent(opponent.handle);
     expect(screen.getByText('Сдался')).toBeVisible();
@@ -273,7 +317,7 @@ describe('Сдача дуэли', () => {
   it('продолжает ждать проверки после таймера и не объявляет предварительный результат', async () => {
     vi.useFakeTimers();
     try {
-      const rows = vi.spyOn(api, 'contestStandings').mockResolvedValue([{ rank: 1, user: opponent, solved: 0, totalSeconds: 0, times: {}, bestTimeMs: null }, { rank: 1, user: creator, solved: 0, totalSeconds: 0, times: {}, bestTimeMs: null }]);
+      const rows = vi.spyOn(api, 'contestStandings').mockResolvedValue([{ rank: 1, user: opponent, solved: 0, totalSeconds: 0, times: {}, bestScore: null }, { rank: 1, user: creator, solved: 0, totalSeconds: 0, times: {}, bestScore: null }]);
       board({ ...room, endAt: new Date(Date.now() - 1000).toISOString(), resultsPending: true });
       await act(async () => { await vi.advanceTimersByTimeAsync(1); });
       expect(screen.getByText('Проверяются посылки')).toBeVisible();
@@ -287,27 +331,34 @@ describe('Сдача дуэли', () => {
 
   it('получает финальную таблицу после последнего вердикта до объявления победителя', async () => {
     let finish!: (value: Standing[]) => void;
-    const rows = vi.spyOn(api, 'contestStandings').mockResolvedValueOnce([{ rank: 1, user: creator, solved: 1, totalSeconds: 0, times: {}, bestTimeMs: 0.1 }, { rank: 2, user: opponent, solved: 0, totalSeconds: 0, times: {}, bestTimeMs: null }]).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const rows = vi.spyOn(api, 'contestStandings').mockResolvedValueOnce([{ rank: 1, user: creator, solved: 1, totalSeconds: 0, times: {}, bestScore: { value: 0.1, type: 'TIME_MS' } }, { rank: 2, user: opponent, solved: 0, totalSeconds: 0, times: {}, bestScore: null }]).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const endAt = new Date(Date.now() - 1000).toISOString();
     const renderBoard = (pending: boolean) => <QueryClientProvider client={client}><MemoryRouter><DuelBoard contest={{ ...room, endAt, resultsPending: pending }} contestUpdatedAt={Date.now()} finished /></MemoryRouter></QueryClientProvider>;
     const view = render(renderBoard(true));
-    expect(await screen.findByText('0.100')).toBeVisible();
+    expect(await screen.findByText('0.1')).toBeVisible();
     view.rerender(renderBoard(false));
     await waitFor(() => expect(rows).toHaveBeenCalledTimes(2));
     expect(screen.queryByText(/Победитель:/)).not.toBeInTheDocument();
     expect(screen.queryByText('Ничья.')).not.toBeInTheDocument();
-    await act(async () => finish([{ rank: 1, user: opponent, solved: 1, totalSeconds: 0, times: {}, bestTimeMs: 0.05 }, { rank: 2, user: creator, solved: 1, totalSeconds: 0, times: {}, bestTimeMs: 0.1 }]));
+    await act(async () => finish([{ rank: 1, user: opponent, solved: 1, totalSeconds: 0, times: {}, bestScore: { value: 0.05, type: 'TIME_MS' } }, { rank: 2, user: creator, solved: 1, totalSeconds: 0, times: {}, bestScore: { value: 0.1, type: 'TIME_MS' } }]));
     expect(await screen.findByText(/Победитель:/)).toHaveTextContent(opponent.handle);
   });
 
   it('не завершает дуэль по кешу комнаты, полученному до дедлайна', async () => {
-    vi.spyOn(api, 'contestStandings').mockResolvedValue([{ rank: 1, user: creator, solved: 1, totalSeconds: 0, times: {}, bestTimeMs: 0.1 }, { rank: 2, user: opponent, solved: 0, totalSeconds: 0, times: {}, bestTimeMs: null }]);
+    vi.spyOn(api, 'contestStandings').mockResolvedValue([{ rank: 1, user: creator, solved: 1, totalSeconds: 0, times: {}, bestScore: { value: 0.1, type: 'TIME_MS' } }, { rank: 2, user: opponent, solved: 0, totalSeconds: 0, times: {}, bestScore: null }]);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(<QueryClientProvider client={client}><MemoryRouter><DuelBoard contest={{ ...room, endAt: new Date(Date.now() - 1000).toISOString(), resultsPending: false }} contestUpdatedAt={Date.now() - 5000} finished /></MemoryRouter></QueryClientProvider>);
-    expect(await screen.findByText('0.100')).toBeVisible();
+    expect(await screen.findByText('0.1')).toBeVisible();
     expect(screen.queryByText(/Победитель:/)).not.toBeInTheDocument();
     expect(screen.getByText('Загрузка результатов...')).toBeVisible();
+  });
+
+  it('показывает результат эмулятора в его единицах без миллисекунд', async () => {
+    vi.spyOn(api, 'contestStandings').mockResolvedValue([{ rank: 1, user: creator, solved: 1, totalSeconds: 0, times: {}, bestScore: { value: 4096, type: 'CYCLES_X_DEPTH_X_TRANSISTORS' } }]);
+    board({ ...room, processor: 'rtl' });
+    expect(await screen.findByText(/такты × глубина × транзисторы/)).toBeVisible();
+    expect(screen.queryByText(/мс/)).not.toBeInTheDocument();
   });
 });
 

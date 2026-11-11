@@ -17,11 +17,32 @@ const session = vi.hoisted(() => ({ user: null as User | null }));
 vi.mock('../src/auth', () => ({ useSession: () => ({ user: session.user, isLoading: false, error: null }) }));
 vi.mock('../src/components/CodeEditor', () => ({ default: ({ value, onChange, readOnly, label = 'Код решения на C++ и CUDA' }: { value: string; onChange?: (value: string) => void; readOnly?: boolean; label?: string }) => <textarea aria-label={label} value={value} readOnly={readOnly} onChange={event => onChange?.(event.target.value)} /> }));
 
-const owner: User = { id: 'owner', handle: 'cuda_user', rating: null, rank: null, ratingDelta: null, ratingContestId: null };
+const owner: User = { id: 'owner', handle: 'cuda_user', ratings: {} };
 const opponent: User = { ...owner, id: 'opponent', handle: 'opponent_cuda' };
-const task: ProblemDetail = { id: 'vector', code: '100', title: 'Сложение', format: 'guess', difficulty: 'easy', tags: [], solved: false, solvedCount: 0, lastSubmissionId: null, lastStatus: null, bestSubmissionId: null, bestTimeMs: null, recordTimeMs: null, statementMarkdown: 'Какой код быстрее?', starterCode: '', timeLimitSeconds: 2, memoryLimitMb: 1024, environmentMarkdown: 'NVIDIA A100', firstCode: 'void first() {}', secondCode: 'void second() {}', guessSubmissionId: null, referenceMeasurement: { key: 'environment-v1', status: 'ready', measuredAt: null, diagnostic: null } };
-const answer: SubmissionRecord = { id: '42', problemId: task.id, problemTitle: task.title, format: 'guess', user: owner, contestId: null, contestTitle: null, createdAt: '2026-01-01T10:00:00Z', status: 'accepted', timeMs: null, comparable: false, guessResult: { choice: 'first', correctChoice: 'first', firstTimeMs: 0.1, secondTimeMs: 0.2, explanation: 'Первый код читает память последовательно.' } };
-const duel: ContestRecord = { id: 'duel', title: 'CUDA Duel', format: 'duel', challengerId: owner.id, opponentId: opponent.id, startAt: new Date(Date.now() - 60000).toISOString(), endAt: new Date(Date.now() + 3600000).toISOString(), authors: [owner], problemIds: [task.id], problemCount: 1, registered: false, gpu: 'NVIDIA A100' };
+const benchmark = { inputDescription: 'Тесты задачи', aggregation: 'max' as const, timingMode: 'wall' as const, warmupRuns: 1, maxRuns: 3, model: null, synthetic: true };
+
+/**
+ * A problem of the contract from the fields a format test cares about: the formats run on the real GPU here, so the
+ * baseline, best time and reference measurements are those of its `gpu-cuda` processor.
+ */
+type Variant = Partial<ProblemDetail> & {
+  baselineTimeMs?: number | null; bestTimeMs?: number | null; starterCode?: string;
+  referenceMeasurement?: NonNullable<ProblemDetail['processors'][number]['referenceMeasurement']> | null;
+  benchmark?: ProblemDetail['processorDetails'][number]['benchmark'];
+};
+function variant(base: Variant, changes: Variant = {}): ProblemDetail {
+  const { baselineTimeMs, bestTimeMs, starterCode, referenceMeasurement, benchmark: own, ...rest } = { ...base, ...changes };
+  const time = (value: number | null | undefined) => value == null ? null : { value, type: 'TIME_MS' as const };
+  return {
+    ...(rest as ProblemDetail),
+    processors: [{ id: 'gpu-cuda', languages: ['cuda'], bestSubmissionId: null, bestScore: time(bestTimeMs), recordScore: null, baselineScore: time(baselineTimeMs), referenceMeasurement: referenceMeasurement ?? null }],
+    processorDetails: [{ id: 'gpu-cuda', starters: { cuda: starterCode ?? '' }, limit: { value: 2000, type: 'TIME_MS' }, environmentMarkdown: 'NVIDIA A100', benchmark: own ?? (rest.format && rest.format !== 'standard' ? benchmark : undefined) }],
+  };
+}
+const base: Variant = { id: 'vector', code: '100', title: 'Сложение', format: 'guess', difficulty: 'easy', tags: [], solved: false, solvedCount: 0, lastSubmissionId: null, lastStatus: null, statementMarkdown: 'Какой код быстрее?', starterCode: '', memoryLimitMb: 1024, firstCode: 'void first() {}', secondCode: 'void second() {}', guessSubmissionId: null, referenceMeasurement: { key: 'environment-v1', status: 'ready', measuredAt: null, diagnostic: null } };
+const task = variant(base);
+const answer: SubmissionRecord = { id: '42', problemId: task.id, problemTitle: task.title, format: 'guess', user: owner, contestId: null, contestTitle: null, createdAt: '2026-01-01T10:00:00Z', status: 'accepted', processor: 'gpu-cuda', language: 'cuda', score: null, comparable: false, guessResult: { choice: 'first', correctChoice: 'first', firstScore: { value: 0.1, type: 'TIME_MS' }, secondScore: { value: 0.2, type: 'TIME_MS' }, explanation: 'Первый код читает память последовательно.' } };
+const duel: ContestRecord = { id: 'duel', title: 'CUDA Duel', format: 'duel', challengerId: owner.id, opponentId: opponent.id, startAt: new Date(Date.now() - 60000).toISOString(), endAt: new Date(Date.now() + 3600000).toISOString(), authors: [owner], problemIds: [task.id], problemCount: 1, registered: false, processor: 'gpu-cuda' };
 
 function open(path: string) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } });
@@ -51,31 +72,31 @@ describe('Форматы задач', () => {
     expect(screen.getByLabelText('Код 2')).toHaveValue(task.secondCode);
     expect(screen.queryByRole('button', { name: 'Проверить пример' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Лидеры' })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('radio', { name: 'Код 1 быстрее' }));
+    await userEvent.click(screen.getByRole('radio', { name: 'Код 1 лучше' }));
     await userEvent.click(screen.getByRole('button', { name: 'Проверить выбор' }));
-    expect(submit).toHaveBeenCalledWith(task.id, 'practice', { choice: 'first', benchmarkKey: task.referenceMeasurement!.key });
+    expect(submit).toHaveBeenCalledWith(task.id, 'practice', { choice: 'first', benchmarkKey: task.processors[0].referenceMeasurement!.key });
     expect(await screen.findByText('Верно')).toBeVisible();
     expect(screen.getByText(answer.guessResult!.explanation)).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Проверить выбор' })).not.toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: 'Код 2 быстрее' })).toBeDisabled();
+    expect(screen.getByRole('radio', { name: 'Код 2 лучше' })).toBeDisabled();
     expect(coding).not.toHaveBeenCalled(); expect(example).not.toHaveBeenCalled();
   });
 
   it('восстанавливает ответ текущей версии, но не блокирует новую версию старой посылкой', async () => {
-    const get = vi.spyOn(api, 'getProblem').mockResolvedValue({ ...task, lastSubmissionId: 'old-version', guessSubmissionId: null });
+    const get = vi.spyOn(api, 'getProblem').mockResolvedValue(variant(base, { lastSubmissionId: 'old-version', guessSubmissionId: null }));
     const previous = vi.spyOn(api, 'getSubmission').mockResolvedValue(answer);
     const client = open('/problem/vector');
     expect(await screen.findByRole('button', { name: 'Проверить выбор' })).toBeDisabled();
-    await userEvent.click(screen.getByRole('radio', { name: 'Код 2 быстрее' }));
+    await userEvent.click(screen.getByRole('radio', { name: 'Код 2 лучше' }));
     expect(screen.getByRole('button', { name: 'Проверить выбор' })).toBeEnabled();
     expect(previous).not.toHaveBeenCalled();
-    get.mockResolvedValue({ ...task, guessSubmissionId: answer.id });
+    get.mockResolvedValue(variant(base, { guessSubmissionId: answer.id }));
     await client.invalidateQueries({ queryKey: ['problem'] });
     expect(await screen.findByText('Верно')).toBeVisible();
     expect(previous).toHaveBeenCalledWith(answer.id, expect.any(AbortSignal));
-    expect(screen.getByRole('radio', { name: 'Код 1 быстрее' })).toBeChecked();
+    expect(screen.getByRole('radio', { name: 'Код 1 лучше' })).toBeChecked();
     expect(screen.queryByRole('button', { name: 'Проверить выбор' })).not.toBeInTheDocument();
-    get.mockResolvedValue({ ...task, versionId: 'new-version', guessSubmissionId: null });
+    get.mockResolvedValue(variant(base, { versionId: 'new-version', guessSubmissionId: null }));
     await client.invalidateQueries({ queryKey: ['problem'] });
     expect(await screen.findByRole('button', { name: 'Проверить выбор' })).toBeVisible();
     expect(screen.queryByText('Верно')).not.toBeInTheDocument();
@@ -85,7 +106,7 @@ describe('Форматы задач', () => {
     vi.spyOn(api, 'getProblem').mockResolvedValue(task);
     const submit = vi.spyOn(api, 'submitGuess').mockRejectedValueOnce(new Error('Связь потеряна.')).mockResolvedValue(answer);
     open('/problem/vector');
-    await userEvent.click(await screen.findByRole('radio', { name: 'Код 1 быстрее' }));
+    await userEvent.click(await screen.findByRole('radio', { name: 'Код 1 лучше' }));
     await userEvent.click(screen.getByRole('button', { name: 'Проверить выбор' }));
     expect(await screen.findByText('Связь потеряна.')).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: 'Проверить выбор' }));
@@ -93,11 +114,11 @@ describe('Форматы задач', () => {
   });
 
   it('восстанавливает данный код оптимизации и показывает исходный замер', async () => {
-    vi.spyOn(api, 'getProblem').mockResolvedValue({ ...task, format: 'optimization', starterCode: 'void solve() { slow(); }', baselineTimeMs: 1.25, bestTimeMs: 0.625 });
+    vi.spyOn(api, 'getProblem').mockResolvedValue(variant(base, { format: 'optimization', starterCode: 'void solve() { slow(); }', baselineTimeMs: 1.25, bestTimeMs: 0.625 }));
     open('/problem/vector');
     const editor = await screen.findByLabelText('Код решения на C++ и CUDA');
     expect(editor).toHaveValue('void solve() { slow(); }');
-    expect(screen.getByText('1.250')).toBeVisible();
+    expect(screen.getByText('1.25')).toBeVisible();
     expect(screen.getByText('2.000x')).toBeVisible();
     fireEvent.change(editor, { target: { value: 'void solve() { fast(); }' } });
     await userEvent.click(screen.getByRole('button', { name: 'Восстановить исходный код' }));
@@ -126,7 +147,7 @@ describe('Форматы задач', () => {
   });
 
   it('не помечает правильный ответ в истории старым профилем', () => {
-    render(<MemoryRouter><SubmissionTable items={[answer]} /></MemoryRouter>);
+    render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><SubmissionTable items={[answer]} /></MemoryRouter></QueryClientProvider>);
     expect(screen.getByText('+')).toBeVisible();
     expect(screen.queryByText('Старый профиль проверки')).not.toBeInTheDocument();
   });
@@ -138,7 +159,7 @@ describe('Дуэль', () => {
     vi.spyOn(api, 'getContest').mockResolvedValue(duel);
     vi.spyOn(api, 'getProfile').mockResolvedValue({ user: opponent, solvedCount: 0, contests: [] });
     vi.spyOn(api, 'allProblems').mockResolvedValue([{ ...task, format: 'standard' }]);
-    vi.spyOn(api, 'contestStandings').mockResolvedValue([{ rank: 1, user: opponent, solved: 1, totalSeconds: 0, times: {}, bestTimeMs: 0.052 }]);
+    vi.spyOn(api, 'contestStandings').mockResolvedValue([{ rank: 1, user: opponent, solved: 1, totalSeconds: 0, times: {}, bestScore: { value: 0.052, type: 'TIME_MS' } }]);
     open('/contest/duel');
     const board = await screen.findByRole('region', { name: 'Результаты дуэли' });
     expect(await within(board).findByText('0.052')).toBeVisible();
@@ -150,7 +171,7 @@ describe('Дуэль', () => {
 
   it('показывает решенный guess и время сдачи без времени GPU', async () => {
     vi.spyOn(api, 'getContest').mockResolvedValue({ ...duel, format: 'standard', registered: true });
-    vi.spyOn(api, 'allProblems').mockResolvedValue([{ ...task, solved: true, lastSubmissionId: answer.id, lastStatus: 'accepted' }]);
+    vi.spyOn(api, 'allProblems').mockResolvedValue([variant(base, { solved: true, lastSubmissionId: answer.id, lastStatus: 'accepted' })]);
     vi.spyOn(api, 'contestStandings').mockResolvedValue([{ rank: 1, user: owner, solved: 1, totalSeconds: 125, times: { [task.id]: 125 } }]);
     open('/contest/duel');
     const table = await screen.findByRole('table', { name: 'Задачи соревнования' });
@@ -165,22 +186,22 @@ describe('Дуэль', () => {
   it('показывает победителя по лучшему времени кода', async () => {
     vi.spyOn(api, 'getContest').mockResolvedValue({ ...duel, endAt: new Date(Date.now() - 1000).toISOString() });
     vi.spyOn(api, 'getProfile').mockResolvedValue({ user: opponent, solvedCount: 0, contests: [] });
-    vi.spyOn(api, 'allProblems').mockResolvedValue([{ ...task, format: 'standard' }]);
+    vi.spyOn(api, 'allProblems').mockResolvedValue([variant(base, { format: 'standard' })]);
     vi.spyOn(api, 'contestStandings').mockResolvedValue([
-      { rank: 1, user: opponent, solved: 1, totalSeconds: 0, times: {}, bestTimeMs: 0.05 },
-      { rank: 2, user: owner, solved: 1, totalSeconds: 0, times: {}, bestTimeMs: 1 },
+      { rank: 1, user: opponent, solved: 1, totalSeconds: 0, times: {}, bestScore: { value: 0.05, type: 'TIME_MS' } },
+      { rank: 2, user: owner, solved: 1, totalSeconds: 0, times: {}, bestScore: { value: 1, type: 'TIME_MS' } },
     ]);
     open('/contest/duel');
     const board = await screen.findByRole('region', { name: 'Результаты дуэли' });
     expect(await within(board).findByText(/Победитель:/)).toHaveTextContent(opponent.handle);
-    expect(await within(board).findByText('0.050')).toBeVisible();
+    expect(await within(board).findByText('0.05')).toBeVisible();
   });
 
 });
 
 describe('Экран решения', () => {
   it('не добавляет лишние действия под редактором', async () => {
-    vi.spyOn(api, 'getProblem').mockResolvedValue({ ...task, format: 'standard' });
+    vi.spyOn(api, 'getProblem').mockResolvedValue(variant(base, { format: 'standard' }));
     open('/problem/vector');
     await screen.findByLabelText('Код решения на C++ и CUDA');
     expect(screen.queryByText('Сравнить мои решения')).not.toBeInTheDocument();
@@ -188,7 +209,7 @@ describe('Экран решения', () => {
   });
 
   it('сохраняет правки при просмотре исходного решения', async () => {
-    vi.spyOn(api, 'getProblem').mockResolvedValue({ ...task, format: 'optimization', starterCode: 'void solve() { original(); }' });
+    vi.spyOn(api, 'getProblem').mockResolvedValue(variant(base, { format: 'optimization', starterCode: 'void solve() { original(); }' }));
     open('/problem/vector');
     const editor = await screen.findByLabelText('Код решения на C++ и CUDA');
     fireEvent.change(editor, { target: { value: 'void solve() { optimized(); }' } });
@@ -201,7 +222,7 @@ describe('Экран решения', () => {
   });
 
   it('показывает условия сравнения без служебной таблицы окружения', async () => {
-    vi.spyOn(api, 'getProblem').mockResolvedValue({ ...task, environmentMarkdown: 'Mock GPU sm_86 nvcc', benchmark: { inputDescription: 'Три размера векторов', aggregation: 'geometric_mean', timingMode: 'wall', warmupRuns: 1, maxRuns: 3, gpuName: 'Mock GPU', synthetic: true } });
+    vi.spyOn(api, 'getProblem').mockResolvedValue(variant(base, { benchmark: { inputDescription: 'Три размера векторов', aggregation: 'geometric_mean', timingMode: 'wall', warmupRuns: 1, maxRuns: 3, model: 'Mock GPU', synthetic: true } }));
     open('/problem/vector');
     const measurements = await screen.findByText('Замеры: геометрическое среднее');
     expect(screen.getByText('Три размера векторов')).not.toBeVisible();
@@ -212,8 +233,8 @@ describe('Экран решения', () => {
   });
 
   it.each(['/problem/vector', '/submission/42'])('помечает сохраненные тестовые результаты при запуске с GPU: %s', async path => {
-    vi.spyOn(api, 'getProblem').mockResolvedValue({ ...task, benchmark: { inputDescription: 'Три размера векторов', aggregation: 'geometric_mean', timingMode: 'wall', warmupRuns: 1, maxRuns: 3, gpuName: null, synthetic: true } });
-    vi.spyOn(api, 'getSubmission').mockResolvedValue({ ...answer, format: 'standard', timeMs: 0.1, comparable: true, measurement: { aggregation: 'max', timingMode: 'wall', gpuName: null, synthetic: true, testCount: 3 } });
+    vi.spyOn(api, 'getProblem').mockResolvedValue(variant(base, { benchmark: { inputDescription: 'Три размера векторов', aggregation: 'geometric_mean', timingMode: 'wall', warmupRuns: 1, maxRuns: 3, model: null, synthetic: true } }));
+    vi.spyOn(api, 'getSubmission').mockResolvedValue({ ...answer, format: 'standard', score: { value: 0.1, type: 'TIME_MS' }, comparable: true, measurement: { aggregation: 'max', timingMode: 'wall', model: null, synthetic: true, testCount: 3 } });
     open(path);
     expect(await screen.findByText('Тестовые результаты')).toBeVisible();
     expect(screen.queryByText(/Локальный стенд:/)).not.toBeInTheDocument();
@@ -221,7 +242,7 @@ describe('Экран решения', () => {
 
   it('не дублирует общую пометку mock для тестовых результатов', async () => {
     vi.mocked(api.getRuntime).mockResolvedValue({ executionMode: 'mock', gpuName: null });
-    vi.spyOn(api, 'getProblem').mockResolvedValue({ ...task, benchmark: { inputDescription: 'Три размера векторов', aggregation: 'geometric_mean', timingMode: 'wall', warmupRuns: 1, maxRuns: 3, gpuName: null, synthetic: true } });
+    vi.spyOn(api, 'getProblem').mockResolvedValue(variant(base, { benchmark: { inputDescription: 'Три размера векторов', aggregation: 'geometric_mean', timingMode: 'wall', warmupRuns: 1, maxRuns: 3, model: null, synthetic: true } }));
     open('/problem/vector');
     expect(await screen.findByText(/Локальный стенд:/)).toBeVisible();
     await screen.findByText('Три размера векторов');

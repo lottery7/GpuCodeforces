@@ -2,7 +2,6 @@ package dev.gpucodeforces.backend.submission
 
 import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.common.ForbiddenException
-import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.common.ServiceUnavailableException
 import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
 import dev.gpucodeforces.backend.benchmark.ReferenceMeasurementView
@@ -10,10 +9,13 @@ import dev.gpucodeforces.backend.problem.ContextProblem
 import dev.gpucodeforces.backend.problem.ProblemCatalog
 import dev.gpucodeforces.backend.problem.ProblemContext
 import dev.gpucodeforces.backend.problem.ProblemFormatData
+import dev.gpucodeforces.backend.problem.ProblemPackageReader
 import dev.gpucodeforces.backend.problem.ProblemService
 import dev.gpucodeforces.backend.problem.ProblemVersion
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.backend.user.UserRepository
+import dev.gpucodeforces.judge.api.ProcessorSpec
+import dev.gpucodeforces.judge.api.ScoreType
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.BeforeEach
@@ -26,6 +28,7 @@ import org.mockito.Mockito.verify
 import tools.jackson.databind.json.JsonMapper
 import tools.jackson.module.kotlin.KotlinModule
 import java.math.BigDecimal
+import java.nio.file.Path
 import java.time.Instant
 import java.util.UUID
 
@@ -41,14 +44,19 @@ class GuessServiceTest {
     private val version = ProblemVersion(
         id = UUID.randomUUID(), problemId = "guess", code = "1", title = "Угадай", difficulty = "easy",
         tags = emptyList(), authors = emptyList(), draft = false, statementMarkdown = "Выберите код",
-        starterCode = "", judgeSpec = "{}", contentHash = "content", judgeHash = "judge", revision = null, format = "guess",
+        processors = listOf(RTL), starters = emptyMap(), judgeSpec = "{}", contentHash = "content", judgeHash = "judge", revision = null,
+        format = "guess",
     )
+
+    /** A guess on a circuit: both variants run on rtl, the only processor of the problem. */
+    private val spec = ProblemPackageReader(mapper).read(Path.of("../judge/problems/examples/vector_add")).spec
+        .copy(processors = listOf(ProcessorSpec(RTL, listOf("systemverilog"), limit = 1e6)))
     private val originalKey = "${version.id}:environment-1"
-    private val service = GuessService(problemService, catalog, submissions, repository, users, GpuProperties(), references, mapper)
+    private val service = GuessService(problemService, catalog, submissions, repository, users, references, mapper)
 
     private fun ready(key: String = originalKey, first: String = "1.0", second: String = "2.0", environmentKey: String = "environment-1") = ReferenceMeasurementView(
-        key = key, status = "ready", baselineTimeMs = null,
-        firstTimeMs = BigDecimal(first), secondTimeMs = BigDecimal(second), measuredAt = Instant.now(),
+        processor = RTL, key = key, status = "ready", scoreType = ScoreType.CYCLES_X_DEPTH_X_TRANSISTORS, baselineScore = null,
+        firstScore = BigDecimal(first), secondScore = BigDecimal(second), measuredAt = Instant.now(),
         synthetic = false, diagnostic = null, environmentKey = environmentKey,
     )
 
@@ -63,24 +71,28 @@ class GuessServiceTest {
         given(catalog.format(version)).willReturn(
             ProblemFormatData(format = "guess", firstTimeMs = BigDecimal("99.0"), secondTimeMs = BigDecimal("1.0"), explanation = "Измеренный результат"),
         )
-        given(references.requireReady(version)).willReturn(ready())
+        given(catalog.spec(version)).willReturn(spec)
+        given(references.requireReady(version, RTL)).willReturn(ready())
         given(repository.save(any(Submission::class.java))).willAnswer { it.arguments[0] }
     }
 
     @Test
-    fun `a correct guess is saved as accepted without a GPU measurement`() {
+    fun `a correct guess is saved as accepted without running anything`() {
         val result = submit()
 
         assertThat(result.status).isEqualTo(SubmissionStatus.ACCEPTED)
         assertThat(result.guessChoice).isEqualTo("first")
-        assertThat(result.timeMs).isNull()
+        assertThat(result.score).isNull()
+        assertThat(result.processor).isEqualTo(RTL)
+        assertThat(result.language).isEqualTo("systemverilog")
         assertThat(result.problemVersionId).isEqualTo(version.id)
         assertThat(result.finishedAt).isNotNull()
         assertThat(result.guessBenchmarkKey).isEqualTo(originalKey)
         assertThat(result.benchmarkEnvironmentKey).isEqualTo("environment-1")
         val snapshot = mapper.readValue(result.guessResult!!, GuessSnapshot::class.java)
-        assertThat(snapshot.firstTimeMs).isEqualByComparingTo("1.0")
-        assertThat(snapshot.secondTimeMs).isEqualByComparingTo("2.0")
+        assertThat(snapshot.firstScore).isEqualByComparingTo("1.0")
+        assertThat(snapshot.secondScore).isEqualByComparingTo("2.0")
+        assertThat(snapshot.scoreType).isEqualTo(ScoreType.CYCLES_X_DEPTH_X_TRANSISTORS)
         assertThat(snapshot.correctChoice()).isEqualTo("first")
         verify(users).findForUpdate(author.id)
         verify(submissions).submissionContext(null, author)
@@ -92,8 +104,8 @@ class GuessServiceTest {
     }
 
     @Test
-    fun `equal times use numeric comparison regardless of decimal scale`() {
-        given(references.requireReady(version)).willReturn(ready(first = "1.00", second = "1.0"))
+    fun `equal scores use numeric comparison regardless of decimal scale`() {
+        given(references.requireReady(version, RTL)).willReturn(ready(first = "1.00", second = "1.0"))
 
         assertThat(submit("equal").status).isEqualTo(SubmissionStatus.ACCEPTED)
     }
@@ -125,7 +137,7 @@ class GuessServiceTest {
 
     @Test
     fun `pending reference measurements do not consume an answer attempt`() {
-        given(references.requireReady(version)).willThrow(ServiceUnavailableException("Замер еще не готов"))
+        given(references.requireReady(version, RTL)).willThrow(ServiceUnavailableException("Замер еще не готов"))
 
         assertThatThrownBy { submit() }.isInstanceOf(ServiceUnavailableException::class.java)
         verify(repository, never()).save(any(Submission::class.java))
@@ -136,7 +148,7 @@ class GuessServiceTest {
         val previous = submit()
         val nextKey = "${version.id}:environment-2"
         given(repository.findGuess(author.id, version.id, null, originalKey)).willReturn(previous)
-        given(references.requireReady(version)).willReturn(ready(key = nextKey, first = "3.0", second = "2.0", environmentKey = "environment-2"))
+        given(references.requireReady(version, RTL)).willReturn(ready(key = nextKey, first = "3.0", second = "2.0", environmentKey = "environment-2"))
 
         val current = submit("second", nextKey)
 
@@ -146,17 +158,21 @@ class GuessServiceTest {
         assertThat(current.benchmarkEnvironmentKey).isEqualTo("environment-2")
         val old = mapper.readValue(previous.guessResult!!, GuessSnapshot::class.java)
         assertThat(old.benchmarkKey).isEqualTo(originalKey)
-        assertThat(old.firstTimeMs).isEqualByComparingTo("1.0")
+        assertThat(old.firstScore).isEqualByComparingTo("1.0")
         assertThat(old.correctChoice()).isEqualTo("first")
     }
 
     @Test
     fun `stale or missing comparison keys do not consume an attempt in the new environment`() {
         val nextKey = "${version.id}:environment-2"
-        given(references.requireReady(version)).willReturn(ready(key = nextKey, environmentKey = "environment-2"))
+        given(references.requireReady(version, RTL)).willReturn(ready(key = nextKey, environmentKey = "environment-2"))
 
         assertThatThrownBy { submit() }.isInstanceOf(BadRequestException::class.java).hasMessageContaining("изменились")
         assertThatThrownBy { submit(benchmarkKey = null) }.isInstanceOf(BadRequestException::class.java)
         verify(repository, never()).save(any(Submission::class.java))
+    }
+
+    private companion object {
+        const val RTL = "rtl"
     }
 }
