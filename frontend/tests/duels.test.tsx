@@ -13,7 +13,9 @@ const session = vi.hoisted(() => ({ user: null as User | null }));
 vi.mock('../src/auth', () => ({ useSession: () => ({ user: session.user, isLoading: false, error: null }) }));
 const creator: User = { id: 'creator', handle: 'alex_cuda', ratings: {} };
 const opponent: User = { ...creator, id: 'opponent', handle: 'new_cuda' };
-const queued: DuelRequest = { id: 'request', mode: 'random', processor: 'gpu-cuda', status: 'queued', creator, opponent: null, topics: ['Память'], contestId: null, createdAt: '2026-11-11T10:00:00Z', expiresAt: '2026-11-11T11:00:00Z' };
+// Relative to the clock: a matched request past its expiresAt is shown as a finished duel.
+const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+const queued: DuelRequest = { id: 'request', mode: 'random', processor: 'gpu-cuda', status: 'queued', creator, opponent: null, topics: ['Память'], contestId: null, createdAt: '2026-11-11T10:00:00Z', expiresAt };
 const invited: DuelRequest = { ...queued, mode: 'invite', status: 'invited', opponent };
 const matched: DuelRequest = { ...invited, status: 'matched', contestId: 'room' };
 const invitation: AppNotification = { id: 'note', type: 'duel_invitation', message: 'alex_cuda приглашает вас на дуэль.', duelRequestId: invited.id, duelStatus: 'invited', contestId: null, createdAt: queued.createdAt, readAt: null };
