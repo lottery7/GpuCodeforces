@@ -58,6 +58,7 @@ import java.util.UUID
 @Tag("integration")
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@AllowFullScan("reference_jobs", "from gpucodeforces\\.reference_jobs rj1_0\\s*$", "Every test starts without reference jobs: its setup deletes them all")
 class ReferenceMeasurementsIntegrationTest {
     @Autowired lateinit var references: ReferenceMeasurements
     @Autowired lateinit var catalog: ProblemCatalog
@@ -162,6 +163,7 @@ class ReferenceMeasurementsIntegrationTest {
     }
 
     @Test
+    @AllowFullScan("submissions", "select count\\(\\*\\) from gpucodeforces\\.submissions", "The test checks that reference runs create no submissions at all")
     fun `baseline is measured through full judge and refreshed for actual hardware and changed tests`() {
         val (directory, original) = importProblem("optimization")
         assertThat(references.view(original, GPU)!!.baselineScore).isNull()

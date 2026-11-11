@@ -99,6 +99,9 @@ class JudgePipeline(
             log.error("Processor {} cannot judge on this executor now, returning job to the queue: {}", job.processor, e.message)
             return Disposition.REQUEUE
         } catch (e: ProblemPreparationException) {
+            if (e.invalidInput) {
+                return finish(reporter, started, backends[job.processor], JudgeResult(Verdict.INTERNAL_ERROR, message = "Invalid custom test"))
+            }
             if (e.problemFault) {
                 log.error("Problem {} is broken, tests cannot be generated: {}", job.problem.id, e.message)
                 return finish(reporter, started, backends[job.processor], JudgeResult(Verdict.INTERNAL_ERROR, message = "Tests of this problem could not be generated"))

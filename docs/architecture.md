@@ -206,8 +206,35 @@ classDiagram
     String format
     UUID challengerId
     UUID opponentId
+    Instant hackEndAt
+    Instant finalizedAt
     Instant ratingAppliedAt
     phaseAt(now) ContestPhase
+    hacksOpen(now) Boolean
+  }
+  class VirtualParticipation {
+    UUID id
+    Instant startedAt
+    Instant endsAt
+  }
+  class Hack {
+    UUID id
+    String problemId
+    String testJson
+    String testHash
+    String status
+    String jobId
+    Int retryCount
+  }
+  class TestSuite {
+    String id
+    String testsJson
+  }
+  class JudgingRun {
+    Int runNumber
+    String status
+    BigDecimal score
+    String testSuite
   }
   class ContestProblem {
     Int position
@@ -256,6 +283,8 @@ classDiagram
   }
   class Submission {
     UUID id
+    String contextKey
+    String testSuite
     String code
     String guessChoice
     String guessBenchmarkKey
@@ -318,7 +347,18 @@ classDiagram
   Submission "*" --> "1" User
   Submission "*" --> "1" ProblemVersion
   Submission "*" --> "0..1" Contest
+  Submission "*" --> "1" TestSuite
+  VirtualParticipation "*" --> "1" Contest
+  VirtualParticipation "*" --> "1" User
+  Hack "*" --> "1" Contest
+  Hack "*" --> "1" User
+  Hack "*" --> "1" Submission : target
+  JudgingRun "*" --> "1" Submission
+  JudgingRun "*" --> "1" TestSuite
 ```
+
+`contextKey` посылки — где она засчитана: `practice`, ID контеста (официальное участие), `upsolve:<контест>`
+или `virtual:<попытка>`; правила — в [backend/participation.md](backend/participation.md).
 
 ## Компоненты backend
 
@@ -342,6 +382,9 @@ classDiagram
     class ProblemsController
     class ProblemService
     class ProblemCatalog
+    class ProblemListing {
+      page(context, filter) ProblemPage
+    }
     class ComparisonService
     class ProblemSyncService {
       sync() SyncResult
@@ -362,6 +405,10 @@ classDiagram
   namespace contest {
     class ContestsController
     class ContestService
+    class VirtualController
+    class VirtualParticipationService {
+      start(contestId, user)
+    }
   }
   namespace duel {
     class DuelsController
@@ -380,6 +427,13 @@ classDiagram
       apply(JudgeEvent)
       resendUnsent()
       reportStuck()
+      rejudgeExpandedSuites()
+    }
+    class HacksController
+    class HackService {
+      create() Hack
+      suite(contestId, problemId) String
+      apply(JudgeEvent)
     }
     class SubmissionStats
     class ExampleChecks {
@@ -422,6 +476,17 @@ classDiagram
   ProfileService ..> UserService
   ProfileService ..> SubmissionStats
   ProblemsController ..> ProblemService
+  ProblemsController ..> ProblemListing
+  ProblemService ..> VirtualParticipationService
+  ContestsController ..> VirtualParticipationService
+  VirtualController ..> VirtualParticipationService
+  VirtualParticipationService ..> ContestService
+  HacksController ..> HackService
+  HackService ..> ProblemCatalog
+  HackService ..> JudgeGateway
+  SubmissionService ..> HackService
+  JudgeEventListener ..> HackService
+  RatingFinalizationService ..> HackService
   ProblemsController ..> SubmissionStats
   ProblemsController ..> ExampleChecks
   ProblemsController ..> ProblemEnvironments
@@ -466,9 +531,10 @@ classDiagram
 ```
 
 Фоновые задачи: синхронизация банка задач с репозиторием раз в минуту (`ProblemSyncService`), повторная
-отправка непринятых посылок каждые 15 секунд и поиск зависших раз в минуту (`SubmissionService`),
-финализация рейтинга завершившихся контестов раз в минуту (`ContestRatingFinalizer`, по процессорам: рейтинг
-каждого процессора свой).
+отправка непринятых посылок каждые 15 секунд и поиск зависших раз в минуту (`SubmissionService`), повторная
+отправка взломов (`HackService`) и перетестирование принятых решений на тестах успешных взломов
+(`SubmissionService.rejudgeExpandedSuites`) каждые 15 секунд, финализация результатов и рейтинга завершившихся
+контестов раз в минуту (`ContestRatingFinalizer`, по процессорам: рейтинг каждого процессора свой).
 
 ## Компоненты тестирующей системы
 

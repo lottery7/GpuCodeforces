@@ -16,7 +16,7 @@ export function SubmissionTable({ items, inProblem = false, showUser = false }: 
     <thead><tr><th>Посылка</th>{!inProblem && <th>Задача</th>}{showUser && <th>Участник</th>}<th>Процессор</th><th>Вердикт</th><th>Результат</th><th>Отправлено, МСК</th></tr></thead>
     <tbody>{items.map(item => <tr key={item.id}>
       <td className="mono"><Link to={`/submission/${encodeURIComponent(item.id)}`}>#{item.id}</Link></td>
-      {!inProblem && <td><Link to={problemPath(item.problemId, item.contestId || 'practice')}>{item.problemTitle}</Link><div className="subline">{item.contestId ? <Link to={`/contest/${encodeURIComponent(item.contestId)}`}>{item.contestTitle || 'Контест'}</Link> : 'Практика'}</div></td>}
+      {!inProblem && <td><Link to={problemPath(item.problemId, item.context || item.contestId || 'practice')}>{item.problemTitle}</Link><div className="subline">{item.contestId ? <Link to={`/contest/${encodeURIComponent(item.contestId)}`}>{item.contestTitle || 'Контест'}</Link> : 'Практика'}{item.context?.startsWith('virtual:') && ' · Виртуально'}{item.context?.startsWith('upsolve:') && ' · Дорешивание'}</div></td>}
       {showUser && <td><UserLink user={item.user} /></td>}
       <td>{processors.title(item.processor)}<div className="subline">{processors.language(item.processor, item.language)?.title ?? item.language}</div></td>
       <td><Status status={item.status} />{item.status === 'accepted' && item.format !== 'guess' && !item.comparable && <div className="subline">Старая версия задачи</div>}</td>
@@ -78,7 +78,7 @@ export function SubmissionList({ problemId, context }: { problemId?: string; con
   submissions.data?.items.forEach(item => options.set(item.problemId, item.problemTitle));
   if (query.problemId && !options.has(query.problemId)) options.set(query.problemId, query.problemId);
   const contestOptions = new Map((contests.data || []).map(item => [item.id, item.title]));
-  submissions.data?.items.forEach(item => { if (item.contestId) contestOptions.set(item.contestId, item.contestTitle || item.contestId); });
+  submissions.data?.items.forEach(item => { if (item.contestId) contestOptions.set(item.context || item.contestId, `${item.contestTitle || item.contestId}${item.context?.startsWith('virtual:') ? ' · Виртуально' : item.context?.startsWith('upsolve:') ? ' · Дорешивание' : ''}`); });
   if (query.context && query.context !== 'all' && query.context !== 'practice' && !contestOptions.has(query.context)) contestOptions.set(query.context, query.context);
   const filtered = Boolean(query.status || !problemId && (query.problemId || query.context !== 'all'));
   return <>

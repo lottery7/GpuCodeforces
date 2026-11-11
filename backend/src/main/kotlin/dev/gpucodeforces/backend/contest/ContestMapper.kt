@@ -34,6 +34,9 @@ fun Contest.toApiModel(
         .format(ContestApiModel.FormatEnum.fromValue(format))
         .challengerId(challengerId?.toString())
         .opponentId(opponentId?.toString())
+        .hackEndAt(hackEndAt?.toOffsetDateTime())
+        .finalized(finalizedAt != null)
+        .serverNow(now.toOffsetDateTime())
 }
 
 private fun Instant.toOffsetDateTime(): OffsetDateTime = atOffset(ZoneOffset.UTC)

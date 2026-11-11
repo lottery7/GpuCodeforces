@@ -263,6 +263,7 @@ class FormatsIntegrationTest {
     }
 
     @Test
+    @AllowFullScan("problems", "FROM gpucodeforces\\.problems p", "Exact catalogue totals and tags inspect current ids; only page metadata reaches the application")
     fun `optimization baseline and best results stay in the captured cohort after the environment changes`() {
         val (user, cookie) = register()
         val template = catalog.currentVersion("vector_add")!!

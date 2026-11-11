@@ -39,6 +39,7 @@ class JudgeEventListener(
     private val exampleChecks: ExampleChecks,
     private val jsonMapper: JsonMapper,
     private val referenceMeasurements: ReferenceMeasurements,
+    private val hacks: HackService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -53,6 +54,8 @@ class JudgeEventListener(
         try {
             if (referenceMeasurements.apply(event)) {
                 return
+            } else if (HackService.isHack(event.submissionId)) {
+                hacks.apply(event)
             } else if (exampleChecks.isExample(event.submissionId)) {
                 if (event.status == SubmissionStatus.FINISHED) exampleChecks.complete(event.submissionId, event.result!!)
             } else {

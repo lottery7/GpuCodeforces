@@ -70,7 +70,7 @@ function EditorPane({ problem, detail, target, context, contest, contestLoading,
     onError: error => { if (error instanceof ApiError && error.status === 401) requestLogin(); },
   });
   const submit = useMutation({
-    mutationFn: () => api.submitSolution({ problemId: problem.id, ...(context !== 'practice' ? { contestId: context } : {}), ...target, code }),
+    mutationFn: () => api.submitSolution({ problemId: problem.id, ...(context.includes(':') ? { context } : context !== 'practice' ? { contestId: context } : {}), ...target, code }),
     onSuccess: item => {
       void queryClient.invalidateQueries();
       navigate(`/submission/${encodeURIComponent(item.id)}`);
@@ -100,8 +100,9 @@ function EditorPane({ problem, detail, target, context, contest, contestLoading,
     check.reset();
   }
   function practice() {
-    setSaved(writeDraft(user?.id || null, { ...draft, context: 'practice' }, code));
-    navigate(problemPath(problem.id));
+    const nextContext = contest?.finalized ? `upsolve:${contest.id}` : 'practice';
+    setSaved(writeDraft(user?.id || null, { ...draft, context: nextContext }, code));
+    navigate(problemPath(problem.id, nextContext));
   }
   function download() {
     const url = URL.createObjectURL(new Blob([view === 'original' ? starterCode : code], { type: 'text/plain;charset=utf-8' }));
@@ -143,11 +144,11 @@ function EditorPane({ problem, detail, target, context, contest, contestLoading,
         {view === 'original' ? <button type="button" className="btn primary" onClick={() => setView('solution')}>Продолжить редактирование</button> : <>
         <button type="button" className="text-link" onClick={reset} disabled={busy}>{problem.format === 'optimization' ? 'Восстановить исходный код' : 'Восстановить шаблон'}</button>
         <button type="button" className="btn secondary run-btn" onClick={() => { clearErrors(); setExample(null); check.mutate(code); }} disabled={busy || !code.trim()}>{check.isPending ? 'Проверяем пример...' : 'Проверить пример'}</button>
-        {phase === 'finished' ? <button type="button" className="btn primary" onClick={practice}>Продолжить в практике</button>
+        {phase === 'finished' ? <button type="button" className="btn primary" onClick={practice}>{contest?.finalized ? 'Перейти к дорешиванию' : 'Продолжить в практике'}</button>
           : phase === 'upcoming' ? <button type="button" className="btn primary" disabled>Отправка после начала</button>
           : !user ? <button type="button" className="btn primary" onClick={requestLogin}>Войти и отправить</button>
-          : contest?.format === 'duel' && !canJoinContest(contest, user.id) ? <button type="button" className="btn primary" disabled>Только для участников дуэли</button>
-          : context !== 'practice' && !contest?.registered ? <button type="button" className="btn primary" disabled={busy || contestLoading} onClick={() => { clearErrors(); join.mutate(); }}>{join.isPending ? 'Регистрируем...' : contest?.format === 'duel' ? 'Принять дуэль' : 'Участвовать'}</button>
+          : contest?.format === 'duel' && !context.includes(':') && !canJoinContest(contest, user.id) ? <button type="button" className="btn primary" disabled>Только для участников дуэли</button>
+          : context !== 'practice' && !context.includes(':') && !contest?.registered ? <button type="button" className="btn primary" disabled={busy || contestLoading} onClick={() => { clearErrors(); join.mutate(); }}>{join.isPending ? 'Регистрируем...' : contest?.format === 'duel' ? 'Принять дуэль' : 'Участвовать'}</button>
           : <button type="button" className="btn primary" disabled={busy || !code.trim() || contestLoading} onClick={() => { clearErrors(); submit.mutate(); }}>{submit.isPending ? 'Отправляем...' : 'Отправить'}</button>}
         </>}
       </div>
@@ -279,6 +280,10 @@ export default function Problem() {
   const [now, setNow] = useState(Date.now);
   const previousPhase = useRef<{ context: string; phase: ReturnType<typeof phaseOf> } | null>(null);
   const context = contextFromSearch(params);
+  const virtualId = context.startsWith('virtual:') ? context.slice(8) : null;
+  const upsolving = context.startsWith('upsolve:');
+  const virtual = useQuery({ queryKey: ['virtual', virtualId, user?.id], queryFn: ({ signal }) => api.getVirtual(virtualId!, signal), enabled: Boolean(virtualId && user), refetchInterval: 5000 });
+  const contestId = virtualId ? virtual.data?.contestId : upsolving ? context.slice(8) : context;
   function returnToStatement() {
     requestAnimationFrame(() => {
       const statement = statementRef.current;
@@ -308,12 +313,13 @@ export default function Problem() {
     refetchInterval: query => query.state.data?.processors.some(item => ['pending', 'running'].includes(item.referenceMeasurement?.status ?? '')) ? 5000 : false,
   });
   const contest = useQuery({
-    queryKey: ['contest', context, user?.id],
-    queryFn: ({ signal }) => api.getContest(context, signal),
-    enabled: context !== 'practice' && !isLoading,
-    refetchInterval: q => q.state.data && Date.now() >= Date.parse(q.state.data.endAt) ? false : 5000,
+    queryKey: ['contest', contestId, user?.id],
+    queryFn: ({ signal }) => api.getContest(contestId!, signal),
+    enabled: context !== 'practice' && Boolean(contestId) && !isLoading,
+    refetchInterval: q => q.state.data?.finalized === false ? 5000 : q.state.data && Date.now() >= Date.parse(q.state.data.endAt) ? false : 5000,
   });
-  const phase = phaseOf(contest.data, now);
+  const virtualNow = virtual.data ? now + Date.parse(virtual.data.serverNow) - virtual.dataUpdatedAt : now;
+  const phase = upsolving ? null : virtualId ? virtual.data ? virtualNow >= Date.parse(virtual.data.endsAt) ? 'finished' : 'live' : 'upcoming' : phaseOf(contest.data, now);
   const isGuess = problem.data?.format === 'guess';
   const tab = isGuess && requestedTab === 'leaders' ? 'statement' : requestedTab;
   useEffect(() => {
@@ -337,7 +343,9 @@ export default function Problem() {
     setParams(query, { replace: true });
   }
   return <QueryState query={problem}>{problem.data && <>
-    <div className="breadcrumbs"><Link to={context === 'practice' ? '/problems' : `/contest/${encodeURIComponent(context)}`}>{context === 'practice' ? 'Практика' : contest.data?.title || 'Контест'}</Link></div>
+    <div className="breadcrumbs"><Link to={context === 'practice' ? '/problems' : virtualId ? `/virtual/${encodeURIComponent(virtualId)}` : `/contest/${encodeURIComponent(contestId || '')}`}>{context === 'practice' ? 'Практика' : contest.data?.title || 'Контест'}</Link>{upsolving && <span> / Дорешивание</span>}{virtualId && <span> / Виртуальное участие</span>}</div>
+    {virtual.error && <ErrorMessage error={virtual.error} />}
+    {virtual.data && <p className="notice">Виртуальный контест. Осталось {Math.max(0, Math.ceil((Date.parse(virtual.data.endsAt) - virtualNow) / 1000))} с.</p>}
     <PageHeader title={`${problem.data.code}. ${problem.data.title}`} actions={tab === 'statement' ? <a className="text-link editor-anchor" href="#editor">{isGuess ? 'К вариантам ответа' : 'К редактору'}</a> : undefined} />
     <div className="problem-meta"><span>{formatLabels[problem.data.format ?? 'standard']}</span><span>{difficultyLabels[problem.data.difficulty]}</span>{!isGuess && <>{detail && <span>{limitLabels[detail.limit.type]}: {formatLimit(detail.limit)} {scoreUnits[detail.limit.type]}</span>}<span>Память: {problem.data.memoryLimitMb} МБ</span></>}</div>
     {target && <TargetPicker problem={problem.data} target={target} onChange={pickTarget} />}
@@ -352,6 +360,6 @@ export default function Problem() {
     {!target || !detail || !summary ? <Empty>Задачу пока нельзя сдавать ни на одном процессоре платформы.</Empty> : tab === 'statement' ? <div className={isGuess ? 'guess-workspace' : 'problem-workspace'}>
       <section className="statement statement-pane" id="statement" ref={statementRef} tabIndex={-1} aria-label="Условие задачи"><div className="tool-window-head">Условие</div><div className="statement-body"><OptimizationSummary problem={problem.data} processor={summary} /><Markdown>{problem.data.statementMarkdown}</Markdown>{problem.data.format === 'standard' ? <details className="methodology"><summary>Среда и замер</summary><Markdown>{detail.environmentMarkdown}</Markdown></details> : <BenchmarkInfo benchmark={detail.benchmark} />}</div></section>
       {isGuess ? <GuessPane key={`${user?.id || 'guest'}:${id}:${context}:${problem.data.versionId ?? ''}:${summary.referenceMeasurement?.key ?? ''}`} problem={problem.data} processor={summary} context={context} contest={contest.data} phase={phase} contestLoading={context !== 'practice' && (contest.isPending || Boolean(contest.error))} /> : <EditorPane key={`${user?.id || 'guest'}:${id}:${context}:${target.processor}:${target.language}`} problem={problem.data} detail={detail} target={target} context={context} contest={contest.data} phase={phase} onCloseOutput={returnToStatement} contestLoading={context !== 'practice' && (contest.isPending || Boolean(contest.error))} />}
-    </div> : tab === 'submissions' ? <SubmissionList key={`${id}:${context}:${user?.id || 'guest'}`} problemId={id} context={context} /> : <Leaders problemId={id} processor={target.processor} context={context} finished={phase === 'finished'} />}
+    </div> : tab === 'submissions' ? <SubmissionList key={`${id}:${context}:${user?.id || 'guest'}`} problemId={id} context={context} /> : <Leaders problemId={id} processor={target.processor} context={context} finished={phase === 'finished' && contest.data?.finalized !== false} />}
   </>}</QueryState>;
 }

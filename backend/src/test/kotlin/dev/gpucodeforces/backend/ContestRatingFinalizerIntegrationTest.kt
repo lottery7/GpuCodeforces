@@ -35,6 +35,7 @@ import java.util.UUID
 @Tag("integration")
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@AllowFullScan("user_ratings", "UPDATE gpucodeforces\\.user_ratings r SET rank", "Finalization recomputes the ranks of every rated user")
 class ContestRatingFinalizerIntegrationTest {
     @LocalServerPort
     var port: Int = 0
@@ -141,6 +142,10 @@ class ContestRatingFinalizerIntegrationTest {
     }
 
     @Test
+    @AllowFullScan(
+        "users", "lower\\(u\\.handle\\) LIKE", "The fixture has a few users; selective search is tested on 10000 users in QueryScalingIntegrationTest",
+        maxTableRows = 20,
+    )
     fun `ratings of two processors do not affect each other`() {
         val frank = userRepository.save(User("frank_rtl", "frank_rtl@example.com", "hash"))
         val gina = userRepository.save(User("gina_rtl", "gina_rtl@example.com", "hash"))

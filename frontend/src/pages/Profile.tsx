@@ -56,6 +56,7 @@ export default function Profile() {
           <span>Контесты: <strong>{data.contests.length}</strong></span>
         </div>
         <section className="stack">
+          {data.user.id === user?.id && <p><Link to="/virtual">Мои виртуальные контесты</Link></p>}
           <h2>Последние посылки</h2>
           <QueryState query={recent}>
             {recent.data && (recent.data.items.length ? <SubmissionTable items={recent.data.items} /> : <Empty><p>Посылок пока нет.</p>{own && <Link className="btn secondary" to="/problems">Выбрать задачу</Link>}</Empty>)}

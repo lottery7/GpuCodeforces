@@ -52,7 +52,7 @@ class SubmissionStatsTest {
         val accepted = AcceptedSubmission(UUID.randomUUID(), user, "guess", contest, "hash", GPU, null, Instant.now())
         given(repository.findWithStatus(SubmissionStatus.ACCEPTED, scope.judgeHashes.keys)).willReturn(listOf(accepted))
         given(repository.findWithStatus(SubmissionStatus.ACCEPTED, listOf("guess"))).willReturn(listOf(accepted))
-        given(repository.findWithStatusInContest(SubmissionStatus.ACCEPTED, contest)).willReturn(listOf(accepted))
+        given(repository.findWithStatusInContext(SubmissionStatus.ACCEPTED, contest.toString())).willReturn(listOf(accepted))
 
         assertThat(stats.firstAcceptedInContest(contest)).containsEntry(user, mapOf("guess" to accepted.createdAt))
         assertThat(stats.bestScore(user, "guess", contest, "hash", GPU)).isNull()
@@ -71,7 +71,7 @@ class SubmissionStatsTest {
         val coding = AcceptedSubmission(UUID.randomUUID(), user, "coding", contest, "hash", GPU, BigDecimal("2.5"), start.plusSeconds(60))
         val later = AcceptedSubmission(UUID.randomUUID(), user, "coding", contest, "hash", GPU, BigDecimal("1.25"), start.plusSeconds(120))
         val guess = AcceptedSubmission(UUID.randomUUID(), user, "guess", contest, "hash", GPU, null, start.plusSeconds(90))
-        given(repository.findWithStatusInContest(SubmissionStatus.ACCEPTED, contest)).willReturn(listOf(later, coding, guess))
+        given(repository.findWithStatusInContext(SubmissionStatus.ACCEPTED, contest.toString())).willReturn(listOf(later, coding, guess))
 
         assertThat(stats.firstAcceptedInContest(contest))
             .containsEntry(user, mapOf("coding" to coding.createdAt, "guess" to guess.createdAt))

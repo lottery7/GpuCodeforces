@@ -106,7 +106,7 @@ describe('Создание контеста', () => {
 
     await waitFor(() => expect(create).toHaveBeenCalledWith({
       title: 'GPU Round', format: 'standard', startAt, endAt: new Date(Date.parse(startAt) + 90 * 60000).toISOString(),
-      authorIds: [zeta.id, alpha.id], problemIds: ['transpose', 'reduce', 'add'], processor: 'gpu-cuda',
+      authorIds: [zeta.id, alpha.id], problemIds: ['transpose', 'reduce', 'add'], processor: 'gpu-cuda', hackDurationMinutes: 0,
     }));
     expect(await screen.findByText('Контест сохранен')).toBeVisible();
   });
@@ -137,7 +137,7 @@ describe('Создание контеста', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
     await waitFor(() => expect(update).toHaveBeenCalledWith(original.id, {
       title: 'Мои изменения', format: 'standard', startAt: original.startAt, endAt: new Date(Date.parse(original.startAt) + 75 * 60000).toISOString(),
-      authorIds: [creator.id, alpha.id], problemIds: ['reduce', 'transpose'], processor: 'gpu-cuda',
+      authorIds: [creator.id, alpha.id], problemIds: ['reduce', 'transpose'], processor: 'gpu-cuda', hackDurationMinutes: 0,
     }));
   });
 

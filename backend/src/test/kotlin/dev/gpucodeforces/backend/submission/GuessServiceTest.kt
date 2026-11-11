@@ -95,7 +95,7 @@ class GuessServiceTest {
         assertThat(snapshot.scoreType).isEqualTo(ScoreType.CYCLES_X_DEPTH_X_TRANSISTORS)
         assertThat(snapshot.correctChoice()).isEqualTo("first")
         verify(users).findForUpdate(author.id)
-        verify(submissions).submissionContext(null, author)
+        verify(submissions).submissionContext("practice", author)
     }
 
     @Test
@@ -113,7 +113,7 @@ class GuessServiceTest {
     @Test
     fun `a repeated choice returns the immutable prior attempt`() {
         val previous = submit()
-        given(repository.findGuess(author.id, version.id, null, originalKey)).willReturn(previous)
+        given(repository.findGuess(author.id, version.id, "practice", originalKey)).willReturn(previous)
 
         assertThat(submit()).isSameAs(previous)
         assertThatThrownBy { submit("second") }
@@ -122,7 +122,7 @@ class GuessServiceTest {
 
     @Test
     fun `a forbidden contest submission does not save an answer`() {
-        given(submissions.submissionContext(null, author)).willThrow(ForbiddenException("Нет регистрации"))
+        given(submissions.submissionContext("practice", author)).willThrow(ForbiddenException("Нет регистрации"))
 
         assertThatThrownBy { submit() }.isInstanceOf(ForbiddenException::class.java)
         verify(repository, never()).save(any(Submission::class.java))
@@ -147,7 +147,7 @@ class GuessServiceTest {
     fun `a new environment key allows a new attempt without rewriting the earlier measured answer`() {
         val previous = submit()
         val nextKey = "${version.id}:environment-2"
-        given(repository.findGuess(author.id, version.id, null, originalKey)).willReturn(previous)
+        given(repository.findGuess(author.id, version.id, "practice", originalKey)).willReturn(previous)
         given(references.requireReady(version, RTL)).willReturn(ready(key = nextKey, first = "3.0", second = "2.0", environmentKey = "environment-2"))
 
         val current = submit("second", nextKey)

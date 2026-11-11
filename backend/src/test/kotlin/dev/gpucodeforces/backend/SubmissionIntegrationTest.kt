@@ -16,6 +16,16 @@ import dev.gpucodeforces.backend.api.model.RunAdminScriptRequest
 import dev.gpucodeforces.backend.api.model.Submission
 import dev.gpucodeforces.backend.api.model.SubmitSolutionRequest
 import dev.gpucodeforces.backend.api.model.User
+import dev.gpucodeforces.backend.api.model.CreateHackRequest
+import dev.gpucodeforces.backend.api.model.Hack
+import dev.gpucodeforces.backend.api.model.VirtualParticipation
+import dev.gpucodeforces.backend.contest.ContestRepository
+import dev.gpucodeforces.backend.submission.HackService
+import dev.gpucodeforces.backend.submission.SubmissionService
+import dev.gpucodeforces.backend.submission.JudgingRunRepository
+import dev.gpucodeforces.backend.rating.RatingFinalizationService
+import org.springframework.jdbc.core.JdbcTemplate
+import org.intellij.lang.annotations.Language
 import dev.gpucodeforces.backend.problem.BenchmarkDefinition
 import dev.gpucodeforces.backend.problem.ProblemCatalog
 import dev.gpucodeforces.backend.problem.ProblemFormatData
@@ -89,6 +99,12 @@ class SubmissionIntegrationTest {
     @Autowired
     lateinit var jsonMapper: JsonMapper
 
+    @Autowired lateinit var contests: ContestRepository
+    @Autowired lateinit var hacks: HackService
+    @Autowired lateinit var submissionService: SubmissionService
+    @Autowired lateinit var ratingFinalizer: RatingFinalizationService
+    @Autowired lateinit var judgingRuns: JudgingRunRepository
+    @Autowired lateinit var jdbc: JdbcTemplate
     @Autowired
     lateinit var problemCatalog: ProblemCatalog
 
@@ -195,6 +211,7 @@ class SubmissionIntegrationTest {
     )
 
     @Test
+    @AllowFullScan("problems", "FROM gpucodeforces\\.problems p", "Exact catalogue totals and tags inspect current ids; only page metadata reaches the application")
     fun `submit, judge events through RabbitMQ, history, results, recheck, contest, example and console`() {
         val (alice, aliceCookie) = register("alice")
         val (bob, bobCookie) = register("bob")
@@ -250,6 +267,13 @@ class SubmissionIntegrationTest {
         assertThat(onGpu.bestSubmissionId).isEqualTo(first.id)
         assertThat(onGpu.recordScore!!.value).isEqualByComparingTo(BigDecimal("1.5"))
         assertThat(vectorAdd.processors.single { it.id == "rtl" }.recordScore).isNull()
+        val solvedPage = client.get().uri("/problems?solved=true&sort=bestScore&processor=gpu-cuda&limit=1").cookie("session", aliceCookie).exchange()
+            .expectStatus().isOk.expectBody(ListProblems200Response::class.java).returnResult().responseBody!!
+        assertThat(solvedPage.total).isEqualTo(1)
+        assertThat(solvedPage.items.map { it.id }).containsExactly("vector_add")
+        val unsolvedPage = client.get().uri("/problems?solved=false&limit=1").cookie("session", aliceCookie).exchange()
+            .expectStatus().isOk.expectBody(ListProblems200Response::class.java).returnResult().responseBody!!
+        assertThat(unsolvedPage.items.map { it.id }).containsExactly("matmul_host")
         val leaders = client.get().uri("/problems/vector_add/leaders?processor=gpu-cuda").exchange()
             .expectBody(Array<ListProblemLeaders200ResponseInner>::class.java).returnResult().responseBody!!
         assertThat(leaders.map { it.user.handle to it.rank }).containsExactly("alice" to 1)
@@ -357,6 +381,110 @@ class SubmissionIntegrationTest {
         assertThat(console.result).isEqualTo("2")
         assertThat(console.output).contains("ProblemSyncService")
         assertThat(console.error).isNull()
+    }
+
+    @Test
+    @AllowFullScan("user_ratings", "UPDATE gpucodeforces\\.user_ratings r SET rank", "Finalizing a contest recomputes the ranks of every rated user")
+    fun `hacks rejudge every accepted solution before finalization and training modes stay isolated`() {
+        val (author, authorCookie) = register("hack_author")
+        val (victim, victimCookie) = register("hack_victim")
+        val start = Instant.now().plusSeconds(1)
+        val contest = client.post().uri("/contests").contentType(MediaType.APPLICATION_JSON).cookie("session", authorCookie)
+            .body(
+                ContestInput(
+                    "Взломы и тренировка", start.atOffset(ZoneOffset.UTC), start.plusSeconds(3600).atOffset(ZoneOffset.UTC), setOf(author.id),
+                    setOf("vector_add"), "gpu-cuda",
+                ).hackDurationMinutes(60),
+            )
+            .exchange().expectStatus().isCreated.expectBody(Contest::class.java).returnResult().responseBody!!
+        for (cookie in listOf(authorCookie, victimCookie)) client.put().uri("/contests/${contest.id}/registration").cookie("session", cookie).exchange().expectStatus().isNoContent
+        Thread.sleep(Duration.between(Instant.now(), start).plusMillis(100).toMillis().coerceAtLeast(0))
+        val (target, firstRequest) = submit(victimCookie, "target", contest.id)
+        val (backup, backupRequest) = submit(victimCookie, "backup", contest.id)
+        publish(event(firstRequest, 1, JUDGE_FINISHED, result = finished(Verdict.ACCEPTED, 5, time = 1.0)))
+        publish(event(backupRequest, 1, JUDGE_FINISHED, result = finished(Verdict.ACCEPTED, 5, time = 2.0)))
+        awaitStatus(target.id, "accepted")
+        awaitStatus(backup.id, "accepted")
+        assertThat(fetch(target.id, authorCookie).code).isNull()
+        val entity = contests.findById(UUID.fromString(contest.id)).orElseThrow()
+        entity.endAt = Instant.now().minusMillis(1)
+        entity.startAt = entity.endAt.minusSeconds(3600)
+        entity.hackEndAt = Instant.now().plusSeconds(3600)
+        contests.saveAndFlush(entity)
+        assertThat(fetch(target.id, authorCookie).code).isEqualTo("target")
+
+        @Language("JSON") val input = """{"scalars":{"N":1},"inputs":{"A":[1],"B":[2]}}"""
+        client.post().uri("/hacks").contentType(MediaType.APPLICATION_JSON).cookie("session", victimCookie)
+            .body(CreateHackRequest(target.id, input)).exchange().expectStatus().isForbidden
+        val hack = client.post().uri("/hacks").contentType(MediaType.APPLICATION_JSON).cookie("session", authorCookie)
+            .body(CreateHackRequest(target.id, input)).exchange().expectStatus().isAccepted.expectBody(Hack::class.java).returnResult().responseBody!!
+        val hackRequest = nextGatewayRequest()
+        assertThat(hackRequest.problem.customOnly).isTrue()
+        assertThat(hackRequest.problem.customTests.single().inputs.keys).containsExactlyInAnyOrder("A", "B")
+        publish(event(hackRequest, 1, JUDGE_FINISHED, result = finished(Verdict.WRONG_ANSWER, 1, 1)))
+        val deadline = Instant.now().plusSeconds(10)
+        while (hacks.list(entity.id).single().status == "queued" && Instant.now().isBefore(deadline)) Thread.sleep(50)
+        assertThat(hacks.list(entity.id).single().status).isEqualTo("successful")
+        publish(event(hackRequest, 1, JUDGE_FINISHED, result = finished(Verdict.WRONG_ANSWER, 1, 1)))
+        assertThat(hacks.list(entity.id)).hasSize(1)
+
+        entity.hackEndAt = Instant.now().minusMillis(1)
+        contests.saveAndFlush(entity)
+        ratingFinalizer.finalize(entity.id, Instant.now())
+        assertThat(contests.findById(entity.id).orElseThrow().finalizedAt).isNull()
+        submissionService.rejudgeExpandedSuites()
+        val rejudges = listOf(nextGatewayRequest(), nextGatewayRequest())
+        assertThat(rejudges.map { it.source }).containsExactlyInAnyOrder("target", "backup")
+        rejudges.forEach { request ->
+            assertThat(request.problem.customTests).hasSize(1)
+            assertThat(request.problem.customOnly).isFalse()
+            publish(event(request, 1, JUDGE_FINISHED, result = if (request.source == "target") finished(Verdict.WRONG_ANSWER, 6, 6) else finished(Verdict.ACCEPTED, 6, time = 2.0)))
+        }
+        awaitStatus(target.id, "wrong_answer")
+        awaitStatus(backup.id, "accepted")
+        assertThat(judgingRuns.findBySubmissionIdIn(setOf(UUID.fromString(target.id), UUID.fromString(backup.id)))).hasSize(2)
+        ratingFinalizer.finalize(entity.id, Instant.now())
+        assertThat(contests.findById(entity.id).orElseThrow().finalizedAt).isNotNull()
+
+        fun training(context: String): Pair<Submission, SubmissionRequest> {
+            val sent = client.post().uri("/submissions").cookie("session", authorCookie).contentType(MediaType.APPLICATION_JSON)
+                .body(SubmitSolutionRequest("vector_add", "training", "gpu-cuda", "cuda").context(context))
+                .exchange().expectStatus().isAccepted.expectBody(Submission::class.java).returnResult().responseBody!!
+            return sent to nextGatewayRequest()
+        }
+        val (upsolve, upsolveRequest) = training("upsolve:${contest.id}")
+        assertThat(upsolve.context).isEqualTo("upsolve:${contest.id}")
+        assertThat(upsolveRequest.problem.customTests).hasSize(1)
+        publish(event(upsolveRequest, 1, JUDGE_FINISHED, result = finished(Verdict.ACCEPTED, 6, time = 0.5)))
+        awaitStatus(upsolve.id, "accepted")
+
+        fun startVirtual() = client.post().uri("/contests/${contest.id}/virtual").cookie("session", authorCookie)
+            .exchange().expectStatus().isCreated.expectBody(VirtualParticipation::class.java).returnResult().responseBody!!
+        val virtual = startVirtual()
+        assertThat(startVirtual().id).isEqualTo(virtual.id)
+        client.get().uri("/virtual/${virtual.id}").cookie("session", victimCookie).exchange().expectStatus().isForbidden
+        val (virtualSubmission, virtualRequest) = training("virtual:${virtual.id}")
+        client.get().uri("/submissions/${virtualSubmission.id}").cookie("session", victimCookie).exchange().expectStatus().isForbidden
+        @Language("SQL") val expire = "UPDATE gpucodeforces.virtual_participations SET started_at = now() - interval '2 hours', ends_at = now() - interval '1 second' WHERE id = ?"
+        jdbc.update(expire, UUID.fromString(virtual.id))
+        client.post().uri("/submissions").cookie("session", authorCookie).contentType(MediaType.APPLICATION_JSON)
+            .body(SubmitSolutionRequest("vector_add", "late", "gpu-cuda", "cuda").context("virtual:${virtual.id}"))
+            .exchange().expectStatus().isBadRequest
+        publish(event(virtualRequest, 1, JUDGE_FINISHED, result = finished(Verdict.ACCEPTED, 6, time = 0.25)))
+        awaitStatus(virtualSubmission.id, "accepted", authorCookie)
+        val result = client.get().uri("/virtual/${virtual.id}").cookie("session", authorCookie).exchange()
+            .expectStatus().isOk.expectBody(VirtualParticipation::class.java).returnResult().responseBody!!
+        assertThat(result.solved).isEqualTo(1)
+        assertThat(result.pending).isFalse()
+        val standings = client.get().uri("/contests/${contest.id}/standings").exchange().expectStatus().isOk
+            .expectBody(Array<GetContestStandings200ResponseInner>::class.java).returnResult().responseBody!!
+        // upsolving and the virtual attempt left the official table alone: the hacked solution fell, the backup stands
+        assertThat(standings.single { it.user.id == author.id }.solved).isZero()
+        assertThat(standings.single { it.user.id == victim.id }.solved).isEqualTo(1)
+        assertThat(result.times.keys).containsExactly("vector_add")
+        val next = startVirtual()
+        assertThat(next.id).isNotEqualTo(virtual.id)
+        assertThat(next.solved).isZero()
     }
 
     @Test

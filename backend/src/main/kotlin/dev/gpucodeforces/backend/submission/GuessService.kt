@@ -58,11 +58,12 @@ class GuessService(
         val measured = references.requireReady(version, target.id)
         val key = checkNotNull(measured.key)
         if (benchmarkKey != key) throw BadRequestException("Условия сравнения изменились. Обновите задачу и выберите ответ заново")
-        submissionRepository.findGuess(author.id, version.id, contestId, key)?.let { previous ->
+        val contextKey = problem.context.key
+        submissionRepository.findGuess(author.id, version.id, contextKey, key)?.let { previous ->
             if (previous.guessChoice != choice) throw BadRequestException("Ответ уже сохранён, изменить его нельзя")
             return previous
         }
-        submissionService.submissionContext(contestId?.toString(), author)
+        submissionService.submissionContext(contextKey, author)
         val format = problemCatalog.format(version)
         val snapshot = GuessSnapshot(
             checkNotNull(measured.firstScore), checkNotNull(measured.secondScore), measured.scoreType, format.explanation, key, measured.synthetic,
@@ -82,6 +83,7 @@ class GuessService(
                 language = target.languages.single(),
                 previousBestScore = null,
                 guessChoice = choice,
+                contextKey = contextKey,
             ).apply {
                 guessBenchmarkKey = key
                 benchmarkEnvironmentKey = measured.environmentKey

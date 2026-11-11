@@ -100,6 +100,7 @@ class DuelIntegrationTest {
             .expectBody(NotificationPage::class.java).returnResult().responseBody!!
 
     @Test
+    @AllowFullScan("contests", "select count\\(\\*\\) from gpucodeforces\\.contests", "The test counts every contest to see that exactly one was created")
     fun `concurrent random searches create one immediate contest and register both players`() {
         val first = player()
         val second = player()
@@ -134,6 +135,7 @@ class DuelIntegrationTest {
     }
 
     @Test
+    @AllowFullScan("contests", "select count\\(\\*\\) from gpucodeforces\\.contests", "The test counts every contest to see that exactly one was created")
     fun `acceptance is atomic idempotent and cancels the recipients own outgoing invitation`() {
         val inviter = player()
         val recipient = player()

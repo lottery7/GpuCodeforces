@@ -115,6 +115,16 @@ describe('Доступ к задачам до начала', () => {
 });
 
 describe('Личные результаты контеста', () => {
+  it('дорешивание использует отдельный контекст и ссылки на архивные задачи', async () => {
+    vi.spyOn(api, 'getContest').mockResolvedValue({ ...contest('finished'), finalized: true });
+    const tasks = vi.spyOn(api, 'allProblems').mockResolvedValue([problem]);
+    open('/contest/cuda-round?mode=upsolving');
+    expect(await screen.findByRole('link', { name: 'A. Сложение векторов' })).toHaveAttribute('href', '/problem/vector-add?contest=upsolve%3Acuda-round');
+    expect(tasks).toHaveBeenCalledWith({ context: 'upsolve:cuda-round' }, expect.any(AbortSignal));
+    expect(screen.getByRole('button', { name: 'Начать виртуально' })).toBeVisible();
+    expect(screen.getByRole('link', { name: 'Официальные результаты' })).toBeVisible();
+  });
+
   it.each([
     { status: 'wrong_answer', label: 'Неверный ответ', phase: 'finished' },
     { status: 'queued', label: 'В очереди', phase: 'live' },

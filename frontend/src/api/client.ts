@@ -65,6 +65,12 @@ export function createApi(baseUrl = '/api', fetcher?: typeof fetch) {
     updateContest: (id: string, body: ContestInput) => result(http.PUT('/contests/{id}', { params: { path: { id } }, body })),
     registerForContest: (id: string) => result(http.PUT('/contests/{id}/registration', { params: { path: { id } } })),
     contestStandings: (id: string, signal?: AbortSignal) => result(http.GET('/contests/{id}/standings', { params: { path: { id } }, signal })),
+    startVirtual: (id: string) => result(http.POST('/contests/{id}/virtual', { params: { path: { id } } })),
+    getVirtual: (id: string, signal?: AbortSignal) => result(http.GET('/virtual/{id}', { params: { path: { id } }, signal })),
+    listVirtual: (signal?: AbortSignal) => result(http.GET('/virtual', { signal })),
+    listHacks: (contestId: string, signal?: AbortSignal) => result(http.GET('/hacks', { params: { query: { contestId } }, signal })),
+    createHack: (submissionId: string, testJson: string) => result(http.POST('/hacks', { body: { submissionId, testJson } })),
+    retryHack: (id: string) => result(http.POST('/hacks/{id}/retry', { params: { path: { id } } })),
   };
 }
 

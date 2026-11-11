@@ -37,7 +37,6 @@ import dev.gpucodeforces.judge.api.Score
 import org.springframework.http.ResponseEntity
 import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.RestController
-import java.math.BigDecimal
 import java.time.ZoneOffset
 import java.util.UUID
 import dev.gpucodeforces.backend.api.model.Problem as ProblemApiModel
@@ -59,6 +58,7 @@ class ProblemsController(
     private val submissionRepository: SubmissionRepository,
     private val judgeProperties: JudgeProperties,
     private val references: ReferenceMeasurements,
+    private val problemListing: ProblemListing,
 ) : ProblemsApi {
     override fun listProblems(
         context: String,
@@ -73,22 +73,27 @@ class ProblemsController(
         offset: Int,
         limit: Int,
     ): ResponseEntity<ListProblems200Response> {
-        if (sort !in SORTS) throw BadRequestException("Неизвестная сортировка")
-        if (sort == BEST_SCORE && processor == null) throw BadRequestException("Сортировка по score требует процессор")
+        if (sort !in ProblemListing.SORTS) throw BadRequestException("Неизвестная сортировка")
+        if (sort == ProblemListing.SORT_BEST_SCORE && processor == null) throw BadRequestException("Сортировка по score требует процессор")
+        if (difficulty != null && difficulty !in ProblemPackageReader.DIFFICULTIES) throw BadRequestException("Неизвестная сложность")
+        if (format != null && format !in ProblemFormatData.FORMATS) throw BadRequestException("Неизвестный формат")
+        processor?.let(processorCatalog::require)
         val viewer = CurrentUser.resolve()
         val subject = userId?.let { userService.getById(it) } ?: viewer
         val problemContext = problemService.context(context, viewer)
-        val pool = problemService.problems(problemContext, viewer)
-        val tags = pool.flatMap { it.version.tags }.distinct().sorted()
-        if (format != null && format !in ProblemFormatData.FORMATS) throw BadRequestException("Неизвестный формат")
-        val filtered = problemService.filter(pool, q, difficulty, tag, processor).filter { format == null || it.version.format == format }
-        val measured = filtered.associate { it.version.id to references.views(it.version) }
-        val results = results(problemContext, filtered, measured, subject?.id)
-        val items = filtered
-            .map { it.toApiModel(results.getValue(it.version.problemId), measured.getValue(it.version.id)) }
-            .filter { solved == null || it.solved == solved }
-            .let { if (problemContext == ProblemContext.Practice) sorted(it, sort, processor) else it }
-        return ResponseEntity.ok(ListProblems200Response(items.drop(offset).take(limit), items.size, tags))
+        // Sorting compares scores of the current GPU environment; a format problem measured in another one shows the
+        // record of that environment (results) and is ordered as if it had none here.
+        val filter = ProblemFilter(
+            q, difficulty, tag, format, solved, processor, sort,
+            gpuEnvironmentKey = currentGpuEnvironment().takeIf { processor == Processors.GPU_CUDA },
+        )
+        val page = problemListing.page(problemContext, viewer, subject?.id, filter, offset, limit)
+        val versions = problemCatalog.versions(page.versionIds)
+        val problems = page.versionIds.map { ContextProblem(versions.getValue(it), problemContext) }
+        val measured = problems.associate { it.version.id to references.views(it.version) }
+        val results = results(problemContext, problems, measured, subject?.id)
+        val items = problems.map { it.toApiModel(results.getValue(it.version.problemId), measured.getValue(it.version.id)) }
+        return ResponseEntity.ok(ListProblems200Response(items, page.total, page.tags))
     }
 
     override fun getProblem(id: String, context: String): ResponseEntity<GetProblem200Response> {
@@ -112,8 +117,7 @@ class ProblemsController(
         // a guess has one processor: the answer belongs to the measurements of that processor
         val guessReference = if (version.format == ProblemFormatData.GUESS) measured.values.singleOrNull() else null
         val guessSubmissionId = if (viewer != null && guessReference?.status == "ready" && guessReference.key != null) {
-            submissionRepository.findGuess(viewer.id, version.id, (problemContext as? ProblemContext.InContest)?.contest?.id, guessReference.key)
-                ?.id?.toString()
+            submissionRepository.findGuess(viewer.id, version.id, problemContext.key, guessReference.key)?.id?.toString()
         } else {
             null
         }
@@ -178,6 +182,7 @@ class ProblemsController(
         (context as? ProblemContext.InContest)?.contest?.id,
         problems.associate { it.version.problemId to it.version.judgeHash },
         gpuEnvironmentKey,
+        context.key,
     )
 
     private fun currentGpuEnvironment(): String = references.environmentKey(Processors.GPU_CUDA) ?: "unavailable"
@@ -199,17 +204,6 @@ class ProblemsController(
             }
         }.flatMap { (environment, group) -> submissionStats.problemResults(scope(context, group, environment), userId, Processors.ids).entries }
             .associate { it.toPair() }
-    }
-
-    private fun sorted(items: List<ProblemApiModel>, sort: String, processor: String?): List<ProblemApiModel> {
-        val byCode = compareBy<ProblemApiModel> { it.code }
-        return when (sort) {
-            "difficulty" -> items.sortedWith(compareBy<ProblemApiModel> { ProblemPackageReader.DIFFICULTIES.indexOf(it.difficulty.value) }.then(byCode))
-            BEST_SCORE -> items.sortedWith(
-                compareBy<ProblemApiModel, BigDecimal?>(nullsLast()) { problem -> problem.processors.find { it.id == processor }?.bestScore?.value }.then(byCode),
-            )
-            else -> items.sortedWith(byCode)
-        }
     }
 
     /** What a person is shown as the model of [processor]: the GPU the executors report now, else the configured one. */
@@ -246,8 +240,6 @@ class ProblemsController(
     private fun AcceptedSubmission.scoreModel(): ScoreApiModel = scoreApiModel(score!!, Processors.get(processor).scoreType)
 
     companion object {
-        private const val BEST_SCORE = "bestScore"
-        private val SORTS = setOf("code", "difficulty", BEST_SCORE)
         private const val LEADERS_LIMIT = 20
     }
 }

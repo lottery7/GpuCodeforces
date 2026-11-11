@@ -208,6 +208,24 @@ components:
         timing: {$ref: '#/components/schemas/TimingSpec'}
         compile: {$ref: '#/components/schemas/CompileSpec'}
         policy: {$ref: '#/components/schemas/PolicyOverrides'}
+        allowCustomTests:
+          type: boolean
+          default: false
+          description: Генератор определяет validate_input(test, inputs), и задаче можно передавать customTests
+        customOnly:
+          type: boolean
+          default: false
+          description: Запускается только единственный тест из customTests, без тестов генератора
+        customTests:
+          type: array
+          maxItems: 32
+          description: Тесты, заданные данными; идут после тестов генератора на любом процессоре задачи, без замера score
+          items:
+            type: object
+            required: [scalars, inputs]
+            properties:
+              scalars: {type: object, additionalProperties: {type: number}}
+              inputs: {type: object, additionalProperties: {type: array, items: {type: number}}}
         processors:
           type: array
           items: {$ref: '#/components/schemas/ProcessorSpec'}

@@ -7,12 +7,14 @@ import dev.gpucodeforces.backend.common.toUuidOrNotFound
 import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
 import dev.gpucodeforces.backend.contest.ContestPhase
 import dev.gpucodeforces.backend.contest.ContestService
+import dev.gpucodeforces.backend.contest.ContestRepository
 import dev.gpucodeforces.backend.problem.ProblemCatalog
 import dev.gpucodeforces.backend.problem.ProblemContext
 import dev.gpucodeforces.backend.problem.ProblemEnvironments
 import dev.gpucodeforces.backend.problem.ProblemFormatData
 import dev.gpucodeforces.backend.problem.ProblemService
 import dev.gpucodeforces.backend.user.User
+import dev.gpucodeforces.backend.user.UserRepository
 import dev.gpucodeforces.judge.api.JudgeEvent
 import dev.gpucodeforces.judge.api.JudgeResult
 import dev.gpucodeforces.judge.api.SpecValidator
@@ -50,20 +52,38 @@ class SubmissionService(
     private val transactionTemplate: TransactionTemplate,
     private val jsonMapper: JsonMapper,
     private val references: ReferenceMeasurements,
+    private val contestRepository: ContestRepository,
+    private val hacks: HackService,
+    private val runs: JudgingRunRepository,
+    private val users: UserRepository,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    fun submit(problemId: String, contestId: String?, processor: String, language: String, code: String, author: User): Submission {
-        val problem = problemService.problem(problemId, submissionContext(contestId, author), author)
+    /**
+     * [context] is where the submission counts (`practice`, a contest, `upsolve:<contest>`, `virtual:<attempt>`);
+     * [contestId] is its older form for official participation.
+     */
+    fun submit(
+        problemId: String, contestId: String?, processor: String, language: String, code: String, author: User, context: String? = null,
+    ): Submission {
+        val resolvedContext = submissionContext(context ?: contestId, author)
+        val problem = problemService.problem(problemId, resolvedContext, author)
         if (problem.version.format == ProblemFormatData.GUESS) throw BadRequestException("Выберите более быстрый код вместо отправки решения")
         problemService.requireTarget(problem, processor, language)
         validateSource(code)
-        if (submissionRepository.countByUserIdAndStatusIn(author.id, SubmissionStatus.PENDING) >= judgeProperties.maxPendingPerUser) {
-            throw BadRequestException("Дождитесь проверки предыдущих посылок")
-        }
         val version = problem.version
         val contest = (problem.context as? ProblemContext.InContest)?.contest
+        if (contestId != null && contest?.id?.toString() != contestId) throw BadRequestException("Контест не соответствует контексту")
         val submission = transactionTemplate.execute {
+            // Under these locks the contest cannot be finalized and a virtual attempt cannot start meanwhile; the
+            // context is checked again at the moment the submission is taken.
+            contest?.let { contestRepository.findForUpdate(it.id) }
+            checkNotNull(users.findForUpdate(author.id)) { "User ${author.id} disappeared" }
+            val acceptedAt = Instant.now()
+            submissionContext(resolvedContext.key, author, acceptedAt)
+            if (submissionRepository.countByUserIdAndStatusIn(author.id, SubmissionStatus.PENDING) >= judgeProperties.maxPendingPerUser) {
+                throw BadRequestException("Дождитесь проверки предыдущих посылок")
+            }
             submissionRepository.save(
                 Submission(
                     id = UUID.randomUUID(),
@@ -78,8 +98,11 @@ class SubmissionService(
                     language = language,
                     previousBestScore = submissionStats.bestScore(
                         author.id, version.problemId, contest?.id, version.judgeHash, processor, benchmarkEnvironmentKey(processor),
+                        resolvedContext.key,
                     ),
-                ),
+                    createdAt = acceptedAt,
+                    contextKey = resolvedContext.key,
+                ).also { it.testSuite = hacks.suite(contest?.id, version.problemId) },
             )
         }!!
         withSubmission(submission.id) {
@@ -95,33 +118,74 @@ class SubmissionService(
     fun get(id: String): Submission =
         submissionRepository.findById(id.toUuidOrNotFound("Посылка не найдена")).orElseThrow { NotFoundApiException("Посылка не найдена") }
 
-    /** Only after a judge failure: the same code, context, version and time are checked again. */
+    /**
+     * Only after a judge failure: the same code, context, version and time are checked again. Not for an official
+     * submission of a contest whose results are final.
+     */
     fun recheck(id: String, author: User): Submission {
+        val initial = get(id)
         val submission = transactionTemplate.execute {
-            val submission = submissionRepository.findForUpdate(get(id).id)!!
+            initial.contestId?.let {
+                val contest = contestRepository.findForUpdate(it)!!
+                if (initial.official && contest.finalizedAt != null) throw BadRequestException("Официальные результаты уже зафиксированы")
+            }
+            val submission = submissionRepository.findForUpdate(initial.id)!!
             if (submission.userId != author.id) throw ForbiddenException("Повторить проверку может только автор посылки")
             if (submission.status != SubmissionStatus.SYSTEM_ERROR && submission.status != SubmissionStatus.MEASUREMENT_ERROR) {
                 throw BadRequestException("Повторная проверка доступна только после сбоя проверки")
             }
-            submission.recheckCount++
-            submission.status = SubmissionStatus.QUEUED
-            submission.score = null
-            submission.scoreType = null
-            submission.metrics = emptyMap()
-            submission.measurement = null
-            submission.benchmarkEnvironmentKey = null
-            submission.passedTests = 0
-            submission.totalTests = null
-            submission.diagnostic = ""
-            submission.jobId = null
-            submission.eventAttempt = 0
-            submission.eventSeq = 0
-            submission.finishedAt = null
-            submission.updatedAt = Instant.now()
+            reset(submission)
             submission
         }!!
         withSubmission(submission.id) { log.info("Recheck #{} requested, judge id {}", submission.recheckCount, submission.judgeSubmissionId) }
         return send(submission)
+    }
+
+    /** Back to the queue for another check; the result so far stays in the judging runs. */
+    private fun reset(submission: Submission) {
+        runs.save(JudgingRun(submission))
+        submission.recheckCount++
+        submission.status = SubmissionStatus.QUEUED
+        submission.score = null
+        submission.scoreType = null
+        submission.metrics = emptyMap()
+        submission.measurement = null
+        submission.benchmarkEnvironmentKey = null
+        submission.passedTests = 0
+        submission.totalTests = null
+        submission.diagnostic = ""
+        submission.jobId = null
+        submission.eventAttempt = 0
+        submission.eventSeq = 0
+        submission.finishedAt = null
+        submission.updatedAt = Instant.now()
+    }
+
+    /** A newer successful hack can arrive while an older suite is still running. Catch up durably. */
+    @Scheduled(fixedDelayString = "PT15S")
+    fun rejudgeExpandedSuites() {
+        contestRepository.findByFinalizedAtIsNullAndEndAtLessThanEqual(Instant.now()).forEach { contest ->
+            val changed = mutableListOf<Submission>()
+            transactionTemplate.executeWithoutResult {
+                val current = contestRepository.findForUpdate(contest.id)!!
+                if (current.finalizedAt != null) return@executeWithoutResult
+                val budget = (2 - submissionRepository.countPendingRejudges(SubmissionStatus.PENDING)).coerceAtLeast(0).toInt()
+                // an answer to a guess ran no tests: there is nothing to judge again
+                submissionRepository.findByContestId(contest.id).filter {
+                    it.official && it.guessChoice == null && it.status == SubmissionStatus.ACCEPTED &&
+                        it.testSuite != hacks.suite(contest.id, it.problemId)
+                }.take(budget).forEach { candidate ->
+                    val suite = hacks.suite(contest.id, candidate.problemId)
+                    if (candidate.testSuite != suite) {
+                        val submission = submissionRepository.findForUpdate(candidate.id)!!
+                        reset(submission)
+                        submission.testSuite = suite
+                        changed += submission
+                    }
+                }
+            }
+            changed.forEach { send(it) }
+        }
     }
 
     @Scheduled(fixedDelayString = "\${platform.judge.resend-interval:PT15S}")
@@ -219,8 +283,11 @@ class SubmissionService(
             submission.scoreType = score.type
             submission.metrics = result.metrics
             measure(submission, result, expectedTestCount)
-            // An accepted submission ran every test of its processor: the problem page can list them now.
-            if (submission.status == SubmissionStatus.ACCEPTED) environments.recordTests(submission.judgeHash, submission.processor, result.tests)
+            // An accepted submission ran every test of its processor: the problem page can list them now. Not with
+            // custom tests of hacks: those belong to a contest, not to the problem.
+            if (submission.status == SubmissionStatus.ACCEPTED && submission.testSuite == TestSuite.BASE) {
+                environments.recordTests(submission.judgeHash, submission.processor, result.tests)
+            }
         }
         if (submission.status != SubmissionStatus.MEASUREMENT_ERROR) submission.diagnostic = result.diagnostic()
         submission.finishedAt = event.timestamp
@@ -264,7 +331,8 @@ class SubmissionService(
     private fun send(submission: Submission): Submission = withSubmission(submission.id) {
         val request = SubmissionRequest(
             submissionId = submission.judgeSubmissionId,
-            problem = problemCatalog.spec(problemCatalog.versions(listOf(submission.problemVersionId)).getValue(submission.problemVersionId)),
+            problem = problemCatalog.spec(problemCatalog.versions(listOf(submission.problemVersionId)).getValue(submission.problemVersionId))
+                .copy(customTests = hacks.tests(submission.testSuite)),
             source = submission.code,
             processor = submission.processor,
             language = submission.language,
@@ -298,11 +366,18 @@ class SubmissionService(
         }!!
     }
 
-    fun submissionContext(contestId: String?, author: User): ProblemContext {
-        if (contestId == null) return ProblemContext.Practice
-        val context = problemService.context(contestId, author) as ProblemContext.InContest
+    /** The context [key] names, if [author] may send a solution to it now. */
+    fun submissionContext(key: String?, author: User): ProblemContext = submissionContext(key, author, Instant.now())
+
+    private fun submissionContext(key: String?, author: User, now: Instant): ProblemContext {
+        val context = problemService.context(key, author) as? ProblemContext.InContest ?: return ProblemContext.Practice
         val contest = context.contest
-        if (contest.phaseAt(Instant.now()) != ContestPhase.LIVE) throw BadRequestException("Контест не идёт; решение можно отправить в практику")
+        if (context.virtual != null) {
+            if (!context.virtual.activeAt(now)) throw BadRequestException("Время виртуального контеста истекло")
+            return context
+        }
+        if (context.upsolving) return context
+        if (contest.phaseAt(now) != ContestPhase.LIVE) throw BadRequestException("Контест не идёт; решение можно отправить в практику")
         if (!contestService.isRegistered(contest.id, author.id)) throw ForbiddenException("Для отправки нужна регистрация на контест")
         return context
     }

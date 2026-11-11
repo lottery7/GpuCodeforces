@@ -34,13 +34,15 @@ data class GeneratedTest(
 
         /**
          * Checks the tests a generator declared for [processor]; they are its output, so as untrusted as the rest of
-         * it. [declared] are the processors of the problem.
+         * it. [declared] are the processors of the problem. [requireMeasured] is false for a lone custom test, which
+         * gives no score.
          */
         fun validate(
             sig: Signature, tests: List<GeneratedTest>, limits: SpecValidator.Limits, declared: List<String>, processor: String,
+            requireMeasured: Boolean = true,
         ): List<String> = buildList {
             if (tests.isEmpty()) add("the generator declares no tests for processor $processor")
-            if (tests.isNotEmpty() && tests.none { it.measure }) {
+            if (requireMeasured && tests.isNotEmpty() && tests.none { it.measure }) {
                 add("processor $processor has no measured test: add a test with \"processors\": [\"$processor\"] that does not set \"measure\": False")
             }
             if (tests.size > limits.maxTests) add("too many tests: ${tests.size} > ${limits.maxTests}")

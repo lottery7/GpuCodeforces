@@ -199,6 +199,7 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
         appendLine("params ${sig.params.size}")
         for (t in prepared.tests) {
             appendLine("test ${t.index}")
+            appendLine("measure ${if (t.spec.measure) 1 else 0}")
             sig.params.forEachIndexed { pi, p ->
                 if (p.role == ParamRole.SCALAR) {
                     val v = t.spec.scalars.getValue(p.name)
