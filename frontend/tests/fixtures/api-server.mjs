@@ -392,7 +392,10 @@ export function createApiServer() {
           const order = { easy: 0, medium: 1, hard: 2 };
           items.sort((a, b) => (sort === 'difficulty' ? order[a.difficulty] - order[b.difficulty] : sort === 'bestTime' ? (a.bestTimeMs ?? Infinity) - (b.bestTimeMs ?? Infinity) : 0) || a.code.localeCompare(b.code));
         }
-        return send(response, 200, { ...page(items, query), tags });
+        const targetId = target ? target.id : null;
+        const solvedCount = targetId ? all.filter(problem => model.solved(problem.id, targetId, contestId)).length : 0;
+        const streak = targetId ? model.streak(targetId) : 0;
+        return send(response, 200, { ...page(items, query), tags, solvedCount, totalCount: all.length, streak });
       }
 
       if (resource === 'problems' && id && segments.length <= 3) {

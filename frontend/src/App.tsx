@@ -15,9 +15,18 @@ const Profile = lazy(() => import('./pages/Profile'));
 const Rating = lazy(() => import('./pages/Rating'));
 const Home = lazy(() => import('./pages/Home'));
 
+const navIcons: Record<string, ReactNode> = {
+  '/problems': <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 3h6v4H9z" /><path d="M4 7h16v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z" /><path d="M9 12h6M9 16h6" /></svg>,
+  '/contests': <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" /><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" /><path d="M4 22h16" /><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" /><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" /><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z" /></svg>,
+  '/submissions': <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 2 11 13" /><path d="M22 2 15 22l-4-9-9-4Z" /></svg>,
+  '/rating': <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 3v18h18" /><path d="M7 15l3-3 3 3 4-6" /></svg>,
+};
+
 const navigation = [
-  ['/problems', 'Задачи'], ['/contests', 'Соревнования'],
-  ['/submissions', 'Посылки'], ['/rating', 'Рейтинг'],
+  { to: '/problems', title: 'Задачи', icon: navIcons['/problems'] },
+  { to: '/contests', title: 'Соревнования', icon: navIcons['/contests'] },
+  { to: '/submissions', title: 'Посылки', icon: navIcons['/submissions'] },
+  { to: '/rating', title: 'Рейтинг', icon: navIcons['/rating'] },
 ];
 
 class PageBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -46,7 +55,7 @@ function Shell() {
   }, [location.pathname, location.key]);
   const returnTo = () => location.pathname + location.search;
   function links() {
-    return navigation.map(([to, title]) => <NavLink key={to} to={to} className={({ isActive }) => isActive || (to === '/contests' && location.pathname.startsWith('/contest/')) || (to === '/problems' && location.pathname.startsWith('/problem/')) || (to === '/submissions' && location.pathname.startsWith('/submission/')) ? 'active' : undefined}>{title}</NavLink>);
+    return navigation.map(({ to, title, icon }) => <NavLink key={to} to={to} className={({ isActive }) => isActive || (to === '/contests' && location.pathname.startsWith('/contest/')) || (to === '/problems' && location.pathname.startsWith('/problem/')) || (to === '/submissions' && location.pathname.startsWith('/submission/')) ? 'active' : undefined}><span className="nav-icon" aria-hidden="true">{icon}</span><span>{title}</span></NavLink>);
   }
   function account() {
     if (session.isLoading) return <span className="muted" role="status">Загрузка...</span>;
