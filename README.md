@@ -93,8 +93,11 @@ comment in the solution, see [Testing system](#testing-system).
 
 ## Testing system
 
-The judge accepts `.cu` submissions, compiles them, runs them on a GPU in an nsjail
-sandbox and reports verdicts asynchronously through RabbitMQ. Architecture, problem
+The judge accepts submissions for a processor in one of its languages: CUDA on a real
+NVIDIA GPU (`gpu-cuda`), or a processor in an emulator (`rtl`, `riscv-rvv`, `cuda-sim`,
+`coral-npu`). It compiles them, runs them in an nsjail sandbox and reports
+verdicts with a typed score (time, cycles, ...) asynchronously through RabbitMQ. The
+processors a deployment offers are listed in `JUDGE_PROCESSORS` (default `gpu-cuda`). Architecture, problem
 format, sandbox, verdicts and the backend contract are described (in Russian) in
 [judge/README.md](judge/README.md) and [judge/docs/problem-format.md](judge/docs/problem-format.md).
 
@@ -105,6 +108,8 @@ still starts only PostgreSQL:
 docker compose --profile judge up -d --wait          # RabbitMQ + judge gateway
 docker compose --profile mock up -d --wait --build   # + mock executor, no GPU needed
 docker compose --profile gpu up -d --wait --build    # + real executor on an NVIDIA GPU
+JUDGE_PROCESSORS=gpu-cuda,rtl docker compose --profile gpu --profile emu up -d --wait --build
+                                                     # + executor of the emulated processors (rtl), no GPU
 ```
 
 | Service | Address |
@@ -112,10 +117,11 @@ docker compose --profile gpu up -d --wait --build    # + real executor on an NVI
 | Gateway API, Swagger UI | <http://localhost:8090>, `/swagger-ui.html` |
 | RabbitMQ management UI | <http://localhost:15672> |
 | Executor actuator (`gpu` profile) | <http://localhost:8081/actuator/health> |
+| Emulator executor actuator (`emu` profile) | <http://localhost:8082/actuator/health> |
 
 The mock executor answers with the verdict requested in a source comment, for example
-`// judge-mock: verdict=WRONG_ANSWER test=2`, and `ACCEPTED` otherwise. Do not run it
-next to a real executor of the same GPU profile. Executors on other machines use
+`// judge-mock: verdict=WRONG_ANSWER test=2 score=3.5`, and `ACCEPTED` otherwise. Do not run it
+next to a real executor of the same processor. Executors on other machines use
 [judge/deploy/compose.executor.yaml](judge/deploy/compose.executor.yaml).
 
 Send a submission from the console (`--watch` needs `pip install pika`):
@@ -146,7 +152,8 @@ The React application is in [frontend](frontend/README.md).
 
 The contract is [docs/frontend/openapi.yaml](docs/frontend/openapi.yaml).
 It covers the MVP screens and actions, including example checks and retrying failed
-checks. Password recovery, private problems and GPU selection remain outside the MVP.
+checks, processors with per-processor ratings and contest processors. Password recovery
+and private problems remain outside the MVP.
 
 ```sh
 ./gradlew :backend:openApiValidate :backend:openApiGenerate

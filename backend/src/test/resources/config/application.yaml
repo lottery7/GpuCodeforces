@@ -9,3 +9,5 @@ spring:
 platform:
   problems:
     directory: ../judge/problems/examples
+  processors:
+    enabled: gpu-cuda,rtl

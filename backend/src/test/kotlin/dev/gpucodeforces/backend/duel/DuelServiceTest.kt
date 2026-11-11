@@ -2,7 +2,6 @@ package dev.gpucodeforces.backend.duel
 
 import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.common.ForbiddenException
-import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.contest.Contest
 import dev.gpucodeforces.backend.contest.ContestProblem
 import dev.gpucodeforces.backend.contest.ContestProblemRepository
@@ -12,6 +11,8 @@ import dev.gpucodeforces.backend.notification.Notification
 import dev.gpucodeforces.backend.notification.NotificationRepository
 import dev.gpucodeforces.backend.problem.ProblemCatalog
 import dev.gpucodeforces.backend.problem.ProblemVersion
+import dev.gpucodeforces.backend.processor.ProcessorCatalog
+import dev.gpucodeforces.backend.processor.ProcessorProperties
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.backend.user.UserRepository
 import org.assertj.core.api.Assertions.assertThat
@@ -37,7 +38,10 @@ class DuelServiceTest {
     private val contestProblems = mock(ContestProblemRepository::class.java)
     private val registrations = mock(ContestRegistrationRepository::class.java)
     private val notifications = mock(NotificationRepository::class.java)
-    private val service = DuelService(requests, activeUsers, lock, users, catalog, contests, contestProblems, registrations, notifications, GpuProperties())
+    private val service = DuelService(
+        requests, activeUsers, lock, users, catalog, contests, contestProblems, registrations, notifications,
+        ProcessorCatalog(ProcessorProperties(enabled = listOf(GPU, RTL))),
+    )
     private val storedRequests = mutableMapOf<UUID, DuelRequest>()
     private val slots = mutableMapOf<UUID, ActiveDuel>()
     private val people = listOf(User("alice", "alice@example.com", "hash"), User("bob", "bob@example.com", "hash"), User("carol", "carol@example.com", "hash"))
@@ -76,9 +80,11 @@ class DuelServiceTest {
         given(notifications.save(any(Notification::class.java))).willAnswer { call -> (call.arguments[0] as Notification).also { messages += it } }
     }
 
-    private fun problem(id: String, tags: List<String>, format: String = "standard", draft: Boolean = false) = ProblemVersion(
+    private fun problem(
+        id: String, tags: List<String>, format: String = "standard", draft: Boolean = false, processors: List<String> = listOf(GPU),
+    ) = ProblemVersion(
         id = UUID.randomUUID(), problemId = id, code = "1", title = id, difficulty = "easy", tags = tags,
-        authors = emptyList(), draft = draft, statementMarkdown = "Условие", starterCode = "void solve() {}",
+        authors = emptyList(), draft = draft, statementMarkdown = "Условие", processors = processors, starters = emptyMap(),
         judgeSpec = "{}", contentHash = "content", judgeHash = "judge", revision = null, format = format,
     )
 
@@ -89,9 +95,9 @@ class DuelServiceTest {
 
     @Test
     fun `compatible random requests start one immediate duel with a pinned common coding task`() {
-        val first = service.create("random", listOf("CUDA"), null, people[0])
+        val first = service.create("random", listOf("CUDA"), null, GPU, people[0])
         assertThat(first.status).isEqualTo("queued")
-        val second = service.create("random", listOf("cuda"), null, people[1])
+        val second = service.create("random", listOf("cuda"), null, GPU, people[1])
 
         assertThat(first.status).isEqualTo("matched")
         assertThat(second.status).isEqualTo("matched")
@@ -105,19 +111,19 @@ class DuelServiceTest {
 
     @Test
     fun `disjoint topics keep both requests waiting and one user cannot queue twice`() {
-        val first = service.create("random", listOf("CUDA"), null, people[0])
-        val second = service.create("random", listOf("Memory"), null, people[1])
+        val first = service.create("random", listOf("CUDA"), null, GPU, people[0])
+        val second = service.create("random", listOf("Memory"), null, GPU, people[1])
 
         assertThat(first.status).isEqualTo("queued")
         assertThat(second.status).isEqualTo("queued")
         assertThat(started).isEmpty()
-        assertThatThrownBy { service.create("random", emptyList(), null, people[0]) }.isInstanceOf(BadRequestException::class.java)
+        assertThatThrownBy { service.create("random", emptyList(), null, GPU, people[0]) }.isInstanceOf(BadRequestException::class.java)
     }
 
     @Test
     fun `an incoming invitation does not reserve its recipient`() {
-        service.create("invite", listOf("CUDA"), "BOB", people[0])
-        val ownSearch = service.create("random", listOf("CUDA"), null, people[1])
+        service.create("invite", listOf("CUDA"), "BOB", GPU, people[0])
+        val ownSearch = service.create("random", listOf("CUDA"), null, GPU, people[1])
 
         assertThat(ownSearch.status).isEqualTo("queued")
         assertThat(slots[people[1].id]!!.requestId).isEqualTo(ownSearch.id)
@@ -127,8 +133,8 @@ class DuelServiceTest {
 
     @Test
     fun `accepting an invitation cancels the recipients own outgoing invitation and only starts once`() {
-        val incoming = service.create("invite", listOf("CUDA"), "bob", people[0])
-        val outgoing = service.create("invite", listOf("CUDA"), "carol", people[1])
+        val incoming = service.create("invite", listOf("CUDA"), "bob", GPU, people[0])
+        val outgoing = service.create("invite", listOf("CUDA"), "carol", GPU, people[1])
         val accepted = service.accept(incoming.id.toString(), people[1])
         val repeated = service.accept(incoming.id.toString(), people[1])
 
@@ -143,7 +149,7 @@ class DuelServiceTest {
 
     @Test
     fun `only the recipient accepts or declines and only the creator cancels`() {
-        val invite = service.create("invite", emptyList(), "bob", people[0])
+        val invite = service.create("invite", emptyList(), "bob", GPU, people[0])
         assertThatThrownBy { service.accept(invite.id.toString(), people[0]) }.isInstanceOf(ForbiddenException::class.java)
         assertThatThrownBy { service.decline(invite.id.toString(), people[2]) }.isInstanceOf(ForbiddenException::class.java)
         assertThatThrownBy { service.cancel(invite.id.toString(), people[1]) }.isInstanceOf(ForbiddenException::class.java)
@@ -156,10 +162,10 @@ class DuelServiceTest {
 
     @Test
     fun `expired searches release their user and cannot be accepted`() {
-        val invite = service.create("invite", emptyList(), "bob", people[0])
+        val invite = service.create("invite", emptyList(), "bob", GPU, people[0])
         invite.expiresAt = Instant.now().minusSeconds(1)
 
-        val replacement = service.create("random", listOf("CUDA"), null, people[0])
+        val replacement = service.create("random", listOf("CUDA"), null, GPU, people[0])
         assertThat(invite.status).isEqualTo("expired")
         assertThat(replacement.status).isEqualTo("queued")
         assertThatThrownBy { service.accept(invite.id.toString(), people[1]) }.isInstanceOf(BadRequestException::class.java)
@@ -172,7 +178,28 @@ class DuelServiceTest {
             problem("coding", listOf("CUDA")),
         ))
         assertThat(service.topics()).containsExactly("CUDA")
-        assertThatThrownBy { service.create("random", listOf("Guess"), null, people[0]) }.isInstanceOf(BadRequestException::class.java)
+        assertThatThrownBy { service.create("random", listOf("Guess"), null, GPU, people[0]) }.isInstanceOf(BadRequestException::class.java)
         assertThat(started).isEmpty()
+    }
+
+    @Test
+    fun `a duel runs on the chosen processor, with a problem solvable there, against an opponent waiting for the same processor`() {
+        given(catalog.currentVersions()).willReturn(listOf(problem("adder", listOf("Circuits"), processors = listOf(GPU, RTL)), problem("gpu-only", listOf("Circuits"))))
+        val onGpu = service.create("random", listOf("Circuits"), null, GPU, people[0])
+        val onRtl = service.create("random", listOf("Circuits"), null, RTL, people[1])
+        // different processors: nobody is matched yet
+        assertThat(onGpu.status).isEqualTo("queued")
+        assertThat(onRtl.status).isEqualTo("queued")
+
+        val matched = service.create("random", listOf("Circuits"), null, RTL, people[2])
+        assertThat(matched.status).isEqualTo("matched")
+        assertThat(started.single().processor).isEqualTo(RTL)
+        assertThat(pinned.single().id.problemId).isEqualTo("adder")
+        assertThatThrownBy { service.create("random", emptyList(), null, "riscv-rvv", people[0]) }.isInstanceOf(BadRequestException::class.java)
+    }
+
+    private companion object {
+        const val GPU = "gpu-cuda"
+        const val RTL = "rtl"
     }
 }

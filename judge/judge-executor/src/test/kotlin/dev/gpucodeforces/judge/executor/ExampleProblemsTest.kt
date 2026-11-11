@@ -1,8 +1,12 @@
 package dev.gpucodeforces.judge.executor
 
 import dev.gpucodeforces.judge.api.ProblemSpec
+import dev.gpucodeforces.judge.api.Processors
+import dev.gpucodeforces.judge.api.RtlSettings
 import dev.gpucodeforces.judge.api.SpecValidator
-import dev.gpucodeforces.judge.executor.compile.HarnessGenerator
+import dev.gpucodeforces.judge.executor.processor.gpucuda.HarnessGenerator
+import dev.gpucodeforces.judge.executor.processor.riscv.RiscvHarness
+import dev.gpucodeforces.judge.executor.processor.rtl.RtlTestbench
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.isDirectory
@@ -16,7 +20,10 @@ import kotlin.test.assertTrue
 import tools.jackson.databind.node.ObjectNode
 import tools.jackson.module.kotlin.jacksonObjectMapper
 
-/** The example problems must stay valid; their generated harnesses are written to build/ for manual nvcc checks. */
+/**
+ * The example problems must stay valid; their generated harnesses and testbenches are written to build/ for manual
+ * checks with nvcc and Verilator.
+ */
 class ExampleProblemsTest {
     private val examples = Path.of("../problems/examples")
     private val mapper = jacksonObjectMapper()
@@ -32,7 +39,12 @@ class ExampleProblemsTest {
             tree.putObject("generator").put("source", dir.resolve("problem.py").readText())
             val spec = mapper.treeToValue(tree, ProblemSpec::class.java)
             assertEquals(emptyList(), SpecValidator.validateProblem(spec), dir.name)
-            out.resolve("${dir.name}.cu").writeText(HarnessGenerator.generate(spec.signature))
+            val processors = spec.declaredProcessors()
+            if (processors.any { it.id == Processors.GPU_CUDA }) out.resolve("${dir.name}.cu").writeText(HarnessGenerator.generate(spec.signature))
+            if (processors.any { it.id == Processors.RISCV_RVV }) out.resolve("${dir.name}.harness.c").writeText(RiscvHarness.generate(spec.signature))
+            processors.find { it.id == Processors.RTL }?.let {
+                out.resolve("${dir.name}.testbench.cpp").writeText(RtlTestbench.generate(spec.signature, it.rtl ?: RtlSettings()))
+            }
         }
     }
 }

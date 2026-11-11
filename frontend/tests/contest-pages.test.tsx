@@ -12,12 +12,12 @@ const session = vi.hoisted(() => ({ user: null as User | null }));
 
 vi.mock('../src/auth', () => ({ useSession: () => ({ user: session.user, isLoading: false, error: null }) }));
 
-const author: User = { id: 'author', handle: 'contest_author', rating: null, rank: null, ratingDelta: null, ratingContestId: null };
+const author: User = { id: 'author', handle: 'contest_author', ratings: {} };
 const participant: User = { ...author, id: 'participant', handle: 'new_cuda' };
 const problem: Problem = {
   id: 'vector-add', code: '100', title: 'Сложение векторов', difficulty: 'easy', format: 'standard', tags: ['Массивы'],
-  solved: false, solvedCount: 0, lastSubmissionId: null, lastStatus: null, bestSubmissionId: null,
-  bestTimeMs: null, recordTimeMs: null,
+  solved: false, solvedCount: 0, lastSubmissionId: null, lastStatus: null, processors: [{ id: 'gpu-cuda', languages: ['cuda'], bestSubmissionId: null, bestScore: null, recordScore: null }],
+  
 };
 
 function contest(phase: 'upcoming' | 'live' | 'finished'): ContestRecord {
@@ -25,7 +25,7 @@ function contest(phase: 'upcoming' | 'live' | 'finished'): ContestRecord {
   return {
     id: 'cuda-round', title: 'CUDA Round', format: 'standard', startAt: new Date(now + (phase === 'upcoming' ? 3600000 : -7200000)).toISOString(),
     endAt: new Date(now + (phase === 'finished' ? -3600000 : 7200000)).toISOString(), authors: [author],
-    problemIds: [problem.id], problemCount: 1, registered: false, gpu: 'NVIDIA A100',
+    problemIds: [problem.id], problemCount: 1, registered: false, processor: 'gpu-cuda',
   };
 }
 
@@ -122,7 +122,7 @@ describe('Личные результаты контеста', () => {
     vi.spyOn(api, 'getContest').mockResolvedValue(contest(phase));
     vi.spyOn(api, 'allProblems').mockResolvedValue([{
       ...problem, solved: true, lastSubmissionId: 'latest', lastStatus: status,
-      bestSubmissionId: 'best', bestTimeMs: 0.1234, recordTimeMs: 0.05,
+      processors: [{ id: 'gpu-cuda', languages: ['cuda'], bestSubmissionId: 'best', bestScore: { value: 0.1234, type: 'TIME_MS' }, recordScore: { value: 0.05, type: 'TIME_MS' } }],
     }]);
     open('/contest/cuda-round');
     const table = await screen.findByRole('table', { name: 'Задачи соревнования' });
@@ -139,7 +139,7 @@ describe('Таблица контеста', () => {
     vi.spyOn(api, 'getContest').mockResolvedValue(contest('live'));
     vi.spyOn(api, 'allProblems').mockResolvedValue([problem]);
     vi.spyOn(api, 'contestStandings').mockResolvedValue([{
-      rank: 1, user: { id: 'alice', handle: 'alice', rating: null, rank: null, ratingDelta: null, ratingContestId: null },
+      rank: 1, user: { id: 'alice', handle: 'alice', ratings: {} },
       solved: 1, totalSeconds: 4512, times: { 'vector-add': 4512 },
     }]);
     open('/contest/cuda-round?tab=standings');

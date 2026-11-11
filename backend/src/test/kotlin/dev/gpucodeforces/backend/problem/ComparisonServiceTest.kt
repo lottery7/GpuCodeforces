@@ -1,10 +1,12 @@
 package dev.gpucodeforces.backend.problem
 
 import dev.gpucodeforces.backend.common.BadRequestException
-import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.common.NotFoundApiException
 import dev.gpucodeforces.backend.contest.Contest
 import dev.gpucodeforces.backend.contest.ContestRepository
+import dev.gpucodeforces.backend.processor.ProcessorCatalog
+import dev.gpucodeforces.backend.processor.ProcessorProperties
+import dev.gpucodeforces.judge.api.ProblemSpec
 import dev.gpucodeforces.backend.submission.Submission
 import dev.gpucodeforces.backend.submission.SubmissionRepository
 import dev.gpucodeforces.backend.submission.SubmissionStatus
@@ -31,10 +33,10 @@ class ComparisonServiceTest {
     private val problems = mock(ProblemRepository::class.java)
     private val contests = mock(ContestRepository::class.java)
     private val mapper = JsonMapper.builder().addModule(KotlinModule.Builder().build()).build()
-    private val gpu = GpuProperties()
+    private val processors = ProcessorCatalog(ProcessorProperties(enabled = listOf("gpu-cuda", "rtl")))
     private val author = User("author", "author@example.com", "hash")
     private val sample = ProblemPackageReader(mapper).read(Path.of("../judge/problems/examples/vector_add"))
-    private val service = ComparisonService(submissions, versions, problems, contests, gpu, mapper)
+    private val service = ComparisonService(submissions, versions, problems, contests, processors, mapper)
 
     init {
         given(problems.save(any(Problem::class.java))).willAnswer { it.getArgument<Problem>(0) }
@@ -50,7 +52,7 @@ class ComparisonServiceTest {
     ) = ProblemVersion(
         UUID.randomUUID(), sample.id, sample.frontMatter.code, sample.frontMatter.title,
         sample.frontMatter.difficulty, sample.frontMatter.tags, sample.frontMatter.authors,
-        draft, sample.statementMarkdown, sample.starterCode, judgeSpec, sample.contentHash,
+        draft, sample.statementMarkdown, listOf("gpu-cuda"), sample.starters, judgeSpec, sample.contentHash,
         judgeHash, null, format = format, formatData = mapper.writeValueAsString(data),
     ).also { given(versions.findById(it.id)).willReturn(Optional.of(it)) }
 
@@ -58,16 +60,17 @@ class ComparisonServiceTest {
         source: ProblemVersion,
         userId: UUID = author.id,
         contestId: UUID? = null,
-        profile: String = gpu.profile,
-        timeMs: BigDecimal? = BigDecimal("1.2"),
+        processor: String = "gpu-cuda",
+        language: String = "cuda",
+        score: BigDecimal? = BigDecimal("1.2"),
         status: SubmissionStatus = SubmissionStatus.ACCEPTED,
         problemId: String = source.problemId,
         guessChoice: String? = null,
     ) = Submission(
         UUID.randomUUID(), userId, problemId, source.id, contestId, "void solve() {}",
-        "GPU environment", source.judgeHash, profile, null, guessChoice = guessChoice,
+        "GPU environment", source.judgeHash, processor, language, null, guessChoice = guessChoice,
     ).also {
-        it.timeMs = timeMs
+        it.score = score
         it.status = status
         given(submissions.findForUpdate(it.id)).willReturn(it)
     }
@@ -80,7 +83,7 @@ class ComparisonServiceTest {
         val firstVersion = version()
         val secondVersion = version()
         val first = submission(firstVersion)
-        val second = submission(secondVersion, timeMs = BigDecimal("2.4"))
+        val second = submission(secondVersion, score = BigDecimal("2.4"))
 
         val result = create(first, second, "  Причина разницы  ")
         val data = mapper.readValue(result.formatData, ProblemFormatData::class.java)
@@ -90,7 +93,10 @@ class ComparisonServiceTest {
         assertThat(result.draft).isFalse()
         assertThat(result.authors).containsExactly(author.handle)
         assertThat(result.statementMarkdown).isEqualTo(firstVersion.statementMarkdown)
-        assertThat(result.judgeSpec).isEqualTo(firstVersion.judgeSpec)
+        // the guess declares the one processor and language both were judged on
+        val spec = mapper.readValue(result.judgeSpec, ProblemSpec::class.java)
+        assertThat(spec.declaredProcessors().map { it.id to it.languages }).containsExactly("gpu-cuda" to listOf("cuda"))
+        assertThat(result.processors).containsExactly("gpu-cuda")
         assertThat(data.firstCode).isEqualTo(first.code)
         assertThat(data.secondCode).isEqualTo(second.code)
         assertThat(data.firstTimeMs).isNull()
@@ -119,14 +125,15 @@ class ComparisonServiceTest {
     }
 
     @Test
-    fun `requires accepted positive measurements of this problem on the current GPU`() {
+    fun `requires accepted positive scores of this problem on one processor and language of the platform`() {
         val version = version()
         val first = submission(version)
         val invalid = listOf(
             submission(version, status = SubmissionStatus.WRONG_ANSWER),
-            submission(version, timeMs = null),
-            submission(version, timeMs = BigDecimal.ZERO),
-            submission(version, profile = "different-gpu"),
+            submission(version, score = null),
+            submission(version, score = BigDecimal.ZERO),
+            submission(version, processor = "riscv-rvv", language = "c"),
+            submission(version, processor = "rtl", language = "systemverilog"),
             submission(version, problemId = "other-problem"),
             submission(version, guessChoice = "first"),
         )
@@ -162,7 +169,7 @@ class ComparisonServiceTest {
     @Test
     fun `contest code becomes publishable only after the contest ends`() {
         val now = Instant.now()
-        val contest = Contest("Контест", now.minusSeconds(60), now.plusSeconds(3600), gpu.name)
+        val contest = Contest(UUID.randomUUID(), "Контест", now.minusSeconds(60), now.plusSeconds(3600), "gpu-cuda")
         given(contests.findById(contest.id)).willReturn(Optional.of(contest))
         val version = version()
         val first = submission(version)
@@ -187,11 +194,11 @@ class ComparisonServiceTest {
         fun measurement(time: BigDecimal, synthetic: Boolean) = mapper.writeValueAsString(
             MeasurementData("geometric_mean", "wall", "GPU", "nvcc", synthetic, listOf(MeasuredTest(time, 1))),
         )
-        first.measurement = measurement(first.timeMs!!, false)
-        second.measurement = measurement(second.timeMs!!, true)
+        first.measurement = measurement(first.score!!, false)
+        second.measurement = measurement(second.score!!, true)
         assertThatThrownBy { create(first, second) }.isInstanceOf(BadRequestException::class.java)
 
-        first.measurement = measurement(first.timeMs!!, true)
+        first.measurement = measurement(first.score!!, true)
         val published = mapper.readValue(create(first, second).formatData, ProblemFormatData::class.java)
         assertThat(published.benchmark).isEqualTo(definition)
         assertThat(published.benchmarkSynthetic).isNull()

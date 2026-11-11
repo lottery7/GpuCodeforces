@@ -4,6 +4,7 @@ import dev.gpucodeforces.backend.api.ContestsApi
 import dev.gpucodeforces.backend.api.model.ContestInput
 import dev.gpucodeforces.backend.api.model.GetContestStandings200ResponseInner
 import dev.gpucodeforces.backend.auth.CurrentUser
+import dev.gpucodeforces.backend.user.User
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.RestController
@@ -12,10 +13,10 @@ import dev.gpucodeforces.backend.api.model.Contest as ContestApiModel
 
 @RestController
 class ContestsController(private val contestService: ContestService) : ContestsApi {
-    override fun listContests(q: String?, phase: String?, mine: Boolean): ResponseEntity<List<ContestApiModel>> {
+    override fun listContests(q: String?, phase: String?, mine: Boolean, processor: String?): ResponseEntity<List<ContestApiModel>> {
         val viewer = CurrentUser.resolve()
         val now = Instant.now()
-        val contests = contestService.list(q, phase, mine, viewer).map { it.toSummary(viewer, now) }
+        val contests = contestService.list(q, phase, mine, processor, viewer).map { it.toSummary(viewer, now) }
         return ResponseEntity.ok(contests)
     }
 
@@ -49,7 +50,7 @@ class ContestsController(private val contestService: ContestService) : ContestsA
     override fun getContestStandings(id: String): ResponseEntity<List<GetContestStandings200ResponseInner>> =
         ResponseEntity.ok(contestService.standings(id))
 
-    private fun Contest.toSummary(viewer: dev.gpucodeforces.backend.user.User?, now: Instant): ContestApiModel {
+    private fun Contest.toSummary(viewer: User?, now: Instant): ContestApiModel {
         val registered = viewer != null && contestService.isRegistered(id, viewer.id)
         return toApiModel(contestService.problemsOf(id), viewer, registered, now)
     }

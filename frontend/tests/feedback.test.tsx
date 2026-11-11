@@ -15,11 +15,12 @@ vi.mock('../src/components/CodeEditor', () => ({
   default: ({ value, onChange, label = 'Код решения на C++ и CUDA' }: { value: string; onChange?: (value: string) => void; label?: string }) => <textarea aria-label={label} value={value} onChange={event => onChange?.(event.target.value)} />,
 }));
 
+const starter = 'void solve() {}';
 const problem: ProblemDetail = {
   id: 'vector-add', code: '100', title: 'Сложение векторов', difficulty: 'easy', format: 'standard', tags: [],
-  solved: false, solvedCount: 0, lastSubmissionId: null, lastStatus: null, bestSubmissionId: null,
-  bestTimeMs: null, recordTimeMs: null, statementMarkdown: 'Сложите два вектора.', starterCode: 'void solve() {}',
-  timeLimitSeconds: 2, memoryLimitMb: 1024, environmentMarkdown: 'NVIDIA A100',
+  solved: false, solvedCount: 0, lastSubmissionId: null, lastStatus: null, processors: [{ id: 'gpu-cuda', languages: ['cuda'], bestSubmissionId: null, bestScore: null, recordScore: null }],
+  versionId: 'vector-add-v1', statementMarkdown: 'Сложите два вектора.', memoryLimitMb: 1024,
+  processorDetails: [{ id: 'gpu-cuda', starters: { cuda: 'void solve() {}' }, limit: { value: 2000, type: 'TIME_MS' }, environmentMarkdown: 'NVIDIA A100' }],
 };
 
 function feedback(top: number, bottom: number) {
@@ -33,7 +34,7 @@ function feedback(top: number, bottom: number) {
 }
 
 beforeEach(() => {
-  session.user = { id: 'owner', handle: 'cuda_user', rating: null, rank: null, ratingDelta: null, ratingContestId: null };
+  session.user = { id: 'owner', handle: 'cuda_user', ratings: {} };
   vi.stubGlobal('innerHeight', 720);
   vi.stubGlobal('visualViewport', undefined);
 });
@@ -112,7 +113,7 @@ describe('Ответы редактора', () => {
     expect(screen.queryByRole('region', { name: 'Вывод проверки' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Закрыть вывод' })).not.toBeInTheDocument();
     expect(editor).toHaveValue(code);
-    expect(readDraft('owner', problem.id, 'practice', problem.starterCode)).toBe(code);
+    expect(readDraft('owner', { problemId: problem.id, context: 'practice', processor: 'gpu-cuda', language: 'cuda' }, starter)).toBe(code);
     await waitFor(() => expect(statement).toHaveFocus());
     if (output === 'error') expect(scroll).not.toHaveBeenCalled();
     else expect(scroll).toHaveBeenCalledExactlyOnceWith({ block: 'start', inline: 'nearest', behavior: 'instant' });
@@ -134,7 +135,7 @@ describe('Ответы редактора', () => {
     expect(error).toHaveTextContent('Проверка временно недоступна.');
     expect(footer).toContainElement(error);
 
-    const code = action === 'edit' ? 'void solve() { changed(); }' : problem.starterCode;
+    const code = action === 'edit' ? 'void solve() { changed(); }' : starter;
     if (action === 'edit') {
       fireEvent.change(editor, { target: { value: code } });
       expect(screen.queryByRole('alert')).not.toBeInTheDocument();
@@ -142,7 +143,7 @@ describe('Ответы редактора', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Проверить пример' }));
 
     expect(await screen.findByText('Пример не пройден.')).toBeVisible();
-    expect(check).toHaveBeenCalledWith(problem.id, 'practice', code);
+    expect(check).toHaveBeenCalledWith(problem.id, 'practice', { code, processor: 'gpu-cuda', language: 'cuda' });
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(within(footer!).getByText('Пример не пройден.')).toBeVisible();
     expect(within(footer!).getByLabelText('Диагностика примера')).toHaveTextContent('Тест 79: ожидалось 1, получено 2.');

@@ -2,7 +2,6 @@ package dev.gpucodeforces.backend.submission
 
 import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.common.ForbiddenException
-import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.common.NotFoundApiException
 import dev.gpucodeforces.backend.common.toUuidOrNotFound
 import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
@@ -10,12 +9,14 @@ import dev.gpucodeforces.backend.contest.ContestPhase
 import dev.gpucodeforces.backend.contest.ContestService
 import dev.gpucodeforces.backend.problem.ProblemCatalog
 import dev.gpucodeforces.backend.problem.ProblemContext
+import dev.gpucodeforces.backend.problem.ProblemEnvironments
 import dev.gpucodeforces.backend.problem.ProblemFormatData
 import dev.gpucodeforces.backend.problem.ProblemService
-import dev.gpucodeforces.backend.problem.environmentMarkdown
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.judge.api.JudgeEvent
+import dev.gpucodeforces.judge.api.JudgeResult
 import dev.gpucodeforces.judge.api.SpecValidator
+import dev.gpucodeforces.judge.api.Processors
 import dev.gpucodeforces.judge.api.SubmissionRequest
 import dev.gpucodeforces.judge.api.Verdict
 import org.slf4j.LoggerFactory
@@ -24,6 +25,7 @@ import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
 import tools.jackson.databind.json.JsonMapper
+import java.math.BigDecimal
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -44,16 +46,17 @@ class SubmissionService(
     private val submissionStats: SubmissionStats,
     private val judgeGateway: JudgeGateway,
     private val judgeProperties: JudgeProperties,
-    private val gpuProperties: GpuProperties,
+    private val environments: ProblemEnvironments,
     private val transactionTemplate: TransactionTemplate,
     private val jsonMapper: JsonMapper,
     private val references: ReferenceMeasurements,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    fun submit(problemId: String, contestId: String?, code: String, author: User): Submission {
+    fun submit(problemId: String, contestId: String?, processor: String, language: String, code: String, author: User): Submission {
         val problem = problemService.problem(problemId, submissionContext(contestId, author), author)
         if (problem.version.format == ProblemFormatData.GUESS) throw BadRequestException("Выберите более быстрый код вместо отправки решения")
+        problemService.requireTarget(problem, processor, language)
         validateSource(code)
         if (submissionRepository.countByUserIdAndStatusIn(author.id, SubmissionStatus.PENDING) >= judgeProperties.maxPendingPerUser) {
             throw BadRequestException("Дождитесь проверки предыдущих посылок")
@@ -69,17 +72,20 @@ class SubmissionService(
                     problemVersionId = version.id,
                     contestId = contest?.id,
                     code = code,
-                    environmentMarkdown = environmentMarkdown(problemCatalog.spec(version), (contest?.gpu ?: gpuProperties.name).takeUnless { judgeProperties.synthetic }),
+                    environmentMarkdown = environments.markdown(problemCatalog.spec(version), version.judgeHash, processor),
                     judgeHash = version.judgeHash,
-                    gpuProfile = gpuProperties.profile,
-                    previousBestTimeMs = submissionStats.bestTime(author.id, version.problemId, contest?.id, version.judgeHash, gpuProperties.profile, references.environmentKey() ?: "unavailable"),
+                    processor = processor,
+                    language = language,
+                    previousBestScore = submissionStats.bestScore(
+                        author.id, version.problemId, contest?.id, version.judgeHash, processor, benchmarkEnvironmentKey(processor),
+                    ),
                 ),
             )
         }!!
         withSubmission(submission.id) {
             log.info(
-                "Submission created: problem={} version={} contest={} gpu={} code={} bytes",
-                submission.problemId, submission.problemVersionId, submission.contestId ?: "practice", submission.gpuProfile,
+                "Submission created: problem={} version={} contest={} processor={} language={} code={} bytes",
+                submission.problemId, submission.problemVersionId, submission.contestId ?: "practice", submission.processor, submission.language,
                 code.toByteArray().size,
             )
         }
@@ -99,7 +105,9 @@ class SubmissionService(
             }
             submission.recheckCount++
             submission.status = SubmissionStatus.QUEUED
-            submission.timeMs = null
+            submission.score = null
+            submission.scoreType = null
+            submission.metrics = emptyMap()
             submission.measurement = null
             submission.benchmarkEnvironmentKey = null
             submission.passedTests = 0
@@ -133,9 +141,9 @@ class SubmissionService(
             withSubmission(submission.id) {
                 log.warn(
                     "No news from the judge for {} min: status={} job={} lastEvent=a{}/#{} judgeId={}. Check the gateway " +
-                        "(GET /api/v1/queues: live executors of profile {}) and the executor log for this judge id",
+                        "(GET /api/v1/queues: live executors of processor {}) and the executor log for this judge id",
                     Duration.between(submission.updatedAt, Instant.now()).toMinutes(), submission.status.value, submission.jobId,
-                    submission.eventAttempt, submission.eventSeq, submission.judgeSubmissionId, submission.gpuProfile,
+                    submission.eventAttempt, submission.eventSeq, submission.judgeSubmissionId, submission.processor,
                 )
             }
         }
@@ -184,7 +192,8 @@ class SubmissionService(
             }
             event.progress?.let {
                 submission.totalTests = it.totalTests
-                submission.passedTests = it.currentTest - 1
+                // the judge reports test 0 of N before the first test starts
+                submission.passedTests = (it.currentTest - 1).coerceAtLeast(0)
             }
             if (previous != submission.status) {
                 log.info(
@@ -200,38 +209,65 @@ class SubmissionService(
         submission.status = result.verdict.toStatus()
         submission.passedTests = result.tests.count { it.verdict == Verdict.ACCEPTED }
         if (result.verdict == Verdict.ACCEPTED) {
+            val score = result.score ?: error("Accepted result ${event.jobId} has no score")
+            if (score.type != Processors.get(submission.processor).scoreType) {
+                error("Accepted result ${event.jobId} has a ${score.type} score, ${submission.processor} reports ${Processors.get(submission.processor).scoreType}")
+            }
             val expectedTestCount = submission.totalTests
             submission.totalTests = expectedTestCount ?: result.tests.size
-            val version = problemCatalog.versions(listOf(submission.problemVersionId)).getValue(submission.problemVersionId)
-            try {
-                val measurement = captureMeasurement(result, problemCatalog.spec(version), problemCatalog.format(version).aggregation(), judgeProperties.synthetic, expectedTestCount)
-                submission.timeMs = measurement.timeMs
-                submission.measurement = jsonMapper.writeValueAsString(measurement.data)
-                submission.benchmarkEnvironmentKey = references.environmentKeyFor(result)
-            } catch (exception: InvalidMeasurementException) {
-                submission.status = SubmissionStatus.MEASUREMENT_ERROR
-                submission.timeMs = null
-                submission.measurement = null
-                submission.diagnostic = exception.message!!
-            }
+            submission.score = BigDecimal.valueOf(score.value)
+            submission.scoreType = score.type
+            submission.metrics = result.metrics
+            measure(submission, result, expectedTestCount)
+            // An accepted submission ran every test of its processor: the problem page can list them now.
+            if (submission.status == SubmissionStatus.ACCEPTED) environments.recordTests(submission.judgeHash, submission.processor, result.tests)
         }
         if (submission.status != SubmissionStatus.MEASUREMENT_ERROR) submission.diagnostic = result.diagnostic()
         submission.finishedAt = event.timestamp
-        val format = "Verdict {} -> {}: passed {}/{} failedTest={} time={} ms, judged in {} ms on {}: {}"
+        val format = "Verdict {} -> {}: passed {}/{} failedTest={} score={}, judged in {} ms on {} ({}): {}"
         val args = arrayOf<Any?>(
             result.verdict, submission.status.value, submission.passedTests, submission.totalTests ?: "?", result.failedTest,
-            result.maxTimeMs, result.judgeTimeMs, result.gpu?.name ?: event.source, result.message,
+            result.score?.let { "${it.value} ${it.type}" }, result.judgeTimeMs, result.processor?.model ?: event.source,
+            result.processor?.executorId ?: event.source, result.message,
         )
         // A judge failure is not the contestant's fault: it has to stand out in the log.
         if (submission.status == SubmissionStatus.SYSTEM_ERROR) log.error(format, *args) else log.info(format, *args)
     }
+
+    /**
+     * The score under the problem's aggregation: the judge's maximum over the measured tests, or their geometric mean
+     * for the formats (docs/backend/formats.md). On the real GPU records count within the current reference environment.
+     */
+    private fun measure(submission: Submission, result: JudgeResult, expectedTestCount: Int?) {
+        val version = problemCatalog.versions(listOf(submission.problemVersionId)).getValue(submission.problemVersionId)
+        try {
+            val measurement = captureMeasurement(
+                result, problemCatalog.spec(version), problemCatalog.format(version).aggregation(), judgeProperties.synthetic, expectedTestCount,
+            )
+            submission.score = measurement.score
+            submission.measurement = jsonMapper.writeValueAsString(measurement.data)
+            submission.benchmarkEnvironmentKey = references.environmentKeyFor(result)
+        } catch (exception: InvalidMeasurementException) {
+            submission.status = SubmissionStatus.MEASUREMENT_ERROR
+            submission.score = null
+            submission.scoreType = null
+            submission.metrics = emptyMap()
+            submission.measurement = null
+            submission.diagnostic = exception.message!!
+        }
+    }
+
+    /** Results on the real GPU are compared within the current reference environment, the others within the processor. */
+    private fun benchmarkEnvironmentKey(processor: String): String? =
+        if (processor == Processors.GPU_CUDA) references.environmentKey(processor) ?: "unavailable" else null
 
     private fun send(submission: Submission): Submission = withSubmission(submission.id) {
         val request = SubmissionRequest(
             submissionId = submission.judgeSubmissionId,
             problem = problemCatalog.spec(problemCatalog.versions(listOf(submission.problemVersionId)).getValue(submission.problemVersionId)),
             source = submission.code,
-            gpuProfile = submission.gpuProfile,
+            processor = submission.processor,
+            language = submission.language,
         )
         val outcome = judgeGateway.send(request)
         transactionTemplate.execute {

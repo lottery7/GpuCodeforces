@@ -55,6 +55,11 @@ class Test:
     sizes: Dict[str, int] = field(default_factory=dict)  # element count of every array param
     inputs: Optional[Dict[str, Any]] = None  # hand-written inputs: generate() is not called for this test
     expected: Optional[Dict[str, Any]] = None  # hand-written answers of a test with hand-written inputs
+    processors: Optional[List[str]] = None  # where the test runs; None = on every processor of the problem
+    measure: bool = True  # False: only the answer is checked, the score of the test does not count
+
+    def runs_on(self, processor: str) -> bool:
+        return self.processors is None or processor in self.processors
 
     def __getitem__(self, key: str) -> Any:
         """``test["N"]`` is a shortcut for ``test.scalars["N"]``."""
@@ -62,7 +67,13 @@ class Test:
 
     def describe(self) -> Dict[str, Any]:
         """What the executor learns about the test (``tests.json``)."""
-        return {"name": self.name, "sample": self.sample, "scalars": self.scalars}
+        return {
+            "name": self.name,
+            "sample": self.sample,
+            "scalars": self.scalars,
+            "measure": self.measure,
+            "processors": self.processors,
+        }
 
 
 _ALLOWED_BINOPS = (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod)
@@ -104,12 +115,27 @@ def parse_params(signature: Dict[str, Any]) -> List[Param]:
     return [Param(p["name"], p["type"], p["role"], p.get("memory"), p.get("size")) for p in signature["params"]]
 
 
-TEST_KEYS = {"name", "scalars", "sample", "seed", "inputs", "expected"}
+TEST_KEYS = {"name", "scalars", "sample", "seed", "inputs", "expected", "processors", "measure"}
+
+# What a problem without "processors" in problem.json is judged on.
+DEFAULT_PROCESSORS = ["gpu-cuda"]
+
+
+def declared_processors(spec: Dict[str, Any]) -> List[str]:
+    """Processor ids of a spec.json or problem.json: "processors" holds ids or ProcessorSpec dicts."""
+    entries = spec.get("processors") or []
+    return [p["id"] if isinstance(p, dict) else p for p in entries] or list(DEFAULT_PROCESSORS)
 MAX_NAME_LENGTH = 128
 
 
-def parse_test(index: int, raw: Any, params: List[Param], max_test_bytes: int) -> Test:
-    """Checks one entry of ``tests()`` and computes its array sizes. Raises ValueError with what is wrong."""
+def parse_test(
+    index: int, raw: Any, params: List[Param], max_test_bytes: int, processors: Optional[List[str]] = None,
+) -> Test:
+    """Checks one entry of ``tests()`` and computes its array sizes. Raises ValueError with what is wrong.
+
+    ``processors`` are the ids the problem declares (default: gpu-cuda alone).
+    """
+    declared = processors or DEFAULT_PROCESSORS
     where = f"test {index}"
     if not isinstance(raw, dict):
         raise ValueError(f"{where}: tests() must yield dicts, got {type(raw).__name__}")
@@ -159,4 +185,40 @@ def parse_test(index: int, raw: Any, params: List[Param], max_test_bytes: int) -
     ):
         if value is not None and (not isinstance(value, dict) or set(value) != wanted):
             raise ValueError(f"{where}: {what} must have exactly the keys {sorted(wanted)}")
-    return Test(index, name, seed, bool(raw.get("sample", False)), scalars, sizes, inputs, expected)
+    test_processors = raw.get("processors")
+    if test_processors is not None:
+        if not isinstance(test_processors, list) or not test_processors or not all(isinstance(p, str) for p in test_processors):
+            raise ValueError(f'{where}: "processors" must be a non-empty list of processor ids, e.g. ["{declared[0]}"]')
+        for p in test_processors:
+            if p not in declared:
+                raise ValueError(f'{where}: unknown processor "{p}"; the problem declares {", ".join(declared)}')
+        if len(set(test_processors)) != len(test_processors):
+            raise ValueError(f'{where}: a processor is listed twice in "processors"')
+    measure = raw.get("measure", True)
+    if not isinstance(measure, bool):
+        raise ValueError(f'{where}: "measure" must be True or False')
+    return Test(
+        index, name, seed, bool(raw.get("sample", False)), scalars, sizes, inputs, expected,
+        processors=test_processors, measure=measure,
+    )
+
+
+def check_coverage(tests: List[Test], processors: List[str]) -> None:
+    """Every processor of the problem needs a measured test: its score is the maximum over them."""
+    for p in processors:
+        if not any(t.measure and t.runs_on(p) for t in tests):
+            raise ValueError(
+                f'processor {p} has no measured test: add a test with "processors": ["{p}"] '
+                f'(or without "processors") that does not set "measure": False'
+            )
+
+
+def coverage_table(tests: List[Test], processors: List[str]) -> Dict[str, Dict[str, int]]:
+    """For each processor: how many tests run on it and how many of them are measured."""
+    return {
+        p: {
+            "tests": sum(1 for t in tests if t.runs_on(p)),
+            "measured": sum(1 for t in tests if t.runs_on(p) and t.measure),
+        }
+        for p in processors
+    }

@@ -52,8 +52,14 @@ class ProblemVersion(
     val draft: Boolean,
     @Column(name = "statement_markdown", nullable = false)
     val statementMarkdown: String,
-    @Column(name = "starter_code", nullable = false)
-    val starterCode: String,
+    /** Processors the problem can be judged on, in the order of problem.json; duplicated from [judgeSpec] for filters. */
+    @JdbcTypeCode(SqlTypes.ARRAY)
+    @Column(nullable = false)
+    val processors: List<String>,
+    /** Processor -> language -> starter code. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(nullable = false)
+    val starters: Map<String, Map<String, String>>,
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "judge_spec", nullable = false)
     val judgeSpec: String,

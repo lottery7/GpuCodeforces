@@ -73,7 +73,7 @@ class DuelIntegrationTest {
         problems.save(Problem(id, source = "comparison"))
         val version = versions.save(ProblemVersion(
             id = UUID.randomUUID(), problemId = id, code = "D", title = "Общая задача", difficulty = "easy", tags = listOf(topic),
-            authors = emptyList(), draft = false, statementMarkdown = "Условие", starterCode = template.starterCode,
+            authors = emptyList(), draft = false, statementMarkdown = "Условие", processors = template.processors, starters = template.starters,
             judgeSpec = template.judgeSpec, contentHash = UUID.randomUUID().toString(), judgeHash = template.judgeHash, revision = null,
         ))
         problems.save(problems.findById(id).orElseThrow().apply { currentVersionId = version.id })
@@ -81,7 +81,7 @@ class DuelIntegrationTest {
     }
 
     private fun create(player: Player, mode: String, topic: String, handle: String? = null): DuelRequestApi {
-        val body = mutableMapOf<String, Any>("mode" to mode, "topics" to listOf(topic))
+        val body = mutableMapOf<String, Any>("mode" to mode, "topics" to listOf(topic), "processor" to "gpu-cuda")
         if (handle != null) body["opponentHandle"] = handle
         return client.post().uri("/duels").contentType(MediaType.APPLICATION_JSON).cookie("session", player.cookie)
             .body(body).exchange().expectStatus().isCreated.expectBody(DuelRequestApi::class.java).returnResult().responseBody!!
@@ -130,7 +130,7 @@ class DuelIntegrationTest {
         }
         client.get().uri("/duels/${firstRequest.id}").cookie("session", outsider.cookie).exchange().expectStatus().isForbidden
         client.post().uri("/duels").contentType(MediaType.APPLICATION_JSON).cookie("session", first.cookie)
-            .body(mapOf("mode" to "random", "topics" to listOf(topic))).exchange().expectStatus().isBadRequest
+            .body(mapOf("mode" to "random", "topics" to listOf(topic), "processor" to "gpu-cuda")).exchange().expectStatus().isBadRequest
     }
 
     @Test
@@ -176,7 +176,7 @@ class DuelIntegrationTest {
         val opponent = player()
         val (_, topic) = task()
         client.post().uri("/duels").contentType(MediaType.APPLICATION_JSON)
-            .body(mapOf("mode" to "random", "topics" to listOf(topic))).exchange().expectStatus().isUnauthorized
+            .body(mapOf("mode" to "random", "topics" to listOf(topic), "processor" to "gpu-cuda")).exchange().expectStatus().isUnauthorized
         client.get().uri("/notifications").exchange().expectStatus().isUnauthorized
         val queued = create(creator, "random", topic)
         @Language("SQL")
@@ -191,7 +191,7 @@ class DuelIntegrationTest {
         client.get().uri("/duels/current").cookie("session", creator.cookie).exchange().expectStatus().isNoContent
         assertThat(notifications(creator).items.single().type).isEqualTo(NotificationType.DUEL_DECLINED)
         client.post().uri("/duels").contentType(MediaType.APPLICATION_JSON).cookie("session", creator.cookie)
-            .body(mapOf("mode" to "invite", "topics" to listOf(topic), "opponentHandle" to creator.user.handle))
+            .body(mapOf("mode" to "invite", "topics" to listOf(topic), "processor" to "gpu-cuda", "opponentHandle" to creator.user.handle))
             .exchange().expectStatus().isBadRequest
     }
 

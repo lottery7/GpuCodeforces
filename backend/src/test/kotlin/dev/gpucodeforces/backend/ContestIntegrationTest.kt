@@ -53,6 +53,7 @@ class ContestIntegrationTest {
             endAt.atOffset(ZoneOffset.UTC),
             setOf(author.id),
             setOf("vector_add", "matmul_host"),
+            "gpu-cuda",
         )
 
         val created = client.post().uri("/contests").contentType(MediaType.APPLICATION_JSON)
@@ -65,6 +66,11 @@ class ContestIntegrationTest {
             .responseBody!!
         assertThat(created.problemIds).containsExactly("vector_add", "matmul_host")
         assertThat(created.registered).isFalse()
+        assertThat(created.processor).isEqualTo("gpu-cuda")
+        assertThat(client.get().uri("/contests?processor=gpu-cuda").exchange().expectBody(Array<Contest>::class.java).returnResult().responseBody!!.map { it.id })
+            .contains(created.id)
+        assertThat(client.get().uri("/contests?processor=rtl").exchange().expectBody(Array<Contest>::class.java).returnResult().responseBody!!).isEmpty()
+        client.get().uri("/contests?processor=nope").exchange().expectStatus().isBadRequest
 
         // Anonymous visitors see no problem ids before the contest starts.
         val anonymousView = client.get().uri("/contests/${created.id}")

@@ -5,17 +5,16 @@ import dev.gpucodeforces.backend.api.model.GetProblem200Response
 import dev.gpucodeforces.backend.api.model.GuessChoice
 import dev.gpucodeforces.backend.api.model.RegisterUserRequest
 import dev.gpucodeforces.backend.api.model.SubmitGuessRequest
-import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.problem.ProblemCatalog
 import dev.gpucodeforces.backend.problem.ProblemRepository
 import dev.gpucodeforces.backend.problem.ProblemSyncService
 import dev.gpucodeforces.backend.problem.ProblemFormatData
 import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
 import dev.gpucodeforces.backend.benchmark.ReferenceMeasurementView
-import dev.gpucodeforces.backend.problem.environmentMarkdown
 import dev.gpucodeforces.backend.submission.Submission
 import dev.gpucodeforces.backend.submission.SubmissionRepository
 import dev.gpucodeforces.backend.submission.SubmissionStatus
+import dev.gpucodeforces.judge.api.ScoreType
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
@@ -58,9 +57,6 @@ class ComparisonIntegrationTest {
     lateinit var sync: ProblemSyncService
 
     @Autowired
-    lateinit var gpu: GpuProperties
-
-    @Autowired
     lateinit var mapper: JsonMapper
 
     @MockitoBean
@@ -70,18 +66,18 @@ class ComparisonIntegrationTest {
 
     @Test
     fun `publishes owned submissions as a playable guess that survives repository synchronization`() {
-        given(references.environmentKey()).willReturn("environment-1")
+        given(references.environmentKey("gpu-cuda")).willReturn("environment-1")
         val registration = client.post().uri("/users").contentType(MediaType.APPLICATION_JSON)
             .body(RegisterUserRequest("comparison_author", "comparison@example.com", "password123"))
             .exchange().expectStatus().isCreated.expectBody(UserApi::class.java).returnResult()
         val authorId = UUID.fromString(registration.responseBody!!.id)
         val cookie = registration.responseCookies.getFirst("session")!!.value
         val source = catalog.currentVersion("vector_add")!!
-        val environment = environmentMarkdown(catalog.spec(source), gpu.name)
         fun accepted(code: String, time: String) = submissions.saveAndFlush(
-            Submission(UUID.randomUUID(), authorId, source.problemId, source.id, null, code, environment, source.judgeHash, gpu.profile, null).also {
+            Submission(UUID.randomUUID(), authorId, source.problemId, source.id, null, code, "GPU", source.judgeHash, "gpu-cuda", "cuda", null).also {
                 it.status = SubmissionStatus.ACCEPTED
-                it.timeMs = BigDecimal(time)
+                it.score = BigDecimal(time)
+                it.scoreType = ScoreType.TIME_MS
             },
         )
         val first = accepted("void first() {}", "1.2")
@@ -103,12 +99,12 @@ class ComparisonIntegrationTest {
         assertThat(format.secondTimeMs).isNull()
         assertThat(format.benchmarkSynthetic).isNull()
         val measured = ReferenceMeasurementView(
-            key = "${version.id}:environment-1", status = "ready", baselineTimeMs = null,
-            firstTimeMs = BigDecimal("4.0"), secondTimeMs = BigDecimal("1.0"),
+            processor = "gpu-cuda", key = "${version.id}:environment-1", status = "ready", scoreType = ScoreType.TIME_MS, baselineScore = null,
+            firstScore = BigDecimal("4.0"), secondScore = BigDecimal("1.0"),
             measuredAt = Instant.now(), synthetic = false, diagnostic = null, environmentKey = "environment-1",
         )
-        given(references.view(version)).willReturn(measured)
-        given(references.requireReady(version)).willReturn(measured)
+        given(references.views(version)).willReturn(mapOf("gpu-cuda" to measured))
+        given(references.requireReady(version, "gpu-cuda")).willReturn(measured)
 
         sync.sync()
 
@@ -116,7 +112,8 @@ class ComparisonIntegrationTest {
             .expectBody(GetProblem200Response::class.java).returnResult().responseBody!!
         assertThat(details.firstCode).isEqualTo(first.code)
         assertThat(details.secondCode).isEqualTo(second.code)
-        assertThat(mapper.writeValueAsString(details)).doesNotContain("firstTimeMs", "secondTimeMs", request.explanation)
+        assertThat(mapper.writeValueAsString(details)).doesNotContain("firstScore", "secondScore", request.explanation)
+        assertThat(details.processors.map { it.id }).containsExactly("gpu-cuda")
         assertThat(problems.findById(comparison.id).orElseThrow().currentVersionId).isNotNull()
 
         val answer = client.post().uri("/problems/${comparison.id}/guess").contentType(MediaType.APPLICATION_JSON)
@@ -124,8 +121,9 @@ class ComparisonIntegrationTest {
             .exchange().expectStatus().isOk.expectBody(SubmissionApi::class.java).returnResult().responseBody!!
         assertThat(answer.status.value).isEqualTo("wrong_answer")
         assertThat(answer.guessResult!!.correctChoice).isEqualTo(GuessChoice.SECOND)
-        assertThat(answer.guessResult!!.firstTimeMs).isEqualByComparingTo("4.0")
-        assertThat(answer.guessResult!!.secondTimeMs).isEqualByComparingTo("1.0")
+        assertThat(answer.guessResult!!.firstScore.value).isEqualByComparingTo("4.0")
+        assertThat(answer.guessResult!!.secondScore.value).isEqualByComparingTo("1.0")
+        assertThat(answer.processor).isEqualTo("gpu-cuda")
         assertThat(answer.guessResult!!.explanation).isEqualTo(request.explanation)
     }
 

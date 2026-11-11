@@ -1,6 +1,6 @@
 import createClient from 'openapi-fetch';
 import type { paths } from './schema';
-import type { ComparisonInput, ContestInput, ContestQuery, DuelInput, DuelRequest, GuessInput, LoginInput, NotificationQuery, ProblemQuery, RegisterInput, SubmissionQuery, SubmitInput, UserQuery } from './types';
+import type { ComparisonInput, ContestInput, ContestQuery, DuelInput, DuelRequest, ExampleInput, GuessInput, LoginInput, NotificationQuery, ProblemQuery, RegisterInput, SubmissionQuery, SubmitInput, UserQuery } from './types';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -28,7 +28,7 @@ export function createApi(baseUrl = '/api', fetcher?: typeof fetch) {
   const http = createClient<paths>({ baseUrl, credentials: 'include', ...(fetcher ? { fetch: fetcher } : {}) });
   return {
     getRuntime: (signal?: AbortSignal) => result(http.GET('/runtime', { signal })),
-    listDuelTopics: (signal?: AbortSignal) => result(http.GET('/duels/topics', { signal })),
+    listDuelTopics: (processor?: string, signal?: AbortSignal) => result(http.GET('/duels/topics', { params: { query: processor ? { processor } : {} }, signal })),
     createDuel: (body: DuelInput) => result(http.POST('/duels', { body })),
     getCurrentDuel: async (signal?: AbortSignal): Promise<DuelRequest | null> => await result(http.GET('/duels/current', { signal })) ?? null,
     getDuel: (id: string, signal?: AbortSignal) => result(http.GET('/duels/{id}', { params: { path: { id } }, signal })),
@@ -41,6 +41,7 @@ export function createApi(baseUrl = '/api', fetcher?: typeof fetch) {
     login: (body: LoginInput) => result(http.POST('/session', { body })),
     register: (body: RegisterInput) => result(http.POST('/users', { body })),
     logout: () => result(http.DELETE('/session')),
+    listProcessors: (signal?: AbortSignal) => result(http.GET('/processors', { signal })),
     listUsers: (query: UserQuery = {}, signal?: AbortSignal) => result(http.GET('/users', { params: { query }, signal })),
     getProfile: (id: string, signal?: AbortSignal) => result(http.GET('/users/{id}', { params: { path: { id } }, signal })),
     listProblems: (query: ProblemQuery = {}, signal?: AbortSignal) => result(http.GET('/problems', { params: { query }, signal })),
@@ -50,8 +51,8 @@ export function createApi(baseUrl = '/api', fetcher?: typeof fetch) {
       return [...first.items, ...pages.flatMap(page => page.items)];
     },
     getProblem: (id: string, context = 'practice', signal?: AbortSignal) => result(http.GET('/problems/{id}', { params: { path: { id }, query: { context } }, signal })),
-    problemLeaders: (id: string, context = 'practice', signal?: AbortSignal) => result(http.GET('/problems/{id}/leaders', { params: { path: { id }, query: { context } }, signal })),
-    checkExample: (id: string, context: string, code: string) => result(http.POST('/problems/{id}/example', { params: { path: { id }, query: { context } }, body: { code } })),
+    problemLeaders: (id: string, processor: string, context = 'practice', signal?: AbortSignal) => result(http.GET('/problems/{id}/leaders', { params: { path: { id }, query: { processor, context } }, signal })),
+    checkExample: (id: string, context: string, body: ExampleInput) => result(http.POST('/problems/{id}/example', { params: { path: { id }, query: { context } }, body })),
     submitGuess: (id: string, context: string, body: GuessInput) => result(http.POST('/problems/{id}/guess', { params: { path: { id }, query: { context } }, body })),
     createComparison: (id: string, body: ComparisonInput) => result(http.POST('/problems/{id}/comparisons', { params: { path: { id } }, body })),
     listSubmissions: (query: SubmissionQuery = {}, signal?: AbortSignal) => result(http.GET('/submissions', { params: { query }, signal })),

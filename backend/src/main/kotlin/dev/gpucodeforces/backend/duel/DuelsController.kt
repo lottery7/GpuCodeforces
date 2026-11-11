@@ -16,11 +16,11 @@ import dev.gpucodeforces.backend.api.model.DuelRequest as DuelRequestApi
 
 @RestController
 class DuelsController(private val service: DuelService, private val views: DuelViews) : DuelsApi {
-    override fun listDuelTopics(): ResponseEntity<List<String>> = ResponseEntity.ok(service.topics())
+    override fun listDuelTopics(processor: String?): ResponseEntity<List<String>> = ResponseEntity.ok(service.topics(processor))
 
     override fun createDuel(createDuelRequest: CreateDuelRequest): ResponseEntity<DuelRequestApi> {
         val user = CurrentUser.resolve()!!
-        val request = with(createDuelRequest) { service.create(mode.value, topics, opponentHandle, user) }
+        val request = with(createDuelRequest) { service.create(mode.value, topics, opponentHandle, processor, user) }
         return ResponseEntity.status(HttpStatus.CREATED).body(views.model(request))
     }
 
@@ -53,6 +53,7 @@ class DuelViews(private val users: UserRepository) {
             .creator(people.getValue(request.creatorId).toApiModel())
             .opponent(request.opponentId?.let { people.getValue(it).toApiModel() })
             .topics(request.topics)
+            .processor(request.processor)
             .createdAt(request.createdAt.atOffset(ZoneOffset.UTC))
             .expiresAt(request.expiresAt.atOffset(ZoneOffset.UTC))
             .contestId(request.contestId?.toString())

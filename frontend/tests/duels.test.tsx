@@ -11,9 +11,9 @@ import RuntimeNotice from '../src/components/RuntimeNotice';
 
 const session = vi.hoisted(() => ({ user: null as User | null }));
 vi.mock('../src/auth', () => ({ useSession: () => ({ user: session.user, isLoading: false, error: null }) }));
-const creator: User = { id: 'creator', handle: 'alex_cuda', rating: null, rank: null, ratingDelta: null, ratingContestId: null };
+const creator: User = { id: 'creator', handle: 'alex_cuda', ratings: {} };
 const opponent: User = { ...creator, id: 'opponent', handle: 'new_cuda' };
-const queued: DuelRequest = { id: 'request', mode: 'random', status: 'queued', creator, opponent: null, topics: ['Память'], contestId: null, createdAt: '2026-11-11T10:00:00Z', expiresAt: '2026-11-11T11:00:00Z' };
+const queued: DuelRequest = { id: 'request', mode: 'random', processor: 'gpu-cuda', status: 'queued', creator, opponent: null, topics: ['Память'], contestId: null, createdAt: '2026-11-11T10:00:00Z', expiresAt: '2026-11-11T11:00:00Z' };
 const invited: DuelRequest = { ...queued, mode: 'invite', status: 'invited', opponent };
 const matched: DuelRequest = { ...invited, status: 'matched', contestId: 'room' };
 const invitation: AppNotification = { id: 'note', type: 'duel_invitation', message: 'alex_cuda приглашает вас на дуэль.', duelRequestId: invited.id, duelStatus: 'invited', contestId: null, createdAt: queued.createdAt, readAt: null };
@@ -47,7 +47,7 @@ describe('Подбор дуэли', () => {
     expect(screen.queryByLabelText('Начало (МСК)')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Найти задачу для контеста')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Найти соперника' }));
-    expect(create).toHaveBeenCalledWith({ mode: 'random', topics: ['Память'] });
+    expect(create).toHaveBeenCalledWith({ mode: 'random', topics: ['Память'], processor: 'gpu-cuda' });
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Ищем соперника' })).toBeVisible());
     expect(screen.getByRole('button', { name: 'Отменить поиск' })).toBeVisible();
   });
@@ -70,7 +70,7 @@ describe('Подбор дуэли', () => {
     await userEvent.click(await screen.findByRole('radio', { name: 'Пригласить по нику' }));
     await userEvent.type(screen.getByRole('textbox', { name: 'Ник соперника' }), ` ${opponent.handle} `);
     await userEvent.click(screen.getByRole('button', { name: 'Отправить приглашение' }));
-    expect(create).toHaveBeenCalledWith({ mode: 'invite', topics: [], opponentHandle: opponent.handle });
+    expect(create).toHaveBeenCalledWith({ mode: 'invite', topics: [], processor: 'gpu-cuda', opponentHandle: opponent.handle });
     await waitFor(() => expect(screen.getByText('Ожидаем ответ на приглашение')).toBeVisible());
     await userEvent.click(screen.getByRole('button', { name: 'Отменить приглашение' }));
     expect(cancel).toHaveBeenCalledWith(invited.id);

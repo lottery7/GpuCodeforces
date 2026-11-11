@@ -35,29 +35,29 @@ interface UserRepository : JpaRepository<User, UUID> {
 
     /** rank is precomputed (see rating finalization), so filtering here never changes a user's place. */
     @Query(
-        value = "SELECT * FROM gpucodeforces.users WHERE rating IS NOT NULL " +
-            "AND lower(handle) LIKE lower(concat('%', :query, '%')) ORDER BY rank ASC LIMIT :limit OFFSET :offset",
+        value = "SELECT u.* FROM gpucodeforces.users u JOIN gpucodeforces.user_ratings r ON r.user_id = u.id AND r.processor = :processor " +
+            "WHERE lower(u.handle) LIKE lower(concat('%', :query, '%')) ORDER BY r.rank ASC, lower(u.handle) ASC LIMIT :limit OFFSET :offset",
         nativeQuery = true,
     )
-    fun searchRated(query: String, limit: Int, offset: Int): List<User>
+    fun searchRated(processor: String, query: String, limit: Int, offset: Int): List<User>
 
     @Query(
-        value = "SELECT count(*) FROM gpucodeforces.users WHERE rating IS NOT NULL " +
-            "AND lower(handle) LIKE lower(concat('%', :query, '%'))",
+        value = "SELECT count(*) FROM gpucodeforces.users u JOIN gpucodeforces.user_ratings r ON r.user_id = u.id AND r.processor = :processor " +
+            "WHERE lower(u.handle) LIKE lower(concat('%', :query, '%'))",
         nativeQuery = true,
     )
-    fun countRated(query: String): Long
+    fun countRated(processor: String, query: String): Long
 
     /**
-     * Recomputes the denormalized `rank` column for every rated user after a rating change.
+     * Recomputes the denormalized `rank` of every rating, separately for each processor, after a rating change.
      * flushAutomatically/clearAutomatically: entity-managed rating updates in the same transaction
      * must hit the database before this runs, and the persistence context must drop its now-stale cache after.
      */
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query(
-        value = "UPDATE gpucodeforces.users u SET rank = ranked.rnk FROM " +
-            "(SELECT id, RANK() OVER (ORDER BY rating DESC) AS rnk FROM gpucodeforces.users WHERE rating IS NOT NULL) ranked " +
-            "WHERE u.id = ranked.id",
+        value = "UPDATE gpucodeforces.user_ratings r SET rank = ranked.rnk FROM " +
+            "(SELECT user_id, processor, RANK() OVER (PARTITION BY processor ORDER BY rating DESC) AS rnk FROM gpucodeforces.user_ratings) ranked " +
+            "WHERE r.user_id = ranked.user_id AND r.processor = ranked.processor",
         nativeQuery = true,
     )
     fun recomputeRanks()

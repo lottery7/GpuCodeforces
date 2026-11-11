@@ -22,6 +22,8 @@ class DuelRequest(
     @Column(name = "creator_id") val creatorId: UUID,
     @Column(name = "opponent_id") var opponentId: UUID?,
     @JdbcTypeCode(SqlTypes.ARRAY) val topics: List<String>,
+    /** The processor of the duel's contest; its problem has to be solvable on it. */
+    val processor: String,
     @Column(name = "created_at") val createdAt: Instant,
     @Column(name = "expires_at") var expiresAt: Instant,
     @Column(name = "contest_id") var contestId: UUID? = null,

@@ -5,6 +5,7 @@ import dev.gpucodeforces.backend.api.model.CheckExample200Response
 import dev.gpucodeforces.backend.api.model.Contest
 import dev.gpucodeforces.backend.api.model.ContestInput
 import dev.gpucodeforces.backend.api.model.GetContestStandings200ResponseInner
+import dev.gpucodeforces.backend.api.model.GetProblem200Response
 import dev.gpucodeforces.backend.api.model.GetUserProfile200Response
 import dev.gpucodeforces.backend.api.model.ListProblemLeaders200ResponseInner
 import dev.gpucodeforces.backend.api.model.ListProblems200Response
@@ -27,7 +28,10 @@ import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
 import dev.gpucodeforces.judge.api.GpuInfo
 import dev.gpucodeforces.judge.api.JudgeEvent
 import dev.gpucodeforces.judge.api.JudgeResult
+import dev.gpucodeforces.judge.api.ProcessorRun
 import dev.gpucodeforces.judge.api.Progress
+import dev.gpucodeforces.judge.api.Score
+import dev.gpucodeforces.judge.api.ScoreType
 import dev.gpucodeforces.judge.api.SubmissionRequest
 import dev.gpucodeforces.judge.api.TestResult
 import dev.gpucodeforces.judge.api.SubmissionStatus as JudgeStatus
@@ -105,7 +109,7 @@ class SubmissionIntegrationTest {
 
     @BeforeEach
     fun environment() {
-        given(references.environmentKey()).willReturn("submission-test-environment")
+        given(references.environmentKey("gpu-cuda")).willReturn("submission-test-environment")
         given(references.environmentKeyFor(any(JudgeResult::class.java) ?: JudgeResult(Verdict.ACCEPTED))).willReturn("submission-test-environment")
     }
 
@@ -118,12 +122,23 @@ class SubmissionIntegrationTest {
         return result.responseBody!! to result.responseCookies.getFirst("session")!!.value
     }
 
-    private fun submit(cookie: String, code: String, contestId: String? = null): Pair<Submission, SubmissionRequest> {
+    private fun submit(
+        cookie: String,
+        code: String,
+        contestId: String? = null,
+        processor: String = "gpu-cuda",
+        language: String = "cuda",
+    ): Pair<Submission, SubmissionRequest> {
         val submission = client.post().uri("/submissions").contentType(MediaType.APPLICATION_JSON).cookie("session", cookie)
-            .body(SubmitSolutionRequest("vector_add", code).contestId(contestId))
+            .body(SubmitSolutionRequest("vector_add", code, processor, language).contestId(contestId))
             .exchange().expectStatus().isAccepted.expectBody(Submission::class.java).returnResult().responseBody!!
         return submission to nextGatewayRequest()
     }
+
+    private fun rejectedSubmission(cookie: String, problemId: String, processor: String, language: String, contestId: String? = null) =
+        client.post().uri("/submissions").contentType(MediaType.APPLICATION_JSON).cookie("session", cookie)
+            .body(SubmitSolutionRequest(problemId, "x", processor, language).contestId(contestId))
+            .exchange().expectStatus().isBadRequest
 
     private fun fetch(id: String, cookie: String? = null): Submission =
         client.get().uri("/submissions/$id").apply { if (cookie != null) cookie("session", cookie) }
@@ -155,14 +170,28 @@ class SubmissionIntegrationTest {
         jobId: String = jobIdOf(request),
     ) = JudgeEvent(request.submissionId, 1, seq, status, Instant.now(), "executor-1", progress, result, jobId)
 
-    private fun finished(verdict: Verdict, tests: Int, failedTest: Int? = null, time: Double = 1.5) = JudgeResult(
+    private fun finished(
+        verdict: Verdict,
+        tests: Int,
+        failedTest: Int? = null,
+        time: Double = 1.5,
+        type: ScoreType = ScoreType.TIME_MS,
+        metrics: Map<String, Double> = emptyMap(),
+        processor: String = if (type == ScoreType.TIME_MS) "gpu-cuda" else "rtl",
+    ) = JudgeResult(
         verdict = verdict,
         failedTest = failedTest,
         message = if (failedTest != null) "Неверный ответ на тесте $failedTest" else null,
         tests = (1..(failedTest ?: tests)).map {
-            TestResult(it, "t$it", it == 1, if (it == failedTest) verdict else Verdict.ACCEPTED, time, time, 1, null, null)
+            TestResult(
+                it, "t$it", it == 1, if (it == failedTest) verdict else Verdict.ACCEPTED, score = Score(time, type),
+                // the last test only checks the answer
+                measured = it != tests, wallTimeMs = time, runs = 1,
+            )
         },
-        maxTimeMs = if (verdict == Verdict.ACCEPTED) time else null,
+        score = if (verdict == Verdict.ACCEPTED) Score(time, type) else null,
+        metrics = metrics,
+        processor = ProcessorRun(processor, "test toolchain", "test model", "executor-1"),
     )
 
     @Test
@@ -176,15 +205,19 @@ class SubmissionIntegrationTest {
         assertThat(firstRequest.submissionId).isEqualTo(first.id)
         assertThat(firstRequest.problem.id).isEqualTo("vector_add")
         assertThat(firstRequest.problem.generator.source).contains("def tests()")
-        assertThat(firstRequest.gpuProfile).isEqualTo("rtx3060")
+        assertThat(firstRequest.processor).isEqualTo("gpu-cuda")
+        assertThat(firstRequest.language).isEqualTo("cuda")
+        publish(event(firstRequest, 2, JUDGE_TESTING, progress = Progress(0, 5)))
+        assertThat(awaitStatus(first.id, "checking", aliceCookie).passedTests).isZero()
         publish(event(firstRequest, 3, JUDGE_TESTING, progress = Progress(3, 5)))
-        awaitStatus(first.id, "checking")
         publish(event(firstRequest, 1, JUDGE_COMPILING))
         publish(event(firstRequest, 9, JUDGE_FINISHED, result = finished(Verdict.WRONG_ANSWER, 5, 1), jobId = "another-job"))
         publish(event(firstRequest, 7, JUDGE_FINISHED, result = finished(Verdict.ACCEPTED, 5)))
         publish(event(firstRequest, 7, JUDGE_FINISHED, result = finished(Verdict.ACCEPTED, 5)))
         val accepted = awaitStatus(first.id, "accepted", aliceCookie)
-        assertThat(accepted.timeMs).isEqualByComparingTo(BigDecimal("1.5"))
+        assertThat(accepted.score!!.value).isEqualByComparingTo(BigDecimal("1.5"))
+        assertThat(accepted.score!!.type.value).isEqualTo("TIME_MS")
+        assertThat(accepted.processor).isEqualTo("gpu-cuda")
         assertThat(accepted.passedTests).isEqualTo(5)
         assertThat(accepted.totalTests).isEqualTo(5)
         assertThat(accepted.comparable).isTrue()
@@ -193,7 +226,7 @@ class SubmissionIntegrationTest {
         assertThat(fetch(first.id, bobCookie).code).isNull()
 
         val (second, secondRequest) = submit(aliceCookie, "wrong")
-        assertThat(second.previousBestTimeMs).isEqualByComparingTo(BigDecimal("1.5"))
+        assertThat(second.previousBestScore!!.value).isEqualByComparingTo(BigDecimal("1.5"))
         publish(event(secondRequest, 4, JUDGE_FINISHED, result = finished(Verdict.WRONG_ANSWER, 5, 2)))
         assertThat(awaitStatus(second.id, "wrong_answer", aliceCookie).diagnostic).contains("Неверный ответ на тесте 2")
 
@@ -213,11 +246,38 @@ class SubmissionIntegrationTest {
         assertThat(vectorAdd.solved).isTrue()
         assertThat(vectorAdd.solvedCount).isEqualTo(1)
         assertThat(vectorAdd.lastStatus).isEqualTo("wrong_answer")
-        assertThat(vectorAdd.bestSubmissionId).isEqualTo(first.id)
-        assertThat(vectorAdd.recordTimeMs).isEqualByComparingTo(BigDecimal("1.5"))
-        val leaders = client.get().uri("/problems/vector_add/leaders").exchange()
+        val onGpu = vectorAdd.processors.single { it.id == "gpu-cuda" }
+        assertThat(onGpu.bestSubmissionId).isEqualTo(first.id)
+        assertThat(onGpu.recordScore!!.value).isEqualByComparingTo(BigDecimal("1.5"))
+        assertThat(vectorAdd.processors.single { it.id == "rtl" }.recordScore).isNull()
+        val leaders = client.get().uri("/problems/vector_add/leaders?processor=gpu-cuda").exchange()
             .expectBody(Array<ListProblemLeaders200ResponseInner>::class.java).returnResult().responseBody!!
         assertThat(leaders.map { it.user.handle to it.rank }).containsExactly("alice" to 1)
+        client.get().uri("/problems/vector_add/leaders").exchange().expectStatus().isBadRequest
+
+        // Another processor: its own score type, metrics and records; the problem page learns its tests.
+        rejectedSubmission(bobCookie, "vector_add", "coral-npu", "c")
+        rejectedSubmission(bobCookie, "vector_add", "rtl", "cuda")
+        rejectedSubmission(bobCookie, "matmul_host", "rtl", "systemverilog")
+        val (onRtl, rtlRequest) = submit(bobCookie, "module solve; endmodule", processor = "rtl", language = "systemverilog")
+        assertThat(rtlRequest.processor).isEqualTo("rtl")
+        assertThat(rtlRequest.language).isEqualTo("systemverilog")
+        publish(
+            event(
+                rtlRequest, 6, JUDGE_FINISHED,
+                result = finished(Verdict.ACCEPTED, 3, time = 4096.0, type = ScoreType.CYCLES_X_DEPTH_X_TRANSISTORS, metrics = mapOf("cycles" to 64.0, "cells" to 64.0)),
+            ),
+        )
+        val rtlAccepted = awaitStatus(onRtl.id, "accepted", bobCookie)
+        assertThat(rtlAccepted.score!!.type.value).isEqualTo("CYCLES_X_DEPTH_X_TRANSISTORS")
+        assertThat(rtlAccepted.metrics).containsEntry("cells", BigDecimal("64.0"))
+        val rtlLeaders = client.get().uri("/problems/vector_add/leaders?processor=rtl").exchange()
+            .expectBody(Array<ListProblemLeaders200ResponseInner>::class.java).returnResult().responseBody!!
+        assertThat(rtlLeaders.map { it.user.handle }).containsExactly("bob")
+        val rtlPage = client.get().uri("/problems/vector_add").exchange()
+            .expectBody(GetProblem200Response::class.java).returnResult().responseBody!!
+        assertThat(rtlPage.processorDetails.single { it.id == "rtl" }.environmentMarkdown)
+            .contains("1. `t1` (пример) — замерный").contains("3. `t3` — только проверка ответа")
 
         // A judge failure can be rechecked by the author only, as a new judge job.
         val (third, thirdRequest) = submit(aliceCookie, "flaky")
@@ -234,27 +294,31 @@ class SubmissionIntegrationTest {
         // Example check waits for the verdict of a job that runs only the sample tests.
         val example = CompletableFuture.supplyAsync {
             client.post().uri("/problems/vector_add/example").contentType(MediaType.APPLICATION_JSON).cookie("session", aliceCookie)
-                .body(mapOf("code" to "void solve() {}"))
+                .body(mapOf("code" to "void solve() {}", "processor" to "gpu-cuda", "language" to "cuda"))
                 .exchange().expectStatus().isOk.expectBody(CheckExample200Response::class.java).returnResult().responseBody!!
         }
         val exampleRequest = nextGatewayRequest()
         assertThat(exampleRequest.submissionId).startsWith("example-")
         assertThat(exampleRequest.problem.generator.source).contains("if test.get(\"sample\")")
+        assertThat(exampleRequest.processor).isEqualTo("gpu-cuda")
         publish(event(exampleRequest, 3, JUDGE_FINISHED, result = finished(Verdict.WRONG_ANSWER, 1, 1)))
         val exampleResult = example.get(20, TimeUnit.SECONDS)
         assertThat(exampleResult.passed).isFalse()
         assertThat(exampleResult.diagnostic).contains("Неверный ответ")
         assertThat(gatewayRequests).isEmpty()
 
-        // Contest: registration and a live contest are required.
+        // Contests: registration and a live contest are required; one runs on gpu-cuda, another on rtl.
         val startAt = Instant.now().plusSeconds(2)
-        val contest = client.post().uri("/contests").contentType(MediaType.APPLICATION_JSON).cookie("session", aliceCookie)
-            .body(ContestInput("Раунд", startAt.atOffset(ZoneOffset.UTC), startAt.plus(1, ChronoUnit.HOURS).atOffset(ZoneOffset.UTC), setOf(alice.id), setOf("vector_add")))
+        fun contest(title: String, processor: String) = client.post().uri("/contests").contentType(MediaType.APPLICATION_JSON).cookie("session", aliceCookie)
+            .body(ContestInput(title, startAt.atOffset(ZoneOffset.UTC), startAt.plus(1, ChronoUnit.HOURS).atOffset(ZoneOffset.UTC), setOf(alice.id), setOf("vector_add"), processor))
             .exchange().expectStatus().isCreated.expectBody(Contest::class.java).returnResult().responseBody!!
-        client.put().uri("/contests/${contest.id}/registration").cookie("session", bobCookie).exchange().expectStatus().isNoContent
+        val contest = contest("Раунд", "gpu-cuda")
+        val rtlContest = contest("Раунд на схемах", "rtl")
+        for (id in listOf(contest.id, rtlContest.id)) client.put().uri("/contests/$id/registration").cookie("session", bobCookie).exchange().expectStatus().isNoContent
         Thread.sleep(Duration.between(Instant.now(), startAt).plusMillis(300).toMillis().coerceAtLeast(0))
         client.post().uri("/submissions").contentType(MediaType.APPLICATION_JSON).cookie("session", aliceCookie)
-            .body(SubmitSolutionRequest("vector_add", "x").contestId(contest.id)).exchange().expectStatus().isForbidden
+            .body(SubmitSolutionRequest("vector_add", "x", "gpu-cuda", "cuda").contestId(contest.id)).exchange().expectStatus().isForbidden
+        rejectedSubmission(bobCookie, "vector_add", "gpu-cuda", "cuda", rtlContest.id)
         val (contestSubmission, contestRequest) = submit(bobCookie, "fast", contest.id)
         publish(event(contestRequest, 4, JUDGE_FINISHED, result = finished(Verdict.ACCEPTED, 5, time = 2.0)))
         assertThat(awaitStatus(contestSubmission.id, "accepted").contestTitle).isEqualTo("Раунд")
@@ -266,6 +330,19 @@ class SubmissionIntegrationTest {
         val sentAfterStart = Duration.between(contest.startAt.toInstant(), contestSubmission.createdAt.toInstant()).seconds.toInt()
         assertThat(standings.single().times).containsExactlyEntriesOf(mapOf("vector_add" to sentAfterStart))
         assertThat(standings.single().totalSeconds).isEqualTo(sentAfterStart)
+
+        // A contest on another processor ranks the same way: a problem is solved within its score limit.
+        val (rtlContestSubmission, rtlContestRequest) = submit(bobCookie, "module solve; endmodule", rtlContest.id, "rtl", "systemverilog")
+        publish(event(rtlContestRequest, 4, JUDGE_FINISHED, result = finished(Verdict.ACCEPTED, 3, time = 50000.0, type = ScoreType.CYCLES_X_DEPTH_X_TRANSISTORS)))
+        awaitStatus(rtlContestSubmission.id, "accepted")
+        val rtlStandings = client.get().uri("/contests/${rtlContest.id}/standings").exchange()
+            .expectBody(Array<GetContestStandings200ResponseInner>::class.java).returnResult().responseBody!!
+        assertThat(rtlStandings.single().solved).isEqualTo(1)
+        val (overLimit, overLimitRequest) = submit(bobCookie, "module solve; endmodule // slow", rtlContest.id, "rtl", "systemverilog")
+        publish(event(overLimitRequest, 4, JUDGE_FINISHED, result = finished(Verdict.TIME_LIMIT_EXCEEDED, 3, failedTest = 2, type = ScoreType.CYCLES_X_DEPTH_X_TRANSISTORS)))
+        awaitStatus(overLimit.id, "time_limit")
+        assertThat(client.get().uri("/contests/${rtlContest.id}").exchange().expectBody(Contest::class.java).returnResult().responseBody!!.rulesMarkdown)
+            .contains("`rtl`").contains("лимит тактов × глубины × транзисторов")
 
         val profile = client.get().uri("/users/${alice.id}").exchange()
             .expectBody(GetUserProfile200Response::class.java).returnResult().responseBody!!
@@ -292,7 +369,7 @@ class SubmissionIntegrationTest {
             val version = versionRepository.save(
                 ProblemVersion(
                     UUID.randomUUID(), id, "G", source.title, source.difficulty, source.tags, source.authors, false,
-                    source.statementMarkdown, source.starterCode,
+                    source.statementMarkdown, source.processors, source.starters,
                     jsonMapper.writeValueAsString(problemCatalog.spec(source).copy(id = id)),
                     "geometric-content", "geometric-judge", null, format = "optimization",
                     formatData = jsonMapper.writeValueAsString(
@@ -306,37 +383,41 @@ class SubmissionIntegrationTest {
             problem.currentVersionId = version.id
         }
         fun send() = client.post().uri("/submissions").contentType(MediaType.APPLICATION_JSON).cookie("session", cookie)
-            .body(SubmitSolutionRequest(id, "void solve() {}"))
+            .body(SubmitSolutionRequest(id, "void solve() {}", "gpu-cuda", "cuda"))
             .exchange().expectStatus().isAccepted.expectBody(Submission::class.java).returnResult().responseBody!!
         val measured = finished(Verdict.ACCEPTED, 2, time = 4.0).copy(
-            tests = listOf(TestResult(1, "first", true, Verdict.ACCEPTED, 1.0, 1.0, 1), TestResult(2, "second", false, Verdict.ACCEPTED, 4.0, 4.0, 3)),
-            gpu = GpuInfo("rtx3060", "Actual device", 0, "executor-1"), toolchain = "nvcc test",
+            tests = listOf(
+                TestResult(1, "first", true, Verdict.ACCEPTED, score = Score(1.0, ScoreType.TIME_MS), wallTimeMs = 1.0, runs = 1),
+                TestResult(2, "second", false, Verdict.ACCEPTED, score = Score(4.0, ScoreType.TIME_MS), wallTimeMs = 4.0, runs = 3),
+            ),
+            gpu = GpuInfo("rtx3060", "Actual device", 0, "executor-1"),
+            processor = ProcessorRun("gpu-cuda", "nvcc test", "Actual device", "executor-1"),
         )
         val first = send()
         val firstRequest = nextGatewayRequest()
         publish(event(firstRequest, 1, JUDGE_FINISHED, result = measured))
         val accepted = awaitStatus(first.id, "accepted", cookie)
-        assertThat(accepted.timeMs).isEqualByComparingTo("2.0")
+        assertThat(accepted.score!!.value).isEqualByComparingTo("2.0")
         assertThat(accepted.measurement!!.aggregation.value).isEqualTo("geometric_mean")
-        assertThat(accepted.measurement!!.gpuName).isEqualTo("Actual device")
+        assertThat(accepted.measurement!!.model).isEqualTo("Actual device")
         assertThat(accepted.measurement!!.testCount).isEqualTo(2)
         val stored = jsonMapper.readValue(submissionRepository.findById(UUID.fromString(first.id)).orElseThrow().measurement!!, MeasurementData::class.java)
-        assertThat(stored.tests.map { it.timeMs.toPlainString() }).containsExactly("1.0", "4.0")
+        assertThat(stored.tests.map { it.value.toPlainString() }).containsExactly("1.0", "4.0")
         assertThat(stored.tests.map { it.runs }).containsExactly(1, 3)
         assertThat(stored.toolchain).isEqualTo("nvcc test")
         assertThat(jsonMapper.writeValueAsString(fetch(first.id))).doesNotContain("toolchain", "\"tests\"", "nvcc test")
 
         val invalid = send()
         val invalidRequest = nextGatewayRequest()
-        publish(event(invalidRequest, 1, JUDGE_FINISHED, result = measured.copy(tests = measured.tests.map { it.copy(timeMs = null) })))
+        publish(event(invalidRequest, 1, JUDGE_FINISHED, result = measured.copy(tests = measured.tests.map { it.copy(score = null) })))
         val failed = awaitStatus(invalid.id, "measurement_error", cookie)
-        assertThat(failed.timeMs).isNull()
+        assertThat(failed.score).isNull()
         assertThat(failed.measurement).isNull()
         assertThat(failed.diagnostic).contains("замер")
         client.post().uri("/submissions/${invalid.id}/recheck").cookie("session", cookie).exchange().expectStatus().isAccepted
         val recheckRequest = nextGatewayRequest()
         publish(event(recheckRequest, 1, JUDGE_FINISHED, result = measured))
-        assertThat(awaitStatus(invalid.id, "accepted", cookie).timeMs).isEqualByComparingTo("2.0")
+        assertThat(awaitStatus(invalid.id, "accepted", cookie).score!!.value).isEqualByComparingTo("2.0")
     }
 
     companion object {
@@ -371,7 +452,8 @@ class SubmissionIntegrationTest {
                 val body = gatewayJson.writeValueAsBytes(
                     mapOf(
                         "submissionId" to request.submissionId,
-                        "gpuProfile" to request.gpuProfile,
+                        "processor" to request.processor,
+                        "language" to request.language,
                         "status" to "QUEUED",
                         "queuedAt" to Instant.now().toString(),
                         "jobId" to jobIdOf(request),
@@ -393,6 +475,7 @@ class SubmissionIntegrationTest {
         fun properties(registry: DynamicPropertyRegistry) {
             registry.add("platform.judge.gateway-url") { "http://127.0.0.1:${gateway.address.port}" }
             registry.add("platform.admin.handles") { "alice" }
+            registry.add("platform.problems.directory") { TestProblems.withRtl().toString() }
             registry.add("spring.rabbitmq.listener.simple.auto-startup") { "true" }
         }
 

@@ -31,14 +31,15 @@ class UserService(
         return userRepository.findById(uuid).orElseThrow { NotFoundApiException("Пользователь не найден") }
     }
 
-    fun search(query: String?, sortByRating: Boolean, offset: Int, limit: Int): UserPage {
+    /** By handle, or, with [ratingProcessor], the users rated on that processor by their place there. */
+    fun search(query: String?, ratingProcessor: String?, offset: Int, limit: Int): UserPage {
         val trimmed = query?.trim() ?: ""
-        val items = if (sortByRating) {
-            userRepository.searchRated(trimmed, limit, offset)
+        val items = if (ratingProcessor != null) {
+            userRepository.searchRated(ratingProcessor, trimmed, limit, offset)
         } else {
             userRepository.searchByHandle(trimmed, limit, offset)
         }
-        val total = if (sortByRating) userRepository.countRated(trimmed) else userRepository.countByHandle(trimmed)
+        val total = if (ratingProcessor != null) userRepository.countRated(ratingProcessor, trimmed) else userRepository.countByHandle(trimmed)
         return UserPage(items, total.toInt())
     }
 }

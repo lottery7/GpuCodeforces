@@ -4,20 +4,23 @@ import { Link, useLocation, useSearchParams } from 'react-router';
 import { api } from '../api/client';
 import type { Submission, SubmissionQuery } from '../api/types';
 import { useSession } from '../auth';
-import { Empty, ErrorMessage, LoginRequired, PageHeader, Pagination, QueryState, Status, TimeValue, UserLink } from '../ui';
+import { useProcessors } from '../processors';
+import { Empty, ErrorMessage, LoginRequired, PageHeader, Pagination, QueryState, ScoreValue, Status, UserLink } from '../ui';
 import { dateTime, pendingStatuses, problemPath, statusLabels } from '../utils';
 
 const limit = 20;
 
 export function SubmissionTable({ items, inProblem = false, showUser = false }: { items: Submission[]; inProblem?: boolean; showUser?: boolean }) {
+  const processors = useProcessors();
   return <div className="panel table-wrap"><table className="data-table" aria-label="История посылок">
-    <thead><tr><th>Посылка</th>{!inProblem && <th>Задача</th>}{showUser && <th>Участник</th>}<th>Вердикт</th><th>Время GPU, мс</th><th>Отправлено, МСК</th></tr></thead>
+    <thead><tr><th>Посылка</th>{!inProblem && <th>Задача</th>}{showUser && <th>Участник</th>}<th>Процессор</th><th>Вердикт</th><th>Результат</th><th>Отправлено, МСК</th></tr></thead>
     <tbody>{items.map(item => <tr key={item.id}>
       <td className="mono"><Link to={`/submission/${encodeURIComponent(item.id)}`}>#{item.id}</Link></td>
       {!inProblem && <td><Link to={problemPath(item.problemId, item.contestId || 'practice')}>{item.problemTitle}</Link><div className="subline">{item.contestId ? <Link to={`/contest/${encodeURIComponent(item.contestId)}`}>{item.contestTitle || 'Контест'}</Link> : 'Практика'}</div></td>}
       {showUser && <td><UserLink user={item.user} /></td>}
-      <td><Status status={item.status} />{item.status === 'accepted' && item.format !== 'guess' && !item.comparable && <div className="subline">Старый профиль проверки</div>}</td>
-      <td className="mono">{item.format === 'guess' ? item.status === 'accepted' ? '+' : '-' : <TimeValue value={item.status === 'accepted' ? item.timeMs : null} />}</td>
+      <td>{processors.title(item.processor)}<div className="subline">{processors.language(item.processor, item.language)?.title ?? item.language}</div></td>
+      <td><Status status={item.status} />{item.status === 'accepted' && item.format !== 'guess' && !item.comparable && <div className="subline">Старая версия задачи</div>}</td>
+      <td className="mono">{item.format === 'guess' ? item.status === 'accepted' ? '+' : '-' : <ScoreValue score={item.status === 'accepted' ? item.score : null} />}</td>
       <td><time dateTime={item.createdAt}>{dateTime(item.createdAt)}</time></td>
     </tr>)}</tbody>
   </table></div>;

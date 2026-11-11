@@ -3,7 +3,7 @@ import { ApiError, createApi } from '../src/api/client';
 import type { Problem, ProblemDetail, User } from '../src/api/types';
 
 const user: User = {
-  id: 'new_cuda', handle: 'new_cuda', rating: null, rank: null, ratingDelta: null, ratingContestId: null,
+  id: 'new_cuda', handle: 'new_cuda', ratings: {},
 };
 
 function capture(handler: (request: Request) => Response | Promise<Response>) {
@@ -22,9 +22,9 @@ describe('API client', () => {
       ? new Response(null, { status: 204 }) : Response.json({ id: 'duel' }, { status: 201 }));
     const api = createApi('http://localhost/api', fetcher);
     await expect(api.getCurrentDuel()).resolves.toBeNull();
-    await api.createDuel({ mode: 'invite', opponentHandle: 'new_cuda', topics: ['Память'] });
+    await api.createDuel({ mode: 'invite', opponentHandle: 'new_cuda', topics: ['Память'], processor: 'gpu-cuda' });
     expect(new URL(requests[1]!.url).pathname).toBe('/api/duels');
-    expect(await requests[1]!.json()).toEqual({ mode: 'invite', opponentHandle: 'new_cuda', topics: ['Память'] });
+    expect(await requests[1]!.json()).toEqual({ mode: 'invite', opponentHandle: 'new_cuda', topics: ['Память'], processor: 'gpu-cuda' });
     await expect(api.readNotification('note')).resolves.toBeUndefined();
     expect(new URL(requests[2]!.url).pathname).toBe('/api/notifications/note/read');
   });
@@ -55,22 +55,22 @@ describe('API client', () => {
     const controller = new AbortController();
     await api.listProblems({
       q: 'a + b', difficulty: 'medium', tag: 'Массивы', solved: false,
-      userId: 'new_cuda', context: 'weekly-12', offset: 20, limit: 10, sort: 'bestTime',
+      userId: 'new_cuda', context: 'weekly-12', offset: 20, limit: 10, processor: 'rtl', sort: 'bestScore',
     }, controller.signal);
     const query = new URL(requests[0]!.url).searchParams;
     expect(Object.fromEntries(query)).toEqual({
       q: 'a + b', difficulty: 'medium', tag: 'Массивы', solved: 'false',
-      userId: 'new_cuda', context: 'weekly-12', offset: '20', limit: '10', sort: 'bestTime',
+      userId: 'new_cuda', context: 'weekly-12', offset: '20', limit: '10', processor: 'rtl', sort: 'bestScore',
     });
     controller.abort();
     expect(requests[0]!.signal.aborted).toBe(true);
     await api.getProblem('vector-addition');
     expect(new URL(requests[1]!.url).searchParams.get('context')).toBe('practice');
     const code = '#include <cuda_runtime.h>\nvoid solve() {}\n';
-    await api.checkExample('vector-addition', 'weekly-12', code);
+    await api.checkExample('vector-addition', 'weekly-12', { code, processor: 'gpu-cuda', language: 'cuda' });
     expect(new URL(requests[2]!.url).pathname).toBe('/api/problems/vector-addition/example');
     expect(new URL(requests[2]!.url).searchParams.get('context')).toBe('weekly-12');
-    expect(await requests[2]!.json()).toEqual({ code });
+    expect(await requests[2]!.json()).toEqual({ code, processor: 'gpu-cuda', language: 'cuda' });
     await api.listSubmissions({ userId: 'alex_cuda', context: 'all', status: 'wrong_answer' });
     expect(Object.fromEntries(new URL(requests[3]!.url).searchParams)).toEqual({
       userId: 'alex_cuda', context: 'all', status: 'wrong_answer',
@@ -107,7 +107,7 @@ describe('API client', () => {
     const problems: Problem[] = Array.from({ length: 237 }, (_, index) => ({
       id: `problem-${index}`, code: String(index).padStart(3, '0'), title: `Problem ${index}`,
       difficulty: 'easy', format: 'standard', tags: [], solved: false, solvedCount: 0,
-      lastSubmissionId: null, lastStatus: null, bestSubmissionId: null, bestTimeMs: null, recordTimeMs: null,
+      lastSubmissionId: null, lastStatus: null, processors: [{ id: 'gpu-cuda', languages: ['cuda'], bestSubmissionId: null, bestScore: null, recordScore: null }],
     }));
     const { requests, fetcher } = capture(async request => {
       const query = new URL(request.url).searchParams;

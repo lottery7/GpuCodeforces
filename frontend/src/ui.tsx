@@ -3,6 +3,8 @@ import { Link, useLocation } from 'react-router';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ApiError } from './api/client';
+import type { Score } from './api/types';
+import { formatScore, scoreUnits } from './processors';
 import { pendingStatuses, statusLabels, userPath } from './utils';
 
 export function PageHeader({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
@@ -40,8 +42,10 @@ export function QueryState({ query, children }: { query: { isPending?: boolean; 
 
 export const Empty = ({ children }: { children: ReactNode }) => <div className="empty">{children}</div>;
 export const Markdown = ({ children }: { children: string }) => <div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown></div>;
-export function TimeValue({ value }: { value: number | null | undefined }) {
-  return <span className="mono">{value !== null && value !== undefined && Number.isFinite(value) ? value.toFixed(4).replace(/0$/, '') : '-'}</span>;
+/** A score with the unit of its type; without a score, a dash. */
+export function ScoreValue({ score, unit = true }: { score: Score | null | undefined; unit?: boolean }) {
+  if (!score) return <span className="mono">-</span>;
+  return <span className="mono">{formatScore(score)}{unit && <span className="score-unit"> {scoreUnits[score.type]}</span>}</span>;
 }
 export function Status({ status }: { status: string }) {
   const tone = status === 'accepted' ? 'accepted' : pendingStatuses.has(status) ? 'pending' : 'failed';

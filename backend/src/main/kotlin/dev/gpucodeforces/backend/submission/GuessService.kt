@@ -1,7 +1,6 @@
 package dev.gpucodeforces.backend.submission
 
 import dev.gpucodeforces.backend.common.BadRequestException
-import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
 import dev.gpucodeforces.backend.problem.ProblemCatalog
 import dev.gpucodeforces.backend.problem.ProblemContext
@@ -9,6 +8,7 @@ import dev.gpucodeforces.backend.problem.ProblemFormatData
 import dev.gpucodeforces.backend.problem.ProblemService
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.backend.user.UserRepository
+import dev.gpucodeforces.judge.api.ScoreType
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import tools.jackson.databind.json.JsonMapper
@@ -16,14 +16,19 @@ import java.math.BigDecimal
 import java.time.Instant
 import java.util.UUID
 
+/**
+ * What an answer to a guess was checked against, kept with it: later measurements do not change it. Answers saved
+ * before processors compared GPU times: the migration copied them as scores of type TIME_MS.
+ */
 data class GuessSnapshot(
-    val firstTimeMs: BigDecimal,
-    val secondTimeMs: BigDecimal,
+    val firstScore: BigDecimal,
+    val secondScore: BigDecimal,
+    val scoreType: ScoreType,
     val explanation: String,
     val benchmarkKey: String,
     val synthetic: Boolean,
 ) {
-    fun correctChoice(): String = when (firstTimeMs.compareTo(secondTimeMs)) {
+    fun correctChoice(): String = when (firstScore.compareTo(secondScore)) {
         -1 -> "first"
         1 -> "second"
         else -> "equal"
@@ -37,7 +42,6 @@ class GuessService(
     private val submissionService: SubmissionService,
     private val submissionRepository: SubmissionRepository,
     private val userRepository: UserRepository,
-    private val gpuProperties: GpuProperties,
     private val references: ReferenceMeasurements,
     private val jsonMapper: JsonMapper,
 ) {
@@ -49,7 +53,9 @@ class GuessService(
         if (version.format != ProblemFormatData.GUESS) throw BadRequestException("Это не задача на угадывание")
         val contestId = (problem.context as? ProblemContext.InContest)?.contest?.id
         checkNotNull(userRepository.findForUpdate(author.id)) { "User ${author.id} disappeared" }
-        val measured = references.requireReady(version)
+        // a guess has one processor and one language (ProblemPackageReader)
+        val target = problemCatalog.spec(version).declaredProcessors().single()
+        val measured = references.requireReady(version, target.id)
         val key = checkNotNull(measured.key)
         if (benchmarkKey != key) throw BadRequestException("Условия сравнения изменились. Обновите задачу и выберите ответ заново")
         submissionRepository.findGuess(author.id, version.id, contestId, key)?.let { previous ->
@@ -58,7 +64,9 @@ class GuessService(
         }
         submissionService.submissionContext(contestId?.toString(), author)
         val format = problemCatalog.format(version)
-        val snapshot = GuessSnapshot(checkNotNull(measured.firstTimeMs), checkNotNull(measured.secondTimeMs), format.explanation, key, measured.synthetic)
+        val snapshot = GuessSnapshot(
+            checkNotNull(measured.firstScore), checkNotNull(measured.secondScore), measured.scoreType, format.explanation, key, measured.synthetic,
+        )
         val correct = choice == snapshot.correctChoice()
         return submissionRepository.save(
             Submission(
@@ -70,8 +78,9 @@ class GuessService(
                 code = "",
                 environmentMarkdown = "Оба варианта измерены проверяющей системой на полном наборе тестов задачи.",
                 judgeHash = version.judgeHash,
-                gpuProfile = gpuProperties.profile,
-                previousBestTimeMs = null,
+                processor = target.id,
+                language = target.languages.single(),
+                previousBestScore = null,
                 guessChoice = choice,
             ).apply {
                 guessBenchmarkKey = key

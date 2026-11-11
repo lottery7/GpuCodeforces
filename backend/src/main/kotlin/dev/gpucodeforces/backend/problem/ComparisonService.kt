@@ -1,11 +1,11 @@
 package dev.gpucodeforces.backend.problem
 
 import dev.gpucodeforces.backend.common.BadRequestException
-import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.common.NotFoundApiException
 import dev.gpucodeforces.backend.common.toUuidOrBadRequest
 import dev.gpucodeforces.backend.contest.ContestPhase
 import dev.gpucodeforces.backend.contest.ContestRepository
+import dev.gpucodeforces.backend.processor.ProcessorCatalog
 import dev.gpucodeforces.backend.submission.Submission
 import dev.gpucodeforces.backend.submission.SubmissionRepository
 import dev.gpucodeforces.backend.submission.SubmissionStatus
@@ -27,7 +27,7 @@ class ComparisonService(
     private val versionRepository: ProblemVersionRepository,
     private val problemRepository: ProblemRepository,
     private val contestRepository: ContestRepository,
-    private val gpuProperties: GpuProperties,
+    private val processorCatalog: ProcessorCatalog,
     private val jsonMapper: JsonMapper,
 ) {
     @Transactional
@@ -46,6 +46,9 @@ class ComparisonService(
         val now = Instant.now()
         val firstVersion = validate(first, problemId, now)
         val secondVersion = validate(second, problemId, now)
+        if (first.processor != second.processor || first.language != second.language) {
+            throw BadRequestException("Сравнивать можно посылки на одном процессоре и одном языке")
+        }
         val firstFormat = jsonMapper.readValue(firstVersion.formatData, ProblemFormatData::class.java)
         val secondFormat = jsonMapper.readValue(secondVersion.formatData, ProblemFormatData::class.java)
         val firstMeasurement = first.measurement?.let { jsonMapper.readValue(it, MeasurementData::class.java) }
@@ -55,7 +58,7 @@ class ComparisonService(
             secondMeasurement?.aggregation?.let { it != secondFormat.aggregation() } == true ||
             (firstFormat.aggregation() != BenchmarkDefinition.MAX && (firstMeasurement == null || secondMeasurement == null)) ||
             (firstMeasurement != null && secondMeasurement != null &&
-                (firstMeasurement.timingMode != secondMeasurement.timingMode || firstMeasurement.gpuName != secondMeasurement.gpuName ||
+                (firstMeasurement.timingMode != secondMeasurement.timingMode || firstMeasurement.model != secondMeasurement.model ||
                     firstMeasurement.toolchain != secondMeasurement.toolchain || firstMeasurement.synthetic != secondMeasurement.synthetic))) {
             throw BadRequestException("Нельзя сравнивать разные метрики или условия измерения")
         }
@@ -72,6 +75,10 @@ class ComparisonService(
                 benchmark = firstFormat.benchmark,
             ),
         )
+        // the guess compares the two on their processor and language only
+        val spec = jsonMapper.readValue(firstVersion.judgeSpec, ProblemSpec::class.java)
+        val target = spec.processorSpec(first.processor)!!.copy(languages = listOf(first.language))
+        val judgeSpec = jsonMapper.writeValueAsString(spec.copy(processors = listOf(target)))
         val id = "comparison-${UUID.randomUUID()}"
         val problem = problemRepository.save(Problem(id, source = "comparison"))
         val version = versionRepository.save(
@@ -85,10 +92,11 @@ class ComparisonService(
                 authors = listOf(author.handle),
                 draft = false,
                 statementMarkdown = firstVersion.statementMarkdown,
-                starterCode = "",
-                judgeSpec = firstVersion.judgeSpec,
-                contentHash = sha256(firstVersion.contentHash, data),
-                judgeHash = sha256(firstVersion.judgeHash, data),
+                processors = listOf(target.id),
+                starters = mapOf(target.id to mapOf(first.language to "")),
+                judgeSpec = judgeSpec,
+                contentHash = sha256(firstVersion.contentHash, data, judgeSpec),
+                judgeHash = sha256(firstVersion.judgeHash, data, judgeSpec),
                 revision = null,
                 format = ProblemFormatData.GUESS,
                 formatData = data,
@@ -100,9 +108,9 @@ class ComparisonService(
 
     private fun validate(submission: Submission, problemId: String, now: Instant): ProblemVersion {
         if (submission.problemId != problemId || submission.status != SubmissionStatus.ACCEPTED ||
-            submission.guessChoice != null || submission.timeMs == null || submission.timeMs!! <= BigDecimal.ZERO ||
-            submission.gpuProfile != gpuProperties.profile) {
-            throw BadRequestException("Нужны принятые CUDA-посылки этой задачи с замерами на текущей GPU")
+            submission.guessChoice != null || submission.score == null || submission.score!! <= BigDecimal.ZERO ||
+            !processorCatalog.isEnabled(submission.processor)) {
+            throw BadRequestException("Нужны принятые посылки этой задачи с результатом на процессоре платформы")
         }
         submission.contestId?.let { id ->
             val contest = contestRepository.findById(id).orElse(null)
@@ -112,7 +120,7 @@ class ComparisonService(
         }
         val version = versionRepository.findById(submission.problemVersionId).orElseThrow { NotFoundApiException("Версия задачи не найдена") }
         if (version.problemId != problemId || version.judgeHash != submission.judgeHash || version.draft || version.format == ProblemFormatData.GUESS) {
-            throw BadRequestException("Посылки должны относиться к опубликованным CUDA-задачам с той же конфигурацией проверки")
+            throw BadRequestException("Посылки должны относиться к опубликованным задачам с той же конфигурацией проверки")
         }
         return version
     }

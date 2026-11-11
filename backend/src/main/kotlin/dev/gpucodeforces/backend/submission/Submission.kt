@@ -1,17 +1,20 @@
 package dev.gpucodeforces.backend.submission
 
+import dev.gpucodeforces.judge.api.ScoreType
 import jakarta.persistence.AttributeConverter
 import jakarta.persistence.Column
 import jakarta.persistence.Converter
 import jakarta.persistence.Entity
+import jakarta.persistence.EnumType
+import jakarta.persistence.Enumerated
 import jakarta.persistence.Id
 import jakarta.persistence.LockModeType
 import jakarta.persistence.Table
+import org.hibernate.annotations.JdbcTypeCode
+import org.hibernate.type.SqlTypes
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Query
-import org.hibernate.annotations.JdbcTypeCode
-import org.hibernate.type.SqlTypes
 import java.math.BigDecimal
 import java.time.Instant
 import java.util.UUID
@@ -68,10 +71,14 @@ class Submission(
     val environmentMarkdown: String,
     @Column(name = "judge_hash", nullable = false)
     val judgeHash: String,
-    @Column(name = "gpu_profile", nullable = false)
-    val gpuProfile: String,
-    @Column(name = "previous_best_time_ms")
-    val previousBestTimeMs: BigDecimal?,
+    /** Accepted results are comparable within one (judgeHash, processor). */
+    @Column(nullable = false)
+    val processor: String,
+    @Column(nullable = false)
+    val language: String,
+    /** Best accepted score of the author in the same context and configuration before this submission. */
+    @Column(name = "previous_best_score")
+    val previousBestScore: BigDecimal?,
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: Instant = Instant.now(),
     @Column(name = "guess_choice")
@@ -80,8 +87,16 @@ class Submission(
     @Column(nullable = false)
     var status: SubmissionStatus = SubmissionStatus.QUEUED
 
-    @Column(name = "time_ms")
-    var timeMs: BigDecimal? = null
+    /** Set for accepted submissions only, in units of [scoreType]. */
+    var score: BigDecimal? = null
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "score_type")
+    var scoreType: ScoreType? = null
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(nullable = false)
+    var metrics: Map<String, Double> = emptyMap()
 
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "measurement")
@@ -132,7 +147,10 @@ class Submission(
 
     override fun hashCode() = id.hashCode()
 
-    fun toRow() = SubmissionRow(id, userId, problemId, problemVersionId, contestId, status, timeMs, judgeHash, gpuProfile, createdAt, benchmarkEnvironmentKey)
+    fun toRow() = SubmissionRow(
+        id, userId, problemId, problemVersionId, contestId, status, score, scoreType, judgeHash, processor, language, createdAt,
+        benchmarkEnvironmentKey,
+    )
 
     companion object {
         const val RECHECK_SEPARATOR = ".r"
@@ -146,9 +164,11 @@ class SubmissionRow(
     val problemVersionId: UUID,
     val contestId: UUID?,
     val status: SubmissionStatus,
-    val timeMs: BigDecimal?,
+    val score: BigDecimal?,
+    val scoreType: ScoreType?,
     val judgeHash: String,
-    val gpuProfile: String,
+    val processor: String,
+    val language: String,
     val createdAt: Instant,
     val benchmarkEnvironmentKey: String? = null,
 )
@@ -175,7 +195,8 @@ interface SubmissionRepository : JpaRepository<Submission, UUID> {
     @Query(
         """
         SELECT new dev.gpucodeforces.backend.submission.SubmissionRow(
-            s.id, s.userId, s.problemId, s.problemVersionId, s.contestId, s.status, s.timeMs, s.judgeHash, s.gpuProfile, s.createdAt, s.benchmarkEnvironmentKey)
+            s.id, s.userId, s.problemId, s.problemVersionId, s.contestId, s.status, s.score, s.scoreType, s.judgeHash, s.processor,
+            s.language, s.createdAt, s.benchmarkEnvironmentKey)
         FROM Submission s
         WHERE s.userId = :userId
           AND (:problemId IS NULL OR s.problemId = :problemId)

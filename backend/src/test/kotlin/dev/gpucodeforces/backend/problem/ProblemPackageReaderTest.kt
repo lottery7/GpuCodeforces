@@ -2,11 +2,11 @@ package dev.gpucodeforces.backend.problem
 
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
+import org.intellij.lang.annotations.Language
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import tools.jackson.databind.json.JsonMapper
 import tools.jackson.module.kotlin.KotlinModule
-import org.intellij.lang.annotations.Language
 import dev.gpucodeforces.judge.api.SpecValidator
 import java.nio.file.Path
 import kotlin.io.path.ExperimentalPathApi
@@ -37,7 +37,64 @@ class ProblemPackageReaderTest {
         // The backend id replaces the one judge_cli.py needs in problem.json; the generator comes from problem.py.
         assertThat(problem.spec.id).isEqualTo("vector_add")
         assertThat(problem.spec.generator.source).contains("def tests()")
-        assertThat(problem.starterCode).contains("void solve(const float* A, const float* B, float* C, int N) {").contains("__global__ void kernel")
+        // A package without processors is a gpu-cuda problem.
+        assertThat(problem.starters.keys).containsExactly("gpu-cuda")
+        assertThat(problem.starters.getValue("gpu-cuda").getValue("cuda"))
+            .contains("void solve(const float* A, const float* B, float* C, int N) {").contains("__global__ void kernel")
+    }
+
+    private fun withProcessors(directory: Path, @Language("JSON") processors: String) {
+        val spec = directory.resolve("problem.json")
+        spec.writeText(spec.readText().replaceFirst("{", "{\"processors\": $processors,"))
+    }
+
+    @Test
+    fun `starters come per processor and language, from files or from the signature`() {
+        val directory = copyOf("vector_add")
+        withProcessors(
+            directory,
+            """[{"id": "gpu-cuda", "languages": ["cuda"]}, {"id": "cuda-sim", "languages": ["cuda"], "limit": 100000},
+               {"id": "rtl", "languages": ["systemverilog"], "limit": 1e6}, {"id": "riscv-rvv", "languages": ["c", "asm"], "limit": 1e6}]""",
+        )
+        directory.resolve("starter.cu").writeText("// cuda starter")
+        directory.resolve("starter.cuda-sim.cu").writeText("// simulator starter")
+
+        val starters = reader.read(directory).starters
+
+        assertThat(starters.getValue("gpu-cuda").getValue("cuda")).isEqualTo("// cuda starter")
+        assertThat(starters.getValue("cuda-sim").getValue("cuda")).isEqualTo("// simulator starter")
+        assertThat(starters.getValue("rtl").getValue("systemverilog")).startsWith("module solve (").contains("output logic done")
+        assertThat(starters.getValue("riscv-rvv").getValue("c")).contains("void solve(const float* A, const float* B, float* C, int32_t N) {")
+        assertThat(starters.getValue("riscv-rvv").getValue("asm")).contains(".globl solve")
+    }
+
+    @Test
+    fun `adding a processor changes the content hash, a statement-only package keeps its old one`() {
+        val directory = copyOf("vector_add")
+        val before = reader.read(directory)
+        withProcessors(directory, """[{"id": "gpu-cuda", "languages": ["cuda"]}, {"id": "rtl", "languages": ["systemverilog"], "limit": 1e6}]""")
+        val after = reader.read(directory)
+
+        assertThat(after.contentHash).isNotEqualTo(before.contentHash)
+        assertThat(after.judgeHash).isNotEqualTo(before.judgeHash)
+    }
+
+    @Test
+    fun `a starter no processor uses is rejected`() {
+        val directory = copyOf("vector_add")
+        directory.resolve("starter.rtl.sv").writeText("module solve; endmodule")
+
+        assertThatThrownBy { reader.read(directory) }
+            .isInstanceOf(ProblemPackageException::class.java).hasMessageContaining("starter.rtl.sv").hasMessageContaining("starter.gpu-cuda.cu")
+    }
+
+    @Test
+    fun `a processor the judge does not know is rejected`() {
+        val directory = copyOf("vector_add")
+        withProcessors(directory, """[{"id": "gpu", "languages": ["cuda"]}]""")
+
+        assertThatThrownBy { reader.read(directory) }
+            .isInstanceOf(ProblemPackageException::class.java).hasMessageContaining("unknown processor 'gpu'")
     }
 
     @Test
@@ -101,7 +158,7 @@ class ProblemPackageReaderTest {
         val problem = reader.read(directory)
         assertThat(problem.format.format).isEqualTo("optimization")
         assertThat(problem.format.baselineTimeMs).isNull()
-        assertThat(problem.starterCode).isEqualTo("void solve() {}")
+        assertThat(problem.starters.getValue("gpu-cuda").getValue("cuda")).isEqualTo("void solve() {}")
 
         listOf(" ", "void solve() {}\u0000", "a".repeat(SpecValidator.Limits().maxSourceBytes + 1)).forEach { source ->
             directory.resolve("starter.cu").writeText(source)

@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
+import org.gradle.api.tasks.testing.logging.TestLogEvent
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.springframework.boot.gradle.plugin.SpringBootPlugin
 import org.springframework.boot.gradle.tasks.bundling.BootJar
@@ -35,7 +37,26 @@ dependencies {
 }
 
 tasks.test {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        excludeTags("emulator")
+    }
+}
+
+// Needs the OSS CAD Suite (RTL_HOME) and a Python with torch (JUDGE_PYTHON); see judge/README.md.
+tasks.register<Test>("emulatorTest") {
+    description = "Runs the processor tests against real emulators and toolchains."
+    group = "verification"
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform {
+        includeTags("emulator")
+    }
+    // these run in CI without a test report to open: the log has to say why a toolchain failed
+    testLogging {
+        events(TestLogEvent.FAILED)
+        exceptionFormat = TestExceptionFormat.FULL
+    }
+    shouldRunAfter(tasks.test)
 }
 
 tasks.named<BootJar>("bootJar") {

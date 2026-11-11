@@ -4,6 +4,7 @@ import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { api } from '../api/client';
 import type { DuelInput, DuelRequest } from '../api/types';
 import { useSession } from '../auth';
+import { GPU_CUDA, useProcessors } from '../processors';
 import { ErrorMessage, LoginRequired, PageHeader, QueryState, UserLink } from '../ui';
 
 export const duelStatusLabels: Record<DuelRequest['status'], string> = {
@@ -15,18 +16,24 @@ function DuelForm({ onCreated }: { onCreated: (request: DuelRequest) => void }) 
   const [mode, setMode] = useState<DuelInput['mode']>('random');
   const [handle, setHandle] = useState('');
   const [topics, setTopics] = useState<string[]>([]);
-  const choices = useQuery({ queryKey: ['duel-topics'], queryFn: ({ signal }) => api.listDuelTopics(signal) });
+  const catalog = useProcessors();
+  // the duel runs on one processor: its problem is solvable there, and topics come from such problems
+  const [processor, setProcessor] = useState(GPU_CUDA);
+  const choices = useQuery({ queryKey: ['duel-topics', processor], queryFn: ({ signal }) => api.listDuelTopics(processor, signal) });
   const create = useMutation({ mutationFn: (body: DuelInput) => api.createDuel(body), onSuccess: onCreated });
   function submit(event: FormEvent) {
     event.preventDefault();
     if (create.isPending || mode === 'invite' && !handle.trim()) return;
-    create.mutate({ mode, topics, ...(mode === 'invite' ? { opponentHandle: handle.trim() } : {}) });
+    create.mutate({ mode, topics, processor, ...(mode === 'invite' ? { opponentHandle: handle.trim() } : {}) });
   }
   return <form className="panel duel-search-form" onSubmit={submit}>
     <fieldset disabled={create.isPending} className="duel-mode"><legend>С кем сыграть</legend>
       <label className="duel-mode-option"><input type="radio" name="duel-mode" checked={mode === 'random'} onChange={() => setMode('random')} /><span>Случайный соперник</span></label>
       <label className="duel-mode-option"><input type="radio" name="duel-mode" checked={mode === 'invite'} onChange={() => setMode('invite')} /><span>Пригласить по нику</span></label>
     </fieldset>
+    {catalog.processors.length > 1 && <label className="field"><span>Процессор</span><select name="processor" aria-label="Процессор дуэли" value={processor} disabled={create.isPending} onChange={event => { setProcessor(event.target.value); setTopics([]); }}>
+      {catalog.processors.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
+    </select></label>}
     {mode === 'invite' && <label className="field"><span>Ник соперника</span><input name="opponentHandle" required autoComplete="off" maxLength={100} value={handle} disabled={create.isPending} onChange={event => setHandle(event.target.value)} /></label>}
     <fieldset className="duel-topics" disabled={create.isPending}><legend>Темы задач</legend>
       <p className="small muted">Выберите интересующие темы или оставьте все. Общую задачу случайно выберет сервер после подбора соперника.</p>

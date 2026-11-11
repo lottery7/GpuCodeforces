@@ -2,7 +2,6 @@ package dev.gpucodeforces.backend.duel
 
 import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.common.ForbiddenException
-import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.common.NotFoundApiException
 import dev.gpucodeforces.backend.common.toUuidOrNotFound
 import dev.gpucodeforces.backend.contest.Contest
@@ -15,6 +14,7 @@ import dev.gpucodeforces.backend.notification.Notification
 import dev.gpucodeforces.backend.notification.NotificationRepository
 import dev.gpucodeforces.backend.problem.ProblemCatalog
 import dev.gpucodeforces.backend.problem.ProblemVersion
+import dev.gpucodeforces.backend.processor.ProcessorCatalog
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.backend.user.UserRepository
 import org.springframework.scheduling.annotation.Scheduled
@@ -35,23 +35,26 @@ class DuelService(
     private val contestProblems: ContestProblemRepository,
     private val registrations: ContestRegistrationRepository,
     private val notifications: NotificationRepository,
-    private val gpu: GpuProperties,
+    private val processors: ProcessorCatalog,
 ) {
-    fun topics(): List<String> = codingPool().flatMap { it.tags }.distinct().sortedBy { it.lowercase() }
+    /** Topics of the problems a duel can take, on [processor] or on any processor of the platform. */
+    fun topics(processor: String? = null): List<String> =
+        codingPool(processor).flatMap { it.tags }.distinct().sortedBy { it.lowercase() }
 
     @Transactional
-    fun create(mode: String, selectedTopics: Collection<String>, opponentHandle: String?, creator: User): DuelRequest {
+    fun create(mode: String, selectedTopics: Collection<String>, opponentHandle: String?, processor: String, creator: User): DuelRequest {
         val now = lockAndExpire()
         if (mode !in setOf("random", "invite")) throw BadRequestException("Неизвестный способ поиска соперника")
+        processors.require(processor)
         if (activeRequest(creator.id) != null) throw BadRequestException("Завершите текущую дуэль или отмените поиск")
-        val pool = codingPool()
+        val pool = codingPool(processor)
         val knownTopics = pool.flatMap { it.tags }.associateBy { it.lowercase() }
         if (selectedTopics.size > 20) throw BadRequestException("Можно выбрать не больше 20 тем")
         val topics = selectedTopics.map { topic ->
             knownTopics[topic.trim().lowercase()] ?: throw BadRequestException("Тема $topic недоступна для дуэли")
         }.distinct()
         val candidates = pool.filter { matchesTopics(it, topics) }
-        if (candidates.isEmpty()) throw BadRequestException("Нет доступных задач по выбранным темам")
+        if (candidates.isEmpty()) throw BadRequestException("Нет доступных задач по выбранным темам на процессоре $processor")
         val opponent = if (mode == "invite") {
             val handle = opponentHandle?.trim()?.takeIf { it.isNotEmpty() } ?: throw BadRequestException("Укажите ник соперника")
             users.findByHandleIgnoreCase(handle)?.also {
@@ -63,7 +66,7 @@ class DuelService(
         }
         val request = requests.save(DuelRequest(
             id = UUID.randomUUID(), mode = mode, status = if (mode == "random") "queued" else "invited",
-            creatorId = creator.id, opponentId = opponent?.id, topics = topics, createdAt = now,
+            creatorId = creator.id, opponentId = opponent?.id, topics = topics, processor = processor, createdAt = now,
             expiresAt = now.plus(if (mode == "random") QUEUE_TTL else INVITE_TTL),
         ))
         reserve(creator.id, request.id)
@@ -73,11 +76,12 @@ class DuelService(
         }
         val waiting = requests.findByModeAndStatusOrderByCreatedAt("random", "queued")
         for (peer in waiting) {
-            if (peer.creatorId == creator.id || activeRequest(peer.creatorId)?.id != peer.id) continue
+            // a random opponent is one who waits for a duel on the same processor
+            if (peer.creatorId == creator.id || peer.processor != processor || activeRequest(peer.creatorId)?.id != peer.id) continue
             val common = candidates.filter { matchesTopics(it, peer.topics) }
             if (common.isEmpty()) continue
             val peerUser = users.findById(peer.creatorId).orElseThrow()
-            val contest = start(peerUser, creator, common.random(), now)
+            val contest = start(peerUser, creator, common.random(), processor, now)
             matched(peer, creator.id, contest)
             matched(request, peer.creatorId, contest)
             notify(peer.creatorId, "duel_started", "Соперник найден. Дуэль началась", peer, now)
@@ -110,10 +114,10 @@ class DuelService(
         if (recipientRequest?.status == "matched") throw BadRequestException("Сначала завершите текущую дуэль")
         val creator = users.findById(request.creatorId).orElseThrow()
         if (activeRequest(creator.id)?.id != request.id) throw BadRequestException("Приглашение уже недоступно")
-        val problem = codingPool().filter { matchesTopics(it, request.topics) }.randomOrNull()
+        val problem = codingPool(request.processor).filter { matchesTopics(it, request.topics) }.randomOrNull()
             ?: throw BadRequestException("Нет доступных задач по выбранным темам")
         if (recipientRequest != null) cancelWaiting(recipientRequest, now)
-        val contest = start(creator, recipient, problem, now)
+        val contest = start(creator, recipient, problem, request.processor, now)
         matched(request, recipient.id, contest)
         reserve(creator.id, request.id)
         reserve(recipient.id, request.id)
@@ -165,7 +169,11 @@ class DuelService(
         return now
     }
 
-    private fun codingPool(): List<ProblemVersion> = catalog.currentVersions().filter { !it.draft && it.format != "guess" }
+    /** Published problems one writes code for, solvable on [processor] (any processor of the platform when null). */
+    private fun codingPool(processor: String? = null): List<ProblemVersion> = catalog.currentVersions().filter { version ->
+        !version.draft && version.format != "guess" &&
+            version.processors.any { (processor == null || it == processor) && processors.isEnabled(it) }
+    }
 
     private fun matchesTopics(problem: ProblemVersion, topics: Collection<String>): Boolean =
         topics.isEmpty() || problem.tags.any { tag -> topics.any { it.equals(tag, ignoreCase = true) } }
@@ -196,10 +204,10 @@ class DuelService(
         return request
     }
 
-    private fun start(first: User, second: User, problem: ProblemVersion, now: Instant): Contest {
+    private fun start(first: User, second: User, problem: ProblemVersion, processor: String, now: Instant): Contest {
         val contest = contests.save(Contest(
             id = UUID.randomUUID(), title = "Дуэль: ${first.handle} vs ${second.handle}", startAt = now, endAt = now.plus(DUEL_DURATION),
-            gpu = gpu.name, authors = mutableSetOf(first), format = "duel", challengerId = first.id, opponentId = second.id,
+            processor = processor, authors = mutableSetOf(first), format = "duel", challengerId = first.id, opponentId = second.id,
         ))
         contestProblems.save(ContestProblem(contest.id, problem.problemId, 0, problem.id))
         registrations.saveAll(listOf(ContestRegistration(contest.id, first.id), ContestRegistration(contest.id, second.id)))
