@@ -690,7 +690,10 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
           const best = problem => problem.processors.find(item => item.id === processor)?.bestScore?.value ?? Infinity;
           items.sort((a, b) => (sort === 'difficulty' ? order[a.difficulty] - order[b.difficulty] : sort === 'bestScore' ? best(a) - best(b) : 0) || a.code.localeCompare(b.code));
         }
-        return send(response, 200, { ...page(items, query), tags });
+        const targetId = target ? target.id : null;
+        const solvedCount = targetId ? all.filter(problem => model.solved(problem.id, targetId, contestId)).length : 0;
+        const streak = targetId ? model.streak(targetId) : 0;
+        return send(response, 200, { ...page(items, query), tags, solvedCount, totalCount: all.length, streak });
       }
 
       if (resource === 'problems' && id && segments.length <= 3) {
@@ -782,6 +785,11 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
           enqueue(result.submission.id, outcomeFor(code));
           return send(response, 202, dto);
         }
+      }
+
+      if (resource === 'submissions' && id === 'latest' && segments.length === 2 && method === 'GET') {
+        // The feed of all users has no total. Only its page is mapped: a DTO is computed from the whole history.
+        return send(response, 200, { items: page(model.submissions({}), query).items.map(item => submissionDto(item)) });
       }
 
       if (resource === 'submissions' && id && segments.length <= 3) {

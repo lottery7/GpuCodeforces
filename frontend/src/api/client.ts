@@ -60,6 +60,7 @@ export function createApi(baseUrl = '/api', fetcher?: typeof fetch) {
     submitSolution: (body: SubmitInput) => result(http.POST('/submissions', { body })),
     getSubmission: (id: string, signal?: AbortSignal) => result(http.GET('/submissions/{id}', { params: { path: { id } }, signal })),
     recheckSubmission: (id: string) => result(http.POST('/submissions/{id}/recheck', { params: { path: { id } } })),
+    listLatestSubmissions: (query: { offset?: number; limit?: number } = {}, signal?: AbortSignal) => result(http.GET('/submissions/latest', { params: { query }, signal })),
     listContests: (query: ContestQuery = {}, signal?: AbortSignal) => result(http.GET('/contests', { params: { query }, signal })),
     getContest: (id: string, signal?: AbortSignal) => result(http.GET('/contests/{id}', { params: { path: { id } }, signal })),
     createContest: (body: ContestInput) => result(http.POST('/contests', { body })),

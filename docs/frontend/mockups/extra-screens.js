@@ -14,6 +14,8 @@
     'measurement-error': 'Замер недоступен'
   };
   const difficultyLabels = { easy: 'Легкая', medium: 'Средняя', hard: 'Сложная' };
+  const difficultyClass = d => d === 'easy' ? 'difficulty-easy' : d === 'medium' ? 'difficulty-medium' : d === 'hard' ? 'difficulty-hard' : '';
+  const difficultyTag = (ctx, d) => `<span class="difficulty ${difficultyClass(d)}">${ctx.escape(difficultyLabels[d] || d)}</span>`;
   const dateFormatter = new Intl.DateTimeFormat('ru-RU', {
     timeZone: 'Europe/Moscow', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'
   });
@@ -29,7 +31,9 @@
   }
 
   function signed(value) {
-    return value === null || value === undefined ? '-' : `${value > 0 ? '+' : ''}${value}`;
+    if (value === null || value === undefined) return '-';
+    const cls = value > 0 ? 'delta-up' : value < 0 ? 'delta-down' : 'delta-zero';
+    return `<span class="rating-delta ${cls}">${value > 0 ? '+' : ''}${value}</span>`;
   }
 
   function date(value) {
@@ -50,8 +54,8 @@
     return [Math.floor(seconds / 3600), Math.floor(seconds % 3600 / 60), seconds % 60].map(part => String(part).padStart(2, '0')).join(':');
   }
 
-  function table(headings, rows, label, className = '') {
-    return `<div class="table-wrap"><table class="data-table ${className}" aria-label="${label}"><thead><tr>${headings.map(heading => `<th scope="col">${heading}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
+  function table(headings, rows, label, className = '', numeric = new Set()) {
+    return `<div class="table-wrap"><table class="data-table ${className}" aria-label="${label}"><thead><tr>${headings.map((heading, index) => `<th ${numeric.has(index) ? 'class="num" ' : ''}scope="col">${heading}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
   }
 
   function tabs(ctx, entries, selected, label) {
@@ -86,24 +90,30 @@
   }
 
   function contests(ctx) {
-    const requested = param(ctx, 'tabs', param(ctx, 'tab', 'live'));
-    const selected = ['live', 'upcoming', 'finished', 'mine'].includes(requested) ? requested : 'live';
-    const mine = selected === 'mine';
+    const requested = param(ctx, 'phase', 'now');
+    const filter = ['now', 'upcoming', 'live', 'finished', 'all'].includes(requested) ? requested : 'now';
     const query = param(ctx, 'q');
     const normalizedQuery = query.trim().toLowerCase();
-    const listPath = tab => `/contests?${new URLSearchParams({tabs: tab, ...(query ? {q: query} : {})})}`;
     const createPath = ctx.user ? '/contests/new' : '/auth?return=%2Fcontests%2Fnew';
     const heading = ctx.header('Соревнования', '', ctx.link(createPath, 'Создать контест', 'btn primary'));
-    const entries = [['live', 'Текущие', listPath('live')], ['upcoming', 'Будущие', listPath('upcoming')], ['finished', 'Завершенные', listPath('finished')]];
-    if (ctx.user || mine) entries.push(['mine', 'Мои', listPath('mine')]);
-    const nav = tabs(ctx, entries, selected, 'Список соревнований');
-    if (mine && !ctx.user) return `${heading}${nav}${empty('Войдите в аккаунт', 'Здесь будут контесты, в которых вы указаны автором.', ctx.link(`/auth?return=${encodeURIComponent(listPath('mine'))}`, 'Войти', 'btn primary'))}`;
-    const search = `<div class="toolbar"><div class="search"><input type="search" id="contest-search" data-query="q" aria-label="Найти соревнование" placeholder="Название контеста" value="${ctx.escape(query)}"></div>${query ? ctx.link(`/contests?tabs=${selected}`, 'Сбросить', 'filter-reset') : ''}</div>`;
-    const items = ctx.M.contests().filter(item => (mine ? (item.authorIds || [item.ownerId]).includes(ctx.user.id) : ctx.M.phase(item.id) === selected) && item.title.toLowerCase().includes(normalizedQuery)).sort((a, b) => selected === 'finished' ? new Date(b.endAt) - new Date(a.endAt) : mine ? new Date(b.startAt) - new Date(a.startAt) : new Date(a.startAt) - new Date(b.startAt));
-    if (!items.length) return `${heading}${nav}${search}${ctx.renderList(empty(normalizedQuery ? 'Соревнования не найдены' : mine ? 'У вас пока нет контестов' : 'Соревнований нет', normalizedQuery ? 'Измените запрос или выберите другую вкладку.' : mine ? 'Создайте первый контест.' : selected === 'live' ? 'Сейчас нет активных соревнований.' : selected === 'upcoming' ? 'Новые соревнования еще не объявлены.' : 'Завершенных соревнований пока нет.'), 'Соревнований пока нет.')}`;
     const phases = {upcoming: 'До начала', live: 'Идет', finished: 'Завершен'};
-    const rows = items.map(contest => `<tr><td>${ctx.link(`/contest/${encodeURIComponent(contest.id)}`, contest.title)}</td><td><time datetime="${ctx.escape(contest.startAt)}">${date(contest.startAt)}</time></td><td>${duration(contest)}</td><td>${contest.problemIds.length}</td>${mine ? `<td>${phases[ctx.M.phase(contest.id)]}</td>` : selected !== 'finished' ? `<td>${registration(ctx, contest, selected)}</td>` : ''}</tr>`);
-    return `${heading}${nav}${search}${ctx.renderList(table(['Название', 'Начало, МСК', 'Длительность', 'Задачи', ...(mine ? ['Статус'] : selected !== 'finished' ? ['Участие'] : [])], rows, 'Список соревнований', 'contest-list'), 'Соревнований пока нет.')}`;
+    const matches = {now: ['upcoming', 'live'], upcoming: ['upcoming'], live: ['live'], finished: ['finished'], all: ['upcoming', 'live', 'finished']};
+    const compare = filter === 'finished' ? (a, b) => new Date(b.startAt) - new Date(a.startAt) : (a, b) => new Date(a.startAt) - new Date(b.startAt);
+    const isMine = contest => !!ctx.user && Array.isArray(contest.authorIds) && contest.authorIds.includes(ctx.user.id);
+    const items = ctx.M.contests().filter(contest => matches[filter].includes(ctx.M.phase(contest.id)) && contest.title.toLowerCase().includes(normalizedQuery)).sort(compare);
+    const mine = ctx.user ? items.filter(isMine) : [];
+    const rest = ctx.user ? items.filter(contest => !isMine(contest)) : items;
+    const toolbar = `<div class="toolbar"><div class="search"><input type="search" id="contest-search" data-query="q" aria-label="Найти соревнование" placeholder="Название контеста" value="${ctx.escape(query)}"></div><select data-filter="phase" aria-label="Показать соревнования">${[['now', 'Текущие и будущие'], ['upcoming', 'Будущие'], ['live', 'Текущие'], ['finished', 'Завершенные'], ['all', 'Все']].map(([value, label]) => `<option value="${value}" ${value === filter ? 'selected' : ''}>${ctx.escape(label)}</option>`).join('')}</select><button type="button" class="text-link filter-reset" data-action="reset-contests-filter"${query ? '' : ' hidden'}>Сбросить</button></div>`;
+    if (!items.length) return `${heading}${toolbar}${ctx.renderList(empty(normalizedQuery ? 'Соревнования не найдены' : 'Соревнований пока нет', normalizedQuery ? 'Измените запрос или фильтр.' : 'Соревнований пока нет.'), 'Соревнований пока нет.')}`;
+    const headings = ['Название', 'Начало, МСК', 'Длительность', 'Задачи', 'Статус', 'Участие'];
+    const row = contest => {
+      const phase = ctx.M.phase(contest.id);
+      const participation = phase === 'finished' ? '<span class="muted">—</span>' : registration(ctx, contest, phase);
+      return `<tr><td>${ctx.link(`/contest/${encodeURIComponent(contest.id)}`, contest.title)}</td><td><time datetime="${ctx.escape(contest.startAt)}">${date(contest.startAt)}</time></td><td class="num">${duration(contest)}</td><td class="num">${contest.problemIds.length}</td><td>${phases[phase]}</td><td>${participation}</td></tr>`;
+    };
+    const group = (label, list) => list.length ? `<tr class="contest-group"><td colspan="${headings.length}">${ctx.escape(label)}</td></tr>${list.map(row).join('')}` : '';
+    const body = group(ctx.user ? 'Мои соревнования' : '', mine) + group('Все соревнования', rest);
+    return `${heading}${toolbar}${ctx.renderList(table(headings, [body], 'Список соревнований', 'contest-list', new Set([2, 3])), 'Соревнований пока нет.')}`;
   }
 
   function moscowInput(value) {
@@ -151,12 +161,12 @@
     const selectedOnly = Boolean(filters.selectedOnly);
     const tags = [...new Set(problems.flatMap(problem => problem.tags || []))].sort((a, b) => a.localeCompare(b));
     const visible = problems.filter(problem => (!query.trim() || (problem.code + ' ' + problem.title).toLowerCase().includes(query.trim().toLowerCase())) && (difficulty === 'all' || problem.difficulty === difficulty) && (tag === 'all' || problem.tags?.includes(tag)) && (visibility === 'all' || (problem.visibility || 'public') === visibility) && (!selectedOnly || selected.has(problem.id)));
-    const choices = visible.map(problem => `<label class="problem-choice"><input type="checkbox" name="problemIds" value="${ctx.escape(problem.id)}"${selected.has(problem.id) ? ' checked' : ''}><span>${ctx.escape(problem.code + '. ' + problem.title)}<span class="small muted">${difficultyLabels[problem.difficulty] || ctx.escape(problem.difficulty)} / ${problem.visibility === 'private' ? 'Частная' : 'Публичная'}</span></span></label>`).join('');
+    const choices = visible.map(problem => `<tr><td class="contest-check-col"><input type="checkbox" name="problemIds" value="${ctx.escape(problem.id)}"${selected.has(problem.id) ? ' checked' : ''}></td><td class="problem-choice-title">${ctx.escape(problem.code + '. ' + problem.title)}</td><td>${difficultyTag(ctx, problem.difficulty)}</td><td class="small muted">${problem.visibility === 'private' ? 'Частная' : 'Публичная'}</td></tr>`).join('');
     const options = (entries, value) => entries.map(([key, label]) => `<option value="${ctx.escape(key)}"${key === value ? ' selected' : ''}>${ctx.escape(label)}</option>`).join('');
     const activeFilters = query || difficulty !== 'all' || tag !== 'all' || visibility !== 'all' || selectedOnly;
-    const picker = `<fieldset class="problem-choices"><legend>Задачи</legend><div class="toolbar contest-picker-summary"><span id="contest-selected-count" class="small muted" aria-live="polite">Выбрано: ${selected.size}</span><label class="checkbox-label"><input id="contest-selected-only" type="checkbox" data-contest-filter="selectedOnly"${selectedOnly ? ' checked' : ''}>Только выбранные</label></div><div class="toolbar contest-picker-filters"><div class="search"><input id="contest-problem-search" type="search" data-contest-filter="q" aria-label="Найти задачу для контеста" placeholder="Название или номер задачи" value="${ctx.escape(query)}"></div><select id="contest-problem-difficulty" data-contest-filter="difficulty" aria-label="Сложность задач">${options([['all', 'Сложность'], ...Object.entries(difficultyLabels)], difficulty)}</select><select id="contest-problem-tag" data-contest-filter="tag" aria-label="Тема задач">${options([['all', 'Тема'], ...tags.map(value => [value, value])], tag)}</select><select id="contest-problem-visibility" data-contest-filter="visibility" aria-label="Видимость задач">${options([['all', 'Все задачи'], ['public', 'Публичные'], ['private', 'Частные']], visibility)}</select>${activeFilters ? '<button class="text-link filter-reset" type="button" data-action="reset-contest-filters">Сбросить</button>' : ''}</div><div class="contest-problem-list">${choices || '<p class="muted">Нет задач по этим фильтрам.</p>'}</div></fieldset>`;
+    const picker = `<fieldset class="problem-choices"><legend>Задачи</legend><div class="toolbar contest-picker-summary"><span id="contest-selected-count" class="small muted" aria-live="polite">Выбрано: ${selected.size}</span><label class="checkbox-label"><input id="contest-selected-only" type="checkbox" data-contest-filter="selectedOnly"${selectedOnly ? ' checked' : ''}>Только выбранные</label></div><div class="toolbar contest-picker-filters"><div class="search"><input id="contest-problem-search" type="search" data-contest-filter="q" aria-label="Найти задачу для контеста" placeholder="Название или номер задачи" value="${ctx.escape(query)}"></div><select id="contest-problem-difficulty" data-contest-filter="difficulty" aria-label="Сложность задач">${options([['all', 'Сложность'], ...Object.entries(difficultyLabels)], difficulty)}</select><select id="contest-problem-tag" data-contest-filter="tag" aria-label="Тема задач">${options([['all', 'Тема'], ...tags.map(value => [value, value])], tag)}</select><select id="contest-problem-visibility" data-contest-filter="visibility" aria-label="Видимость задач">${options([['all', 'Все задачи'], ['public', 'Публичные'], ['private', 'Частные']], visibility)}</select>${activeFilters ? '<button class="text-link filter-reset" type="button" data-action="reset-contest-filters">Сбросить</button>' : ''}</div><div class="contest-problem-list">${choices ? `<table class="data-table contest-problem-table"><tbody>${choices}</tbody></table>` : '<p class="muted">Нет задач по этим фильтрам.</p>'}</div></fieldset>`;
     const back = id ? `/contest/${encodeURIComponent(id)}` : '/contests?tabs=mine';
-    return `${ctx.header(title, '', ctx.link(back, id ? 'К контесту' : 'Мои контесты', 'btn secondary'))}<form class="form contest-form contest-builder" data-form="contest" data-id="${ctx.escape(id || '')}"><div class="contest-settings"><label class="field"><span>Название</span><input id="contest-title" name="title" maxlength="100" required value="${ctx.escape(values.title || '')}"></label><div class="field-pair"><label class="field"><span>Начало (МСК)</span><input id="contest-start" name="startAt" type="datetime-local" required value="${ctx.escape(start)}"></label><label class="field"><span>Длительность, минут</span><input id="contest-duration" name="durationMinutes" type="number" min="1" step="1" required value="${ctx.escape(minutes)}"></label></div>${authors}<label class="field"><span>GPU</span><select id="contest-gpu" name="gpuId" required>${profiles.map(profile => `<option value="${ctx.escape(profile.id)}"${profile.id === gpuId ? ' selected' : ''}>${ctx.escape(profile.label)}</option>`).join('')}</select><span class="small muted">Одна GPU для всех задач. Настройки доступны до начала контеста.</span></label></div><div class="contest-task-picker">${picker}</div><div class="contest-builder-actions">${message(ctx, 'contest')}<button class="btn primary" type="submit"${problems.length ? '' : ' disabled'}>${id ? 'Сохранить' : 'Создать контест'}</button></div></form>`;
+    return `${ctx.header(title, '', ctx.link(back, id ? 'К контесту' : 'Мои контесты', 'btn secondary'))}<form class="form contest-form contest-builder" data-form="contest" data-id="${ctx.escape(id || '')}"><div class="contest-settings"><label class="field"><span>Название</span><input id="contest-title" name="title" maxlength="100" required value="${ctx.escape(values.title || '')}"></label><div class="field-pair"><label class="field"><span>Начало (МСК)</span><input id="contest-start" name="startAt" type="datetime-local" required value="${ctx.escape(start)}"></label><label class="field"><span>Длительность, минут</span><input id="contest-duration" name="durationMinutes" type="number" min="1" step="1" required value="${ctx.escape(minutes)}"></label></div>${authors}<label class="field"><span>GPU</span><select id="contest-gpu" name="gpuId" required>${profiles.map(profile => `<option value="${ctx.escape(profile.id)}"${profile.id === gpuId ? ' selected' : ''}>${ctx.escape(profile.label)}</option>`).join('')}</select><span class="small muted">Одна GPU для всех задач. Настройки доступны до начала контеста.</span></label></div><div class="contest-task-picker">${picker}<div class="contest-builder-actions">${message(ctx, 'contest')}<button class="btn primary" type="submit"${problems.length ? '' : ' disabled'}>${id ? 'Сохранить' : 'Создать контест'}</button></div></div></form>`;
   }
 
   function contestResult(ctx, problemId, contestId) {
@@ -180,7 +190,7 @@
       if (!problem) return '';
       const path = `/problem/${encodeURIComponent(id)}${phase === 'live' || !ctx.M.problem(id) ? `?contest=${encodeURIComponent(contest.id)}` : ''}`;
       const own = ctx.user ? contestResult(ctx, id, contest.id) : null;
-      return `<tr><td>${ctx.link(path, `${String.fromCharCode(65 + index)}. ${problem.title}`)}</td><td>${difficultyLabels[problem.difficulty] || ctx.escape(problem.difficulty)}</td>${own ? `<td>${own.status}</td>` : ''}</tr>`;
+      return `<tr><td>${ctx.link(path, `${String.fromCharCode(65 + index)}. ${problem.title}`)}</td><td>${difficultyTag(ctx, problem.difficulty)}</td>${own ? `<td>${own.status}</td>` : ''}</tr>`;
     });
     return `${phase === 'finished' ? '<p class="notice">Соревнование завершено. Публичные задачи можно решать в практике.</p>' : ''}${table(['Задача', 'Сложность', ...(ctx.user ? ['Ваш статус'] : [])], rows, 'Задачи соревнования')}`;
   }
@@ -199,8 +209,10 @@
       const path = `/problem/${encodeURIComponent(id)}${phase === 'live' || !ctx.M.problem(id) ? `?contest=${encodeURIComponent(contest.id)}` : ''}`;
       return `<a href="#${ctx.escape(path)}" title="${ctx.escape(problem?.title || id)}">${String.fromCharCode(65 + index)}</a>`;
     })];
-    const rows = people.map(row => `<tr${ctx.user?.id === row.user.id ? ' class="own-row"' : ''}><td>${row.rank}</td><td>${userLink(ctx, row.user)}${ctx.user?.id === row.user.id ? ' <span class="small muted">вы</span>' : ''}</td><td>${row.solved}</td><td class="mono">${solveTime(row.totalSeconds)}</td>${contest.problemIds.map(id => `<td class="mono">${row.times[id] === undefined ? '-' : solveTime(row.times[id])}</td>`).join('')}</tr>`);
-    return `<p class="small muted">${phase === 'finished' ? 'Итоговая таблица.' : 'Результаты обновляются после проверки посылок.'}</p>${table(headings, rows, phase === 'finished' ? 'Итоговая таблица соревнования' : 'Текущая таблица соревнования')}`;
+    const rows = people.map(row => `<tr${ctx.user?.id === row.user.id ? ' class="own-row"' : ''}><td class="num">${row.rank}</td><td>${userLink(ctx, row.user)}${ctx.user?.id === row.user.id ? ' <span class="small muted">вы</span>' : ''}</td><td class="num">${row.solved}</td><td class="num mono">${solveTime(row.totalSeconds)}</td>${contest.problemIds.map(id => `<td class="num mono">${row.times[id] === undefined ? '-' : solveTime(row.times[id])}</td>`).join('')}</tr>`);
+    const numeric = new Set([0, 2, 3]);
+    contest.problemIds.forEach((unused, index) => numeric.add(4 + index));
+    return `<p class="small muted">${phase === 'finished' ? 'Итоговая таблица.' : 'Результаты обновляются после проверки посылок.'}</p>${table(headings, rows, phase === 'finished' ? 'Итоговая таблица соревнования' : 'Текущая таблица соревнования', '', numeric)}`;
   }
 
   function contestRules(ctx, contest) {
@@ -237,10 +249,10 @@
       const index = all.indexOf(user);
       const rank = all.findIndex(item => item.rating === user.rating) + 1;
       const contest = user.ratingContestId && ctx.M.contest(user.ratingContestId);
-      return `<tr${user.id === ctx.user?.id ? ' class="own-row"' : ''}><td>${rank || index + 1}</td><td>${userLink(ctx, user)}${user.id === ctx.user?.id ? ' <span class="small muted">вы</span>' : ''}</td><td>${user.rating}</td><td>${contest && user.ratingDelta !== null && user.ratingDelta !== undefined ? ctx.link(`/contest/${encodeURIComponent(contest.id)}?tab=standings`, signed(user.ratingDelta)) : signed(user.ratingDelta)}</td></tr>`;
+      return `<tr${user.id === ctx.user?.id ? ' class="own-row"' : ''}><td class="num">${rank || index + 1}</td><td>${userLink(ctx, user)}${user.id === ctx.user?.id ? ' <span class="small muted">вы</span>' : ''}</td><td class="num">${user.rating}</td><td class="num">${contest && user.ratingDelta !== null && user.ratingDelta !== undefined ? `<a class="text-link" href="#${ctx.escape(`/contest/${encodeURIComponent(contest.id)}?tab=standings`)}">${signed(user.ratingDelta)}</a>` : signed(user.ratingDelta)}</td></tr>`;
     });
     const pager = pageCount > 1 ? `<nav class="toolbar" aria-label="Страницы рейтинга">${page > 1 ? ctx.link(`/rating?q=${encodeURIComponent(query)}&page=${page - 1}`, 'Назад', 'btn secondary') : ''}<span class="small muted">${page} из ${pageCount}</span>${page < pageCount ? ctx.link(`/rating?q=${encodeURIComponent(query)}&page=${page + 1}`, 'Далее', 'btn secondary') : ''}</nav>` : '';
-    return `${ctx.header('Рейтинг участников')}${form}${ctx.renderList((rows.length ? table(['Место', 'Участник', 'Рейтинг', 'После последнего контеста'], rows, 'Рейтинг участников') : empty('Участники не найдены', 'Измените запрос.')) + pager, 'Участников с рейтингом пока нет.')}`;
+    return `${ctx.header('Рейтинг участников')}${form}${ctx.renderList((rows.length ? table(['Место', 'Участник', 'Рейтинг', 'После последнего контеста'], rows, 'Рейтинг участников', '', new Set([0, 2, 3])) : empty('Участники не найдены', 'Измените запрос.')) + pager, 'Участников с рейтингом пока нет.')}`;
   }
 
   function submissionTime(ctx, item) {
@@ -256,29 +268,37 @@
     const data = ctx.M.profile(person.id);
     const userQuery = encodeURIComponent(person.id);
     const ratingContest = data.ratingContestId && ctx.M.contest(data.ratingContestId);
-    const summary = `<div class="metrics"><span>Рейтинг: <strong>${data.rating === null || data.rating === undefined ? 'Еще не участвовал' : data.rating}</strong>${ratingContest && data.ratingDelta !== null && data.ratingDelta !== undefined ? ` <span class="small">${ctx.link(`/contest/${encodeURIComponent(ratingContest.id)}?tab=standings`, `${signed(data.ratingDelta)} после ${ratingContest.title}`)}</span>` : ''}</span><span>Решено: ${ctx.link(`/problems?user=${userQuery}&status=solved`, String(data.solved))}</span><span>Контесты: <strong>${data.contestCount}</strong></span></div>`;
+    const summary = `<div class="metrics"><span>Рейтинг: <strong>${data.rating === null || data.rating === undefined ? 'Еще не участвовал' : data.rating}</strong>${ratingContest && data.ratingDelta !== null && data.ratingDelta !== undefined ? ` <span class="small"><a class="text-link" href="#${ctx.escape(`/contest/${encodeURIComponent(ratingContest.id)}?tab=standings`)}">${signed(data.ratingDelta)} после ${ctx.escape(ratingContest.title)}</a></span>` : ''}</span><span>Решено: ${ctx.link(`/problems?user=${userQuery}&status=solved`, String(data.solved))}</span><span>Контесты: <strong>${data.contestCount}</strong></span></div>`;
     const recent = data.recentSubmissions || [];
     const recentRows = recent.slice(0, 5).map(item => {
       const problem = ctx.M.problem(item.problemId, item.contestId || undefined);
       const problemPath = `/problem/${encodeURIComponent(item.problemId)}${item.contestId ? `?contest=${encodeURIComponent(item.contestId)}` : ''}`;
-      return `<tr><td>${ctx.link(`/submission/${item.id}`, `#${item.id}`)}</td><td>${ctx.link(problemPath, problem?.title || item.problemId)}</td><td>${verdict(item.status)}</td><td>${submissionTime(ctx, item)}</td><td><time datetime="${ctx.escape(item.createdAt)}">${date(item.createdAt)}</time></td></tr>`;
+      return `<tr><td class="num">${ctx.link(`/submission/${item.id}`, `#${item.id}`)}</td><td>${ctx.link(problemPath, problem?.title || item.problemId)}</td><td>${verdict(item.status)}</td><td class="num">${submissionTime(ctx, item)}</td><td><time datetime="${ctx.escape(item.createdAt)}">${date(item.createdAt)}</time></td></tr>`;
     });
     const history = data.contestHistory || [];
     const historyRows = history.map(item => {
       const contest = ctx.M.contest(item.contestId);
-      return `<tr><td>${ctx.link(`/contest/${encodeURIComponent(item.contestId)}?tab=standings`, contest?.title || item.contestId)}</td><td>${item.phase === 'finished' ? item.rank ?? '-' : item.phase === 'upcoming' ? 'До начала' : 'Идет'}</td><td>${signed(item.ratingDelta)}</td><td>${item.ratingAfter ?? (item.phase === 'finished' ? 'Ожидает расчета' : '-')}</td></tr>`;
+      return `<tr><td>${ctx.link(`/contest/${encodeURIComponent(item.contestId)}?tab=standings`, contest?.title || item.contestId)}</td><td class="num">${item.phase === 'finished' ? item.rank ?? '-' : item.phase === 'upcoming' ? 'До начала' : 'Идет'}</td><td class="num">${signed(item.ratingDelta)}</td><td class="num">${item.ratingAfter ?? (item.phase === 'finished' ? 'Ожидает расчета' : '-')}</td></tr>`;
     });
-    return `${ctx.header(person.handle, '', ctx.link(`/submissions?user=${userQuery}`, ctx.user?.id === person.id ? 'Мои посылки' : 'Посылки участника', 'btn secondary'))}${summary}<section class="stack"><h2>Последние посылки</h2>${recentRows.length ? table(['Посылка', 'Задача', 'Вердикт', 'Время GPU, мс', 'Отправлено, МСК'], recentRows, 'Последние посылки участника') : empty('Посылок пока нет', ctx.user?.id === person.id ? 'Выберите задачу и отправьте первое решение.' : 'Участник еще не отправлял решений.', ctx.user?.id === person.id ? ctx.link('/problems', 'Выбрать задачу', 'btn primary') : '')}<h2>Соревнования</h2>${historyRows.length ? table(['Соревнование', 'Место', 'Изменение рейтинга', 'Рейтинг после контеста'], historyRows, 'История соревнований участника') : '<p class="muted">Еще не участвовал в соревнованиях.</p>'}</section>`;
+    const ownProfile = ctx.user && person.id === ctx.user.id;
+    const actions = `${ctx.link(`/submissions?user=${userQuery}`, ownProfile ? 'Мои посылки' : 'Посылки участника', 'btn secondary')}${ownProfile ? '<button type="button" class="btn secondary" data-action="logout">Выйти</button>' : ''}`;
+    return `${ctx.header(person.handle, '', actions)}${summary}<section class="stack"><h2>Последние посылки</h2>${recentRows.length ? table(['Посылка', 'Задача', 'Вердикт', 'Время GPU, мс', 'Отправлено, МСК'], recentRows, 'Последние посылки участника', '', new Set([0, 3])) : empty('Посылок пока нет', ownProfile ? 'Выберите задачу и отправьте первое решение.' : 'Участник еще не отправлял решений.', ownProfile ? ctx.link('/problems', 'Выбрать задачу', 'btn primary') : '')}<h2>Соревнования</h2>${historyRows.length ? table(['Соревнование', 'Место', 'Изменение рейтинга', 'Рейтинг после контеста'], historyRows, 'История соревнований участника', '', new Set([1, 2, 3])) : '<p class="muted">Еще не участвовал в соревнованиях.</p>'}</section>`;
   }
 
-  function auth(ctx) {
-    const mode = ['login', 'register', 'reset'].includes(param(ctx, 'mode', 'login')) ? param(ctx, 'mode', 'login') : 'login';
-    const returnTo = param(ctx, 'return');
+  function authModeFrom(value) {
+    return ['login', 'register', 'reset'].includes(value) ? value : 'login';
+  }
+
+  function authDialog(ctx) {
+    const mode = authModeFrom(ctx.view?.authMode);
+    const returnTo = ctx.view?.authReturn || '';
     const suffix = returnTo ? `&return=${encodeURIComponent(returnTo)}` : '';
-    const nav = tabs(ctx, [['login', 'Вход', `/auth?mode=login${suffix}`], ['register', 'Регистрация', `/auth?mode=register${suffix}`]], mode, 'Доступ к аккаунту');
+    const nav = mode !== 'reset' ? `<nav class="tabs auth-tabs" aria-label="Доступ к аккаунту">${[['login', 'Вход'], ['register', 'Регистрация']].map(([id, title]) => `<button type="button" class="tab${mode === id ? ' active' : ''}" data-action="auth-mode" data-mode="${id}">${title}</button>`).join('')}</nav>` : '';
+    const title = mode === 'reset' ? 'Восстановление доступа' : 'Вход в аккаунт';
     const password = mode !== 'reset' ? `<label class="field"><span>Пароль</span><input id="auth-password" type="password" name="password" required minlength="8" autocomplete="${mode === 'register' ? 'new-password' : 'current-password'}" aria-describedby="password-hint"><span id="password-hint" class="small muted">Не меньше 8 символов.</span></label>` : '';
     const fields = mode === 'login' ? `<label class="field"><span>Ник или почта</span><input name="identifier" required autocomplete="username" value="${ctx.escape(ctx.view?.authIdentifier || '')}"></label>` : `${mode === 'register' ? '<label class="field"><span>Ник участника</span><input name="handle" required minlength="3" maxlength="24" pattern="[A-Za-z0-9_]{3,24}" autocomplete="username" aria-describedby="handle-hint"><span id="handle-hint" class="small muted">Латинские буквы, цифры и _.</span></label>' : ''}<label class="field"><span>Почта</span><input name="email" type="email" required autocomplete="email"></label>`;
-    return `${ctx.header(mode === 'reset' ? 'Восстановление доступа' : 'Аккаунт')}<div class="auth-form">${mode !== 'reset' ? nav : ''}<form class="form" data-form="${mode}">${fields}${password}${message(ctx, mode)}<button class="btn primary" type="submit">${mode === 'register' ? 'Зарегистрироваться' : mode === 'reset' ? 'Отправить инструкцию' : 'Войти'}</button></form>${mode === 'login' ? `<p>${ctx.link(`/auth?mode=reset${suffix}`, 'Забыли пароль?')}</p><p class="small muted">Демо-аккаунты: alex_cuda (с историей), new_cuda (пустой аккаунт). Пароль произвольный, от 8 символов. Он не сохраняется.</p>` : mode === 'reset' ? `<p>${ctx.link(`/auth?mode=login${suffix}`, 'Вернуться ко входу')}</p><p class="small muted">В прототипе письма не отправляются.</p>` : '<p class="small muted">Регистрация создает локальный демо-профиль. Пароль не сохраняется.</p>'}</div>`;
+    const foot = mode === 'login' ? `<p><button type="button" class="text-link" data-action="auth-mode" data-mode="reset">Забыли пароль?</button></p><p class="small muted">Демо-аккаунты: alex_cuda (с историей), new_cuda (пустой аккаунт). Пароль произвольный, от 8 символов. Он не сохраняется.</p>` : mode === 'reset' ? `<p><button type="button" class="text-link" data-action="auth-mode" data-mode="login">Вернуться ко входу</button></p><p class="small muted">В прототипе письма не отправляются.</p>` : '<p class="small muted">Регистрация создает локальный демо-профиль. Пароль не сохраняется.</p>';
+    return `<div class="auth-dialog-head"><h2>${title}</h2><button type="button" class="auth-close" data-action="close-auth" aria-label="Закрыть">×</button></div>${nav}<form class="form" data-form="${mode}">${fields}${password}${message(ctx, mode)}<button class="btn primary" type="submit">${mode === 'register' ? 'Зарегистрироваться' : mode === 'reset' ? 'Отправить инструкцию' : 'Войти'}</button></form><div class="auth-dialog-foot">${foot}</div>`;
   }
 
   window.ExtraScreens = {
@@ -289,8 +309,8 @@
       if (route.startsWith('/contest/')) return contest(ctx, decodeURIComponent(route.slice('/contest/'.length)));
       if (route === '/rating') return rating(ctx);
       if (route === '/profile') return profile(ctx);
-      if (route === '/auth') return auth(ctx);
       return null;
-    }
+    },
+    authDialog
   };
 })();

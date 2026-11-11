@@ -126,7 +126,7 @@ describe('Форматы задач', () => {
   });
 
   it('сохраняет формат в URL и отправляет его серверу', async () => {
-    const list = vi.spyOn(api, 'listProblems').mockResolvedValue({ items: [task], total: 1, tags: [] });
+    const list = vi.spyOn(api, 'listProblems').mockResolvedValue({ items: [task], total: 1, tags: [], solvedCount: 0, totalCount: 1, streak: 0 });
     open('/problems?format=guess');
     expect(await screen.findByRole('combobox', { name: 'Формат задачи' })).toHaveValue('guess');
     await waitFor(() => expect(list).toHaveBeenCalledWith(expect.objectContaining({ format: 'guess' }), expect.any(AbortSignal)));

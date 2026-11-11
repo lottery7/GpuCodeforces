@@ -44,34 +44,26 @@ function open(path: string) {
 beforeEach(() => { session.user = participant; });
 
 describe('Список соревнований', () => {
-  it('сохраняет поиск при смене вкладок и применяет его к нужной фазе', async () => {
+  it('применяет поиск и фильтр по фазе, сохраняя значения', async () => {
     const list = vi.spyOn(api, 'listContests').mockResolvedValue([]);
-    open('/contests?tabs=live');
+    open('/contests');
     const input = screen.getByRole('searchbox', { name: 'Найти соревнование' });
     fireEvent.change(input, { target: { value: 'CUDA' } });
     fireEvent.keyDown(input, { key: 'Enter' });
-    await waitFor(() => expect(list).toHaveBeenLastCalledWith({ phase: 'live', q: 'CUDA' }, expect.any(AbortSignal)));
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith({ q: 'CUDA' }, expect.any(AbortSignal)));
 
-    await userEvent.click(screen.getByRole('link', { name: 'Будущие' }));
-    await waitFor(() => expect(list).toHaveBeenLastCalledWith({ phase: 'upcoming', q: 'CUDA' }, expect.any(AbortSignal)));
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Показать соревнования' }), 'finished');
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Показать соревнования' })).toHaveValue('finished'));
     expect(input).toHaveValue('CUDA');
-
-    await userEvent.click(screen.getByRole('link', { name: 'Завершенные' }));
-    await waitFor(() => expect(list).toHaveBeenLastCalledWith({ phase: 'finished', q: 'CUDA' }, expect.any(AbortSignal)));
-    expect(input).toHaveValue('CUDA');
-
-    await userEvent.click(screen.getByRole('link', { name: 'Мои' }));
-    await waitFor(() => expect(list).toHaveBeenLastCalledWith({ mine: true, q: 'CUDA' }, expect.any(AbortSignal)));
-    expect(input).toHaveValue('CUDA');
-    expect(screen.getByRole('link', { name: 'Текущие' })).toHaveAttribute('href', '/contests?tabs=live&q=CUDA');
+    expect(list).toHaveBeenLastCalledWith({ q: 'CUDA' }, expect.any(AbortSignal));
   });
 
-  it.each(['вкладки', 'поиска'])('показывает ошибку регистрации в нужной ячейке и сбрасывает при смене %s', async change => {
+  it.each(['фильтра', 'поиска'])('показывает ошибку регистрации в нужной ячейке и сбрасывает при смене %s', async change => {
     const first = { ...contest('live'), id: 'first', title: 'Первый контест' };
     const second = { ...contest('live'), id: 'second', title: 'Второй контест' };
     vi.spyOn(api, 'listContests').mockResolvedValue([first, second]);
     const register = vi.spyOn(api, 'registerForContest').mockRejectedValue(new Error('Не удалось зарегистрироваться.'));
-    open('/contests?tabs=live');
+    open('/contests');
     const target = await screen.findByRole('row', { name: /Второй контест/ });
     const button = within(target).getByRole('button', { name: 'Зарегистрироваться' });
     await userEvent.click(button);
@@ -82,9 +74,9 @@ describe('Список соревнований', () => {
     expect(within(screen.getByRole('row', { name: /Первый контест/ })).queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.getAllByRole('alert')).toHaveLength(1);
 
-    if (change === 'вкладки') {
-      await userEvent.click(screen.getByRole('link', { name: 'Будущие' }));
-      await userEvent.click(screen.getByRole('link', { name: 'Текущие' }));
+    if (change === 'фильтра') {
+      await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Показать соревнования' }), 'upcoming');
+      await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Показать соревнования' }), 'now');
     } else {
       const input = screen.getByRole('searchbox', { name: 'Найти соревнование' });
       fireEvent.change(input, { target: { value: 'контест' } });
@@ -92,6 +84,18 @@ describe('Список соревнований', () => {
     }
     await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
     expect(screen.getByRole('row', { name: /Второй контест/ })).toBeVisible();
+  });
+
+  it('группирует соревнования автора сверху', async () => {
+    const mine = { ...contest('live'), id: 'mine', title: 'Мой контест', authors: [{ ...author, id: 'myself' }] };
+    const other = { ...contest('live'), id: 'other', title: 'Чужой контест' };
+    vi.spyOn(api, 'listContests').mockResolvedValue([other, mine]);
+    session.user = { ...author, id: 'myself' };
+    open('/contests');
+    const rows = await screen.findAllByRole('row');
+    const labels = rows.map(row => row.textContent);
+    expect(labels.findIndex(label => label?.includes('Мой контест'))).toBeLessThan(labels.findIndex(label => label?.includes('Чужой контест')));
+    expect(screen.getByRole('row', { name: /Мои соревнования/ })).toBeInTheDocument();
   });
 });
 

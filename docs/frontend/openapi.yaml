@@ -295,6 +295,26 @@ paths:
                         ratingDelta: {type: integer, nullable: true}
                         ratingAfter: {type: integer, nullable: true}
         default: {$ref: '#/components/responses/Error'}
+  /users/{id}/rating-history:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      operationId: getUserRatingHistory
+      summary: История рейтинга участника для графика
+      description: Рейтинг участника после каждого завершённого контеста, который менял его рейтинг, по возрастанию старта контеста. У каждого процессора свой рейтинг, поэтому график строят по точкам одного процессора. Ограничена параметрами processor, after и before.
+      parameters:
+        - {name: processor, in: query, description: Только контесты на этом процессоре., schema: {type: string}}
+        - {name: after, in: query, description: 'Включительно: только контесты, начавшиеся не раньше этого момента.', schema: {type: string, format: date-time}}
+        - {name: before, in: query, description: 'Включительно: только контесты, начавшиеся не позже этого момента.', schema: {type: string, format: date-time}}
+      responses:
+        '200':
+          description: Точки рейтинга; сортировка по startAt по возрастанию
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/RatingHistoryPoint'}
+        default: {$ref: '#/components/responses/Error'}
   /problems:
     get:
       operationId: listProblems
@@ -317,16 +337,19 @@ paths:
         - {$ref: '#/components/parameters/Limit'}
       responses:
         '200':
-          description: Сортировка по возрастанию; без score задачи идут последними. tags содержит темы доступного пула до фильтрации.
+          description: Сортировка по возрастанию; без score задачи идут последними. tags содержит темы доступного пула до фильтрации. solvedCount, totalCount и streak нужны для карточек прогресса в practice-контексте.
           content:
             application/json:
               schema:
                 type: object
-                required: [items, total, tags]
+                required: [items, total, tags, solvedCount, totalCount, streak]
                 properties:
                   items: {type: array, items: {$ref: '#/components/schemas/Problem'}}
-                  total: {type: integer}
+                  total: {type: integer, description: Число задач после фильтрации; для пагинации.}
                   tags: {type: array, items: {type: string}}
+                  solvedCount: {type: integer, description: 'Число разных решенных задач из пула (до фильтрации) тем же пользователем, чьи результаты показаны.'}
+                  totalCount: {type: integer, description: Размер пула задач без фильтрации; для прогресса.}
+                  streak: {type: integer, description: 'Текущая серия подряд идущих дней (по UTC) с хотя бы одной принятой посылкой того же пользователя; для гостя 0.'}
         default: {$ref: '#/components/responses/Error'}
   /problems/{id}:
     parameters:
@@ -560,6 +583,25 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Submission'}
+        default: {$ref: '#/components/responses/Error'}
+  /submissions/latest:
+    get:
+      operationId: listLatestSubmissions
+      summary: Последние посылки всех участников
+      description: Свежие посылки по всему сайту, новые первыми. Без кода и диагностики; посылок виртуального участия здесь нет, их видит только автор. Это лента, а не список - общего числа посылок в ответе нет.
+      parameters:
+        - {$ref: '#/components/parameters/Offset'}
+        - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: Посылки всех пользователей, отсортированные по времени отправки по убыванию
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/Submission'}}
         default: {$ref: '#/components/responses/Error'}
   /contests:
     get:
@@ -1047,6 +1089,17 @@ components:
         rank: {type: integer, nullable: true}
         ratingDelta: {type: integer, nullable: true}
         ratingContestId: {type: string, nullable: true}
+    RatingHistoryPoint:
+      type: object
+      required: [contestId, title, processor, startAt, rank, ratingDelta, ratingAfter]
+      properties:
+        contestId: {type: string}
+        title: {type: string}
+        processor: {type: string, description: 'Процессор контеста: у каждого процессора свой рейтинг.'}
+        startAt: {type: string, format: date-time}
+        rank: {type: integer}
+        ratingDelta: {type: integer}
+        ratingAfter: {type: integer}
     User:
       type: object
       required: [id, handle, ratings]

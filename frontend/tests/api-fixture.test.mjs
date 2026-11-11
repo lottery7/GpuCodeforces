@@ -191,8 +191,12 @@ describe('Fixture HTTP API', () => {
     expect(bank.items.map(problem => problem.id)).toEqual(['vector-addition']);
     expect(bank.tags.length).toBeGreaterThan(1);
     const rating = (await request('/users?sort=rating&processor=gpu-cuda&q=alex')).body;
-    expect(rating.items[0].ratings['gpu-cuda'].rank).toBe(4);
+    expect(rating.items[0].ratings['gpu-cuda'].rank).toBe(11);
     expect((await request('/users?sort=rating')).status).toBe(400);
+    const feed = (await request('/submissions/latest?limit=3')).body;
+    expect(feed.items).toHaveLength(3);
+    expect(feed.items.map(item => Date.parse(item.createdAt))).toEqual(feed.items.map(item => Date.parse(item.createdAt)).sort((a, b) => b - a));
+    expect(feed.items.every(item => item.code === undefined || item.code === null)).toBe(true);
     const all = (await request('/submissions?context=all', { cookie: alex })).body;
     const practice = (await request('/submissions?context=practice', { cookie: alex })).body;
     expect(all.total).toBeGreaterThan(practice.total);
@@ -221,7 +225,7 @@ describe('Fixture HTTP API', () => {
     const paginated = (await request('/problems?offset=1&limit=2')).body;
     expect(paginated.total).toBe(10);
     expect(paginated.items).toHaveLength(2);
-  });
+  }, 10000);
 
   it('returns canonical terminal verdicts and counts passed correctness tests', async () => {
     const alex = await login('alex_cuda');

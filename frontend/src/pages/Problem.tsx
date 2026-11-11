@@ -4,6 +4,7 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'reac
 import { api, ApiError } from '../api/client';
 import type { Contest, GuessInput, ProblemDetail, ProblemProcessor, ProblemProcessorDetail, Submission } from '../api/types';
 import { useSession } from '../auth';
+import { useAuthDialog } from '../auth-dialog';
 import CodeEditor from '../components/CodeEditor';
 import GuessResult from '../components/GuessResult';
 import DuelBoard from '../components/DuelBoard';
@@ -11,7 +12,7 @@ import BenchmarkInfo from '../components/BenchmarkInfo';
 import ReferenceStatus from '../components/ReferenceStatus';
 import { readDraft, rememberEditorLogin, writeDraft, type DraftTarget } from '../drafts';
 import { formatLimit, scoreUnits, useProcessors } from '../processors';
-import { Empty, ErrorMessage, Markdown, PageHeader, QueryState, ScoreValue, Tabs, UserLink, useFeedbackVisibility } from '../ui';
+import { Difficulty, Empty, ErrorMessage, Markdown, PageHeader, QueryState, ScoreValue, Tabs, UserLink, useFeedbackVisibility } from '../ui';
 import { canJoinContest, contextFromSearch, difficultyLabels, formatLabels, guessLabels, problemPath } from '../utils';
 import { SubmissionList } from './Submissions';
 
@@ -34,6 +35,7 @@ function EditorPane({ problem, detail, summary, target, context, contest, contes
   onCloseOutput: () => void;
 }) {
   const { user } = useSession();
+  const openAuth = useAuthDialog();
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -63,7 +65,7 @@ function EditorPane({ problem, detail, summary, target, context, contest, contes
   }
   function requestLogin() {
     rememberEditorLogin(draft, code, location.pathname + location.search);
-    navigate(`/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`);
+    openAuth('login', location.pathname + location.search);
   }
   const check = useMutation({
     mutationFn: (snapshot: string) => api.checkExample(problem.id, context, { code: snapshot, ...target }),
@@ -164,7 +166,7 @@ function EditorPane({ problem, detail, summary, target, context, contest, contes
 function GuessPane({ problem, processor, context, contest, phase, contestLoading }: { problem: ProblemDetail; processor: ProblemProcessor; context: string; contest?: Contest; phase: ReturnType<typeof phaseOf>; contestLoading: boolean }) {
   const { user } = useSession();
   const location = useLocation();
-  const navigate = useNavigate();
+  const openAuth = useAuthDialog();
   const queryClient = useQueryClient();
   const [choice, setChoice] = useState<GuessInput['choice'] | ''>('');
   const [answer, setAnswer] = useState<Submission | null>(null);
@@ -183,7 +185,7 @@ function GuessPane({ problem, processor, context, contest, phase, contestLoading
     },
     onSuccess: result => { setAnswer(result); void queryClient.invalidateQueries(); },
     onError: error => {
-      if (error instanceof ApiError && error.status === 401) navigate(`/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`);
+      if (error instanceof ApiError && error.status === 401) openAuth('login', location.pathname + location.search);
       if (error instanceof ApiError && error.status === 400) void queryClient.invalidateQueries({ queryKey: ['problem', problem.id, context] });
     },
   });
@@ -210,7 +212,7 @@ function GuessPane({ problem, processor, context, contest, phase, contestLoading
     </fieldset>
     {phase === 'finished' ? <Link className="btn secondary" to={problemPath(problem.id, contest?.finalized && contest.format !== 'duel' ? `upsolve:${contest.id}` : 'practice')}>{contest?.finalized && contest.format !== 'duel' ? 'Перейти к дорешиванию' : 'Продолжить в практике'}</Link>
       : phase === 'upcoming' ? <p className="muted">Ответы принимаются после начала.</p>
-      : !user ? <Link className="btn primary" to={`/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`}>Войти и ответить</Link>
+      : !user ? <button className="btn primary" onClick={() => openAuth('login', location.pathname + location.search)}>Войти и ответить</button>
       : contest?.format === 'duel' && !context.includes(':') && !canJoinContest(contest, user.id) ? <p className="muted">Ответить могут только участники дуэли.</p>
       : context !== 'practice' && !context.includes(':') && !contest?.registered ? <button className="btn primary" disabled={blocked} onClick={() => join.mutate()}>{join.isPending ? 'Регистрируем...' : contest?.format === 'duel' ? 'Принять дуэль' : 'Участвовать'}</button>
       : !saved && <button className="btn primary guess-submit" disabled={blocked || !choice} onClick={() => { if (choice) guess.mutate(choice); }}>{guess.isPending ? 'Проверяем ответ...' : 'Проверить выбор'}</button>}
@@ -244,8 +246,8 @@ function Leaders({ problemId, processor, context, finished }: { problemId: strin
     refetchInterval: finished ? false : 5000,
   });
   return <QueryState query={leaders}>{leaders.data && (leaders.data.length ? <div className="panel table-wrap"><table className="data-table" aria-label="Лидеры задачи">
-    <thead><tr><th>Место</th><th>Участник</th><th>Лучший результат</th><th>Посылка</th></tr></thead>
-    <tbody>{leaders.data.map(item => <tr key={item.user.id} className={item.user.id === user?.id ? 'own-row' : undefined}><td>{item.rank}</td><td><UserLink user={item.user} /></td><td className="mono"><ScoreValue score={item.score} /></td><td><Link to={`/submission/${encodeURIComponent(item.submissionId)}`}>#{item.submissionId}</Link></td></tr>)}</tbody>
+    <thead><tr><th className="num">Место</th><th>Участник</th><th className="num">Лучший результат</th><th className="num">Посылка</th></tr></thead>
+    <tbody>{leaders.data.map(item => <tr key={item.user.id} className={item.user.id === user?.id ? 'own-row' : undefined}><td className="num">{item.rank}</td><td><UserLink user={item.user} /></td><td className="num mono"><ScoreValue score={item.score} /></td><td className="num"><Link to={`/submission/${encodeURIComponent(item.submissionId)}`}>#{item.submissionId}</Link></td></tr>)}</tbody>
   </table></div> : <Empty>Принятых решений на процессоре {processors.title(processor)} в этой конфигурации пока нет.</Empty>)}</QueryState>;
 }
 
@@ -361,7 +363,7 @@ export default function Problem() {
     {virtual.error && <div><ErrorMessage error={virtual.error} /><button className="text-link" onClick={() => void virtual.refetch()}>Повторить загрузку участия</button></div>}
     {virtual.data && <p className="notice">Виртуальный контест. Осталось {Math.max(0, Math.ceil((Date.parse(virtual.data.endsAt) - virtualNow) / 1000))} с.</p>}
     <PageHeader title={`${problem.data.code}. ${problem.data.title}`} actions={tab === 'statement' ? <a className="text-link editor-anchor" href="#editor">{isGuess ? 'К вариантам ответа' : 'К редактору'}</a> : undefined} />
-    <div className="problem-meta"><span>{formatLabels[problem.data.format ?? 'standard']}</span><span>{difficultyLabels[problem.data.difficulty]}</span>{!isGuess && <>{detail && <span>Лимит: {formatLimit(detail.limit)} {scoreUnits[detail.limit.type]}</span>}<span>Память: {problem.data.memoryLimitMb} МБ</span></>}</div>
+    <div className="problem-meta"><span>{formatLabels[problem.data.format ?? 'standard']}</span><span><Difficulty difficulty={problem.data.difficulty} /></span>{!isGuess && <>{detail && <span>Лимит: {formatLimit(detail.limit)} {scoreUnits[detail.limit.type]}</span>}<span>Память: {problem.data.memoryLimitMb} МБ</span></>}</div>
     {target && <TargetPicker problem={problem.data} target={target} onChange={pickTarget} />}
     <Tabs selected={tab} items={[
       { id: 'statement', label: isGuess ? 'Условие и ответ' : 'Условие и решение', to: problemPath(id, context, undefined, target ?? undefined) },

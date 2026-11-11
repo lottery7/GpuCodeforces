@@ -4,10 +4,9 @@ import { Link, useSearchParams } from 'react-router';
 import { api } from '../api/client';
 import { useSession } from '../auth';
 import { GPU_CUDA, useProcessors } from '../processors';
-import { Empty, PageHeader, Pagination, QueryState, SearchInput, UserLink } from '../ui';
+import { Empty, PageHeader, Pagination, QueryState, RatingDelta, SearchInput, UserLink } from '../ui';
 
 const limit = 20;
-const signed = (value: number | null) => value === null ? '-' : `${value > 0 ? '+' : ''}${value}`;
 
 export default function Rating() {
   const [params, setParams] = useSearchParams();
@@ -55,10 +54,10 @@ export default function Rating() {
     </div>
     <QueryState query={rating}>
       {rating.data && <>
-        {rating.data.items.length ? <div className="table-wrap"><table className="data-table" aria-label="Рейтинг участников"><thead><tr><th>Место</th><th>Участник</th><th>Рейтинг</th><th>После последнего контеста</th></tr></thead><tbody>{rating.data.items.map(person => {
+        {rating.data.items.length ? <div className="table-wrap"><table className="data-table" aria-label="Рейтинг участников"><thead><tr><th className="num">Место</th><th>Участник</th><th className="num">Рейтинг</th><th className="num">После последнего контеста</th></tr></thead><tbody>{rating.data.items.map(person => {
           const own = person.ratings[processor];
           return <tr key={person.id} className={person.id === user?.id ? 'own-row' : undefined}>
-            <td>{own?.rank ?? '-'}</td><td><UserLink user={person} />{person.id === user?.id && <span className="small muted"> вы</span>}</td><td>{own?.rating ?? '-'}</td><td>{own?.ratingContestId && own.ratingDelta !== null ? <Link to={`/contest/${encodeURIComponent(own.ratingContestId)}?tab=standings`}>{signed(own.ratingDelta)}</Link> : signed(own?.ratingDelta ?? null)}</td>
+            <td className="num">{own?.rank ?? '-'}</td><td><UserLink user={person} />{person.id === user?.id && <span className="small muted"> вы</span>}</td><td className="num">{own?.rating ?? '-'}</td><td className="num">{own?.ratingContestId && own.ratingDelta !== null ? <Link to={`/contest/${encodeURIComponent(own.ratingContestId)}?tab=standings`}><RatingDelta value={own.ratingDelta} /></Link> : <RatingDelta value={own?.ratingDelta} />}</td>
           </tr>;
         })}</tbody></table></div> : <Empty>{q.trim() ? 'Участники не найдены. Измените запрос.' : `Участников с рейтингом на процессоре ${catalog.title(processor)} пока нет.`}</Empty>}
         <Pagination total={rating.data.total} offset={offset} limit={limit} onChange={value => { const next = new URLSearchParams(params); value ? next.set('offset', String(value)) : next.delete('offset'); setParams(next); }} />

@@ -3,6 +3,8 @@ package dev.gpucodeforces.backend.submission
 import dev.gpucodeforces.judge.api.Processors
 import java.math.BigDecimal
 import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneOffset
 import java.util.UUID
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.Repository
@@ -74,6 +76,9 @@ interface SubmissionStatsRepository : Repository<Submission, UUID> {
 
     @Query("SELECT count(DISTINCT s.problemId) FROM Submission s WHERE s.userId = :userId AND s.status = :status")
     fun countProblemsWithStatus(userId: UUID, status: SubmissionStatus): Long
+
+    @Query("SELECT s.createdAt FROM Submission s WHERE s.userId = :userId AND s.status = :status")
+    fun findAcceptedAt(userId: UUID, status: SubmissionStatus): List<Instant>
 }
 
 /**
@@ -178,6 +183,25 @@ class SubmissionStats(private val repository: SubmissionStatsRepository) {
         repository.countInContestWithStatusDuring(contestId, SubmissionStatus.PENDING, startAt, endAt)
 
     fun solvedProblemCount(userId: UUID): Int = repository.countProblemsWithStatus(userId, SubmissionStatus.ACCEPTED).toInt()
+
+    /**
+     * Current streak in whole UTC days: how many consecutive days up to today (or yesterday, if today has no
+     * accepted submission yet) the user has at least one accepted submission. Days are counted in UTC.
+     */
+    fun streak(userId: UUID): Int {
+        val today = LocalDate.now(ZoneOffset.UTC)
+        val activeDays = repository.findAcceptedAt(userId, SubmissionStatus.ACCEPTED)
+            .map { it.atOffset(ZoneOffset.UTC).toLocalDate() }
+            .toSet()
+        if (activeDays.isEmpty()) return 0
+        var day = if (today in activeDays) today else today.minusDays(1)
+        var streak = 0
+        while (day in activeDays) {
+            streak++
+            day = day.minusDays(1)
+        }
+        return streak
+    }
 
     private fun accepted(problemIds: Collection<String>): List<AcceptedSubmission> =
         if (problemIds.isEmpty()) emptyList() else repository.findWithStatus(SubmissionStatus.ACCEPTED, problemIds)

@@ -2,6 +2,7 @@ package dev.gpucodeforces.backend
 
 import dev.gpucodeforces.backend.api.model.GetUserProfile200Response
 import dev.gpucodeforces.backend.api.model.ListUsers200Response
+import dev.gpucodeforces.backend.api.model.RatingHistoryPoint
 import dev.gpucodeforces.backend.contest.Contest
 import dev.gpucodeforces.backend.contest.ContestProblem
 import dev.gpucodeforces.backend.contest.ContestProblemRepository
@@ -182,6 +183,56 @@ class ContestRatingFinalizerIntegrationTest {
         assertThat(profile.contests[0].ratingDelta).isEqualTo(aliceHistory.ratingDelta)
         assertThat(profile.contests[0].processor).isEqualTo("gpu-cuda")
         assertThat(profile.user.ratings.getValue("gpu-cuda").rating).isEqualTo(aliceHistory.ratingAfter)
+
+        // The rating-history endpoint returns the same change with the contest start time.
+        val history = client.get().uri("/users/${alice.id}/rating-history")
+            .exchange().expectStatus().isOk
+            .expectBody(Array<RatingHistoryPoint>::class.java)
+            .returnResult().responseBody!!
+        assertThat(history.map { it.contestId }).containsExactly(contest.id.toString())
+        assertThat(history.single().title).isEqualTo("Прошедший контест")
+        val storedStartAt = contestRepository.findById(contest.id).orElseThrow().startAt
+        assertThat(history.single().startAt).isEqualTo(storedStartAt.atOffset(java.time.ZoneOffset.UTC))
+        assertThat(history.single().processor).isEqualTo("gpu-cuda")
+        assertThat(history.single().rank).isEqualTo(1)
+        assertThat(history.single().ratingAfter).isEqualTo(aliceHistory.ratingAfter)
+    }
+
+    @Test
+    fun `rating history is limited by contest start time and ordered ascending`() {
+        val frank = userRepository.save(User("frank_cuda", "frank_cuda@example.com", "hash"))
+        val git = userRepository.save(User("git_cuda", "git_cuda@example.com", "hash"))
+        // Two contests that ended at different times; both rated Frank.
+        val older = pastContest("Итог ранга", Duration.ofHours(2))
+        val newer = pastContest("Второй", Duration.ofHours(1))
+        listOf(older, newer).forEach { contest ->
+            contestRegistrationRepository.save(ContestRegistration(contest.id, frank.id))
+            contestRegistrationRepository.save(ContestRegistration(contest.id, git.id))
+            submit(contest, frank, SubmissionStatus.ACCEPTED, 10)
+            submit(contest, git, SubmissionStatus.WRONG_ANSWER, 5)
+            assertThat(ratingFinalizationService.finalize(contest.id, Instant.now())).isTrue()
+        }
+
+        val all = client.get().uri("/users/${frank.id}/rating-history")
+            .exchange().expectStatus().isOk
+            .expectBody(Array<RatingHistoryPoint>::class.java).returnResult().responseBody!!
+        assertThat(all.map { it.title }).containsExactly("Итог ранга", "Второй")
+
+        // A moment exactly between the two contest starts: after excludes the older, before the newer.
+        val between = older.startAt.plus(Duration.between(older.startAt, newer.startAt).dividedBy(2)).atOffset(java.time.ZoneOffset.UTC)
+        val recentOnly = client.get().uri("/users/${frank.id}/rating-history?after=$between")
+            .exchange().expectStatus().isOk
+            .expectBody(Array<RatingHistoryPoint>::class.java).returnResult().responseBody!!
+        assertThat(recentOnly.map { it.contestId }).containsExactly(newer.id.toString())
+        val oldOnly = client.get().uri("/users/${frank.id}/rating-history?before=$between")
+            .exchange().expectStatus().isOk
+            .expectBody(Array<RatingHistoryPoint>::class.java).returnResult().responseBody!!
+        assertThat(oldOnly.map { it.contestId }).containsExactly(older.id.toString())
+
+        // Every processor has a rating of its own: another processor's chart has no points from these contests.
+        client.get().uri("/users/${frank.id}/rating-history?processor=rtl")
+            .exchange().expectStatus().isOk.expectBody().json("[]")
+        client.get().uri("/users/${frank.id}/rating-history?processor=abacus").exchange().expectStatus().isBadRequest
     }
 
     @Test

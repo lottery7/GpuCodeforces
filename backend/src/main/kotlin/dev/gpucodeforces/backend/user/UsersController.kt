@@ -3,6 +3,7 @@ package dev.gpucodeforces.backend.user
 import dev.gpucodeforces.backend.api.UsersApi
 import dev.gpucodeforces.backend.api.model.GetUserProfile200Response
 import dev.gpucodeforces.backend.api.model.ListUsers200Response
+import dev.gpucodeforces.backend.api.model.RatingHistoryPoint
 import dev.gpucodeforces.backend.api.model.RegisterUserRequest
 import dev.gpucodeforces.backend.auth.SessionIssuer
 import dev.gpucodeforces.backend.common.BadRequestException
@@ -10,6 +11,7 @@ import dev.gpucodeforces.backend.processor.ProcessorCatalog
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.RestController
+import java.time.OffsetDateTime
 import dev.gpucodeforces.backend.api.model.User as UserApiModel
 
 @RestController
@@ -41,4 +43,12 @@ class UsersController(
 
     override fun getUserProfile(id: String): ResponseEntity<GetUserProfile200Response> =
         ResponseEntity.ok(profileService.buildProfile(id))
+
+    override fun getUserRatingHistory(
+        id: String, processor: String?, after: OffsetDateTime?, before: OffsetDateTime?,
+    ): ResponseEntity<List<RatingHistoryPoint>> {
+        val user = userService.getById(id)
+        val ratingProcessor = processor?.let { processorCatalog.require(it).id }
+        return ResponseEntity.ok(profileService.ratingHistory(user.id, ratingProcessor, after?.toInstant(), before?.toInstant()))
+    }
 }

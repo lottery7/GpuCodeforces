@@ -8,8 +8,11 @@ import org.springframework.stereotype.Repository
 import java.util.UUID
 import java.sql.Timestamp
 
-/** One page of a listing: the versions shown, how many problems match, and the tags of the whole context. */
-class ProblemPage(val versionIds: List<UUID>, val total: Int, val tags: List<String>)
+/**
+ * One page of a listing: the versions shown, how many problems match, and the tags of the whole context.
+ * [poolSize] and [solvedCount] describe the context before filtering: every problem in it and those the subject solved.
+ */
+class ProblemPage(val versionIds: List<UUID>, val total: Int, val tags: List<String>, val poolSize: Int, val solvedCount: Int)
 
 /** What a listing is narrowed and ordered by; the caller has validated the values. */
 class ProblemFilter(
@@ -118,7 +121,9 @@ class ProblemListing(private val jdbc: NamedParameterJdbcTemplate) {
         // Tags belong to the visible context, independent of search filters and page boundaries.
         @Language("SQL") val tagsSql = "SELECT DISTINCT unnest(v.tags) AS tag $source ORDER BY tag"
         val tags = jdbc.query(tagsSql, parameters) { row, _ -> row.getString("tag") }
-        return ProblemPage(versionIds, total, tags)
+        @Language("SQL") val progressSql = "SELECT count(*) AS pool, count(*) FILTER (WHERE $solvedExpression) AS solved $source"
+        val (poolSize, solvedCount) = jdbc.queryForObject(progressSql, parameters) { row, _ -> row.getInt("pool") to row.getInt("solved") }!!
+        return ProblemPage(versionIds, total, tags, poolSize, solvedCount)
     }
 
     companion object {

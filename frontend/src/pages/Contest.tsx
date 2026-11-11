@@ -5,8 +5,9 @@ import { api } from '../api/client';
 import DuelBoard from '../components/DuelBoard';
 import type { Problem } from '../api/types';
 import { useSession } from '../auth';
+import { useAuthDialog } from '../auth-dialog';
 import { GPU_CUDA, useProcessors } from '../processors';
-import { Empty, ErrorMessage, Markdown, PageHeader, Status, Tabs, UserLink } from '../ui';
+import { Difficulty, Empty, ErrorMessage, Markdown, PageHeader, Status, Tabs, UserLink } from '../ui';
 import { canJoinContest, dateTime, difficultyLabels, formatLabels, phaseOf, problemPath, solveTime, statusLabels } from '../utils';
 import { HackList } from '../components/Hacks';
 
@@ -48,6 +49,7 @@ export default function Contest() {
   const navigate = useNavigate();
   const requestedUpsolving = params.get('mode') === 'upsolving';
   const { user, isLoading } = useSession();
+  const openAuth = useAuthDialog();
   const location = useLocation();
   const queryClient = useQueryClient();
   const catalog = useProcessors();
@@ -126,7 +128,7 @@ export default function Contest() {
   const base = `/contest/${encodeURIComponent(id)}`;
   const actions = <>
     {item.format === 'duel' && <><Link className="text-link" to="/duels">Мои дуэли</Link><Link className="btn secondary" to="/duels/new">Новая дуэль</Link></>}
-    {phase !== 'finished' && (item.registered ? item.format !== 'duel' && <span className="success">{phase === 'upcoming' ? 'Вы зарегистрированы' : 'Вы участвуете'}</span> : !canJoinContest(item, user?.id) ? <span className="muted">Дуэль по приглашению</span> : user ? <button className="btn secondary" disabled={join.isPending} onClick={() => join.mutate()}>{join.isPending ? 'Регистрация...' : item.format === 'duel' ? 'Принять дуэль' : 'Зарегистрироваться'}</button> : <Link className="btn secondary" to={`/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`}>Зарегистрироваться</Link>)}
+    {phase !== 'finished' && (item.registered ? item.format !== 'duel' && <span className="success">{phase === 'upcoming' ? 'Вы зарегистрированы' : 'Вы участвуете'}</span> : !canJoinContest(item, user?.id) ? <span className="muted">Дуэль по приглашению</span> : user ? <button className="btn secondary" disabled={join.isPending} onClick={() => join.mutate()}>{join.isPending ? 'Регистрация...' : item.format === 'duel' ? 'Принять дуэль' : 'Зарегистрироваться'}</button> : <button className="btn secondary" onClick={() => openAuth('login', location.pathname + location.search)}>Зарегистрироваться</button>)}
     {item.finalized && item.format !== 'duel' && <><Link className="btn secondary" to={`${base}${upsolving ? '' : '?mode=upsolving'}`}>{upsolving ? 'Официальные результаты' : 'Дорешивание'}</Link>{user && <button className="btn secondary" disabled={startVirtual.isPending} onClick={() => startVirtual.mutate()}>Начать виртуально</button>}</>}
     {user && item.format !== 'duel' && <Link className="text-link" to="/virtual">Мои виртуальные контесты</Link>}
 
@@ -164,7 +166,7 @@ export default function Contest() {
         {phase === 'finished' && !upsolving && <p className="notice">{item.finalized ? 'Контест завершён. Можно дорешать задачи или начать виртуальное участие.' : 'Контест завершен. На странице задачи можно перейти к решению в практике.'}</p>}
         {tasks.data.length ? <div className="table-wrap"><table className="data-table" aria-label="Задачи соревнования"><thead><tr><th>Задача</th><th>Сложность</th>{user && <th>Ваш статус</th>}</tr></thead><tbody>{tasks.data.map((problem, index) => <tr key={problem.id}>
           <td><Link to={problemPath(problem.id, context)}>{taskLabel(index)}. {problem.title}</Link></td>
-          <td>{difficultyLabels[problem.difficulty]}<div className="subline">{formatLabels[problem.format ?? 'standard']}</div></td>
+          <td><Difficulty difficulty={problem.difficulty} /><div className="subline">{formatLabels[problem.format ?? 'standard']}</div></td>
           {user && <td><PersonalStatus problem={problem} /></td>}
         </tr>)}</tbody></table></div> : <Empty>В контесте пока нет задач.</Empty>}
       </>}
@@ -172,9 +174,9 @@ export default function Contest() {
         {phase === 'finished' && <p className="small muted">Итоговая таблица.</p>}
         {standings.isPending && <p className="loading" role="status">Загрузка таблицы...</p>}
         {standings.error && <div><ErrorMessage error={standings.error} /><button className="text-link" onClick={() => void standings.refetch()}>Повторить</button></div>}
-        {standings.data && (standings.data.length ? <div className="table-wrap"><table className="data-table" aria-label="Таблица контеста"><thead><tr><th>Место</th><th>Участник</th><th>Решено</th><th>Время</th>{columns.map((problem, index) => <th key={problem.id}><Link title={problem.title} to={problemPath(problem.id, id)}>{taskLabel(index)}</Link></th>)}</tr></thead><tbody>{standings.data.map(row => <tr key={row.user.id} className={row.user.id === user?.id ? 'own-row' : undefined}>
-          <td>{row.rank}</td><td><UserLink user={row.user} />{row.user.id === user?.id && <span className="small muted"> вы</span>}{phase === 'finished' && <div className="small"><Link to={`/submissions?user=${encodeURIComponent(row.user.id)}&contest=${encodeURIComponent(id)}`}>Решения</Link></div>}</td><td>{row.solved}</td><td className="mono">{solveTime(row.totalSeconds)}</td>
-          {columns.map(problem => <td key={problem.id} className="mono">{row.times[problem.id] === undefined ? '-' : solveTime(row.times[problem.id])}</td>)}
+        {standings.data && (standings.data.length ? <div className="table-wrap"><table className="data-table" aria-label="Таблица контеста"><thead><tr><th className="num">Место</th><th>Участник</th><th className="num">Решено</th><th className="num">Время</th>{columns.map((problem, index) => <th key={problem.id}><Link title={problem.title} to={problemPath(problem.id, id)}>{taskLabel(index)}</Link></th>)}</tr></thead><tbody>{standings.data.map(row => <tr key={row.user.id} className={row.user.id === user?.id ? 'own-row' : undefined}>
+          <td className="num">{row.rank}</td><td><UserLink user={row.user} />{row.user.id === user?.id && <span className="small muted"> вы</span>}{phase === 'finished' && <div className="small"><Link to={`/submissions?user=${encodeURIComponent(row.user.id)}&contest=${encodeURIComponent(id)}`}>Решения</Link></div>}</td><td className="num">{row.solved}</td><td className="num mono">{solveTime(row.totalSeconds)}</td>
+          {columns.map(problem => <td key={problem.id} className="num mono">{row.times[problem.id] === undefined ? '-' : solveTime(row.times[problem.id])}</td>)}
         </tr>)}</tbody></table></div> : <Empty>Результатов пока нет.</Empty>)}
       </>}
     </>}

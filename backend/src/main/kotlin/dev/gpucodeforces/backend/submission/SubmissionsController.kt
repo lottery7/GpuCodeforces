@@ -4,6 +4,7 @@ import dev.gpucodeforces.backend.api.SubmissionsApi
 import dev.gpucodeforces.backend.api.model.BenchmarkAggregation
 import dev.gpucodeforces.backend.api.model.GuessChoice
 import dev.gpucodeforces.backend.api.model.GuessResult
+import dev.gpucodeforces.backend.api.model.ListLatestSubmissions200Response
 import dev.gpucodeforces.backend.api.model.ListSubmissions200Response
 import dev.gpucodeforces.backend.api.model.MeasurementSummary
 import dev.gpucodeforces.backend.api.model.MeasurementTiming
@@ -68,6 +69,9 @@ class SubmissionsController(
         val submission = with(submitSolutionRequest) { submissionService.submit(problemId, contestId, processor, language, code, author, context) }
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(views.detail(submission, author))
     }
+
+    override fun listLatestSubmissions(offset: Int, limit: Int): ResponseEntity<ListLatestSubmissions200Response> =
+        ResponseEntity.ok(ListLatestSubmissions200Response(views.summaries(submissionRepository.findLatest(offset, limit))))
 
     override fun getSubmission(id: String): ResponseEntity<SubmissionApiModel> =
         ResponseEntity.ok(views.detail(submissionService.get(id), CurrentUser.resolve()))

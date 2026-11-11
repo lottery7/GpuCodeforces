@@ -10,7 +10,15 @@
     'measurement-error': 'Корректно, замер недоступен'
   };
   const difficultyNames = {easy: 'Легкая', medium: 'Средняя', hard: 'Сложная'};
-  const view = {previewOpen: false, listState: 'filled', outcome: 'accepted', runOutcome: 'accepted', connection: 'online', contestValues: {}, authorQuery: '', contestPicker: {q: '', difficulty: 'all', tag: 'all', visibility: 'all', selectedOnly: false}, runs: {}, undo: {}, formMessages: {}};
+  const difficultyClass = d => d === 'easy' ? 'difficulty-easy' : d === 'medium' ? 'difficulty-medium' : d === 'hard' ? 'difficulty-hard' : '';
+  const difficultyTag = d => `<span class="difficulty ${difficultyClass(d)}">${escape(difficultyNames[d] || d)}</span>`;
+  const view = {previewOpen: false, listState: 'filled', outcome: 'accepted', runOutcome: 'accepted', connection: 'online', contestValues: {}, authorQuery: '', contestPicker: {q: '', difficulty: 'all', tag: 'all', visibility: 'all', selectedOnly: false}, runs: {}, undo: {}, formMessages: {}, authMode: 'login', authReturn: ''};
+  const navIcons = {
+    '/problems': '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6v4H9z"/><path d="M4 7h16v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M9 12h6M9 16h6"/></svg>',
+    '/contests': '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>',
+    '/submissions': '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4Z"/></svg>',
+    '/rating': '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l3-3 3 3 4-6"/></svg>'
+  };
   const jobs = new Map();
   let toastTimer;
   let lastPhase;
@@ -20,7 +28,7 @@
   }
 
   function route() {
-    const raw = location.hash.slice(1) || '/problems';
+    const raw = location.hash.slice(1) || '/';
     const separator = raw.indexOf('?');
     return {path: separator < 0 ? raw : raw.slice(0, separator), params: new URLSearchParams(separator < 0 ? '' : raw.slice(separator + 1))};
   }
@@ -39,6 +47,10 @@
 
   function header(title, description = '', actions = '') {
     return `<div class="page-head"><div><h1>${escape(title)}</h1>${description ? `<p class="muted">${escape(description)}</p>` : ''}</div>${actions ? `<div class="inline">${actions}</div>` : ''}</div>`;
+  }
+
+  function hero() {
+    return `<section class="hero"><svg class="hero-logo" viewBox="0 0 40 40" role="img" aria-hidden="true"><rect width="40" height="40" rx="10" fill="#3574f0"/><path d="m14 12 12 8-12 8" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg><div><h1 class="hero-title">GPU Forces</h1><p class="hero-sub">Соревновательная платформа для программистов, где задачи требуют максимально ускорить вычисления на GPU, векторном RISC-V, NPU и собственных схемах на Verilog.</p></div></section>`;
   }
 
   function date(value) {
@@ -127,10 +139,10 @@
     const current = M.user();
     const entries = [['/problems', 'Задачи'], ['/contests', 'Соревнования'], ['/submissions', 'Посылки'], ['/rating', 'Рейтинг']];
     const active = target => path === target || (target === '/problems' && path.startsWith('/problem/')) || (target === '/submissions' && path.startsWith('/submission/')) || (target === '/contests' && (path.startsWith('/contest/') || path.startsWith('/contests/')));
-    const navigation = entries.map(([target, label]) => `<a href="#${target}" ${active(target) ? 'class="active" aria-current="page"' : ''}>${label}</a>`).join('');
-    const account = current ? `${link('/profile', current.handle)}<button class="text-link" data-action="logout">Выйти</button>` : link(path === '/auth' ? url('/auth', {return: route().params.get('return')}) : url('/auth', {return: location.hash.slice(1)}), 'Войти');
+    const navigation = entries.map(([target, label]) => `<a href="#${target}" ${active(target) ? 'class="active" aria-current="page"' : ''}><span class="nav-icon" aria-hidden="true">${navIcons[target] || ''}</span><span>${label}</span></a>`).join('');
+    const account = current ? link('/profile', current.handle) : '<button class="text-link" data-action="signin">Войти</button>';
     const footer = new URLSearchParams(location.search).get('presentation') === '1' ? '' : `<footer class="site-footer"><details class="prototype-tools" ${view.previewOpen ? 'open' : ''}><summary>Состояния шаблонов</summary>${prototypePanel(path)}</details></footer>`;
-    return `<header class="site-header"><div class="header-inner">${link('/problems', 'GPU Forces', 'brand')}<nav class="main-nav" aria-label="Основная навигация">${navigation}</nav><div class="account">${account}</div><details class="mobile-nav"><summary>Меню</summary><nav aria-label="Мобильная навигация">${navigation}${account}</nav></details></div></header><main class="container" id="content" tabindex="-1">${view.connection === 'offline' ? '<div class="error" role="alert">Связь потеряна. Новые отправки недоступны; показаны последние полученные результаты. <button class="text-link" data-action="reconnect">Подключиться снова</button></div>' : ''}${content}</main>${footer}`;
+    return `<header class="site-header"><div class="header-inner">${link('/', 'GPU Forces', 'brand')}<nav class="main-nav" aria-label="Основная навигация">${navigation}</nav><div class="account">${account}</div><details class="mobile-nav"><summary>Меню</summary><nav aria-label="Мобильная навигация">${navigation}${account}</nav></details></div></header><main class="container" id="content" tabindex="-1">${view.connection === 'offline' ? '<div class="error" role="alert">Связь потеряна. Новые отправки недоступны; показаны последние полученные результаты. <button class="text-link" data-action="reconnect">Подключиться снова</button></div>' : ''}${content}</main>${footer}`;
   }
 
   function prototypePanel(path) {
@@ -145,7 +157,7 @@
     return `<div class="prototype-panel"><label>Участник<select data-preview="user" aria-label="Режим участника">${personas.map(([id, label]) => option(id, label, role)).join('')}</select></label>${supportsList ? `<label>Список<select data-preview="list" aria-label="Состояние списка">${[['filled', 'Заполнен'], ['loading', 'Загрузка'], ['empty', 'Пусто'], ['error', 'Ошибка']].map(([id, label]) => option(id, label, view.listState)).join('')}</select></label>` : ''}<label>Новая посылка<select data-preview="outcome" aria-label="Результат новой посылки">${[['accepted', 'Принято'], ['faster', 'Быстрее рекорда'], ['slower', 'Медленнее рекорда'], ...Object.entries(statusNames).filter(([key]) => !pending.includes(key) && key !== 'accepted'), ['stale', 'Старый профиль']].map(([id, label]) => option(id, label, view.outcome)).join('')}</select></label><label>Проверка примера<select data-preview="run" aria-label="Результат проверки примера">${[['accepted', 'Успех'], ['wrong', 'Неверный ответ'], ['compile', 'Ошибка компиляции']].map(([id, label]) => option(id, label, view.runOutcome)).join('')}</select></label><label>Соединение<select data-preview="connection" aria-label="Состояние соединения">${[['online', 'Есть связь'], ['offline', 'Нет связи']].map(([id, label]) => option(id, label, view.connection)).join('')}</select></label>${contestId && M.contest(contestId) ? `<label>Фаза соревнования<select data-preview="phase" aria-label="Фаза соревнования" data-id="${contestId}">${[['upcoming', 'До начала'], ['live', 'Идет'], ['finished', 'Завершено']].map(([id, label]) => option(id, label, M.phase(contestId))).join('')}</select></label>` : ''}${selectedSubmission ? `<label>Состояние посылки<select data-preview="submission" aria-label="Состояние посылки" data-id="${selectedSubmission.id}">${Object.entries(statusNames).map(([id, label]) => option(id, label, selectedSubmission.status)).join('')}</select></label>` : ''}</div>`;
   }
 
-  function bank(params) {
+  function bank(params, showStats = true) {
     const target = params.get('user') ? M.findUser(params.get('user')) : M.user();
     const q = params.get('q') || '';
     const difficulty = params.get('difficulty') || 'all';
@@ -161,17 +173,70 @@
     const allTags = [...new Set(M.problems().flatMap(problem => problem.tags))];
     const options = (values, selected) => values.map(([value, label]) => `<option value="${escape(value)}" ${selected === value ? 'selected' : ''}>${escape(label)}</option>`).join('');
     const headLink = (label, value) => link(url('/problems', {...Object.fromEntries(params), sort: value, page: null}), label, '');
-    const rows = visible.map(problem => `<tr><td>${problem.solved ? '<span class="accepted" aria-label="Решена">✓</span>' : ''}</td><td>${link('/problem/' + problem.id, problem.code + '. ' + problem.title, 'task-link')}<div class="subline">${problem.tags.map(value => link(url('/problems', {...Object.fromEntries(params), tag: value, page: null}), value, 'tag')).join(' / ')}</div></td><td>${difficultyNames[problem.difficulty]}</td><td>${M.users().filter(user => M.solved(problem.id, user.id)).length}</td>${target ? `<td class="mono">${problem.personal ? link('/submission/' + problem.personal.id, time(problem.personal.timeMs), '') : '-'}</td>` : ''}</tr>`).join('');
-    const table = rows ? `<div class="panel table-wrap"><table class="data-table problem-table${target ? '' : ' guest'}"><thead><tr><th scope="col" aria-label="Решена"></th><th scope="col">${headLink('Задача', 'code')}</th><th scope="col">${headLink('Сложность', 'difficulty')}</th><th scope="col">Решили</th>${target ? `<th scope="col">${headLink('Личный рекорд, мс', 'time')}</th>` : ''}</tr></thead><tbody>${rows}</tbody></table></div>${pagination(items.length, params)}` : '<div class="empty">Задачи не найдены. Измените запрос или сбросьте фильтры.</div>';
-    return `${header(target && params.has('user') ? 'Задачи: ' + target.handle : 'Задачи')}<div class="toolbar"><div class="search"><input type="search" id="problem-search" data-query="q" aria-label="Найти задачу" placeholder="Название или номер задачи" value="${escape(q)}"></div><select data-filter="difficulty" aria-label="Сложность">${options([['all', 'Сложность'], ...Object.entries(difficultyNames)], difficulty)}</select>${target ? `<select data-filter="status" aria-label="Статус решения">${options([['all', 'Статус'], ['solved', 'Решена'], ['unsolved', 'Не решена']], status)}</select>` : ''}<select data-filter="tag" aria-label="Тема">${options([['all', 'Тема'], ...allTags.map(value => [value, value])], tag)}</select>${hasFilters ? link(url('/problems', {user: params.get('user')}), 'Сбросить', 'filter-reset') : ''}</div>${listState(table, 'В банке пока нет задач.')}`;
+    const rows = visible.map(problem => `<tr><td>${problem.solved ? '<span class="accepted" aria-label="Решена">✓</span>' : ''}</td><td>${link('/problem/' + problem.id, problem.code + '. ' + problem.title, 'task-link')}<div class="subline">${problem.tags.map(value => link(url('/problems', {...Object.fromEntries(params), tag: value, page: null}), value, 'tag')).join(' / ')}</div></td><td>${difficultyTag(problem.difficulty)}</td><td class="num">${M.users().filter(user => M.solved(problem.id, user.id)).length}</td>${target ? `<td class="num mono">${problem.personal ? link('/submission/' + problem.personal.id, time(problem.personal.timeMs), '') : '-'}</td>` : ''}</tr>`).join('');
+    const table = rows ? `<div class="panel table-wrap"><table class="data-table problem-table${target ? '' : ' guest'}"><thead><tr><th scope="col" aria-label="Решена"></th><th scope="col">${headLink('Задача', 'code')}</th><th scope="col">${headLink('Сложность', 'difficulty')}</th><th class="num" scope="col">Решили</th>${target ? `<th class="num" scope="col">${headLink('Личный рекорд, мс', 'time')}</th>` : ''}</tr></thead><tbody>${rows}</tbody></table></div>${pagination(items.length, params)}` : '<div class="empty">Задачи не найдены. Измените запрос или сбросьте фильтры.</div>';
+    const totalCount = M.problems().length;
+    const solvedCount = target ? M.problems().filter(problem => M.solved(problem.id, target.id)).length : 0;
+    const percent = totalCount ? Math.round(solvedCount / totalCount * 100) : 0;
+    const streak = target ? M.streak(target.id) : 0;
+    const cards = showStats ? `<div class="progress-cards">
+      <section class="panel progress-card">
+        <span class="progress-card-label">Решено задач</span>
+        <span class="progress-card-value"><strong>${solvedCount}</strong><span class="muted"> из ${totalCount}</span></span>
+        <div class="progress-track" role="progressbar" aria-valuenow="${percent}" aria-valuemin="0" aria-valuemax="100" aria-label="Прогресс решения задач"><div class="progress-fill" style="width:${percent}%"></div></div>
+        <span class="progress-card-caption small muted">${percent}% задач из пула</span>
+      </section>
+      <section class="panel progress-card streak-card">
+        <span class="progress-card-label"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3 1.072-2.143 2.5-3.5 3.5-3.5S15 7 16 8s.5 1.5.5 2.5c0 1.38-.5 2.5-.5 2.5s1-1 1.5-2.5c.5 1.5 1 3 1 4.5A6 6 0 1 1 9 11c.5.5 1 1.5 1 2.5 0 .64-.042 1.073-.5 1z"/></svg>Серия</span>
+        <span class="progress-card-value"><strong>${streak}</strong><span class="muted"> дн.</span></span>
+        <span class="progress-card-caption small muted">дней подряд с принятым решением${target ? '' : ' (войдите, чтобы считать)'}</span>
+      </section>
+    </div>` : '';
+    const toolbar = `<div class="toolbar"><div class="search"><input type="search" id="problem-search" data-query="q" aria-label="Найти задачу" placeholder="Название или номер задачи" value="${escape(q)}"></div><select data-filter="difficulty" aria-label="Сложность">${options([['all', 'Сложность'], ...Object.entries(difficultyNames)], difficulty)}</select>${target ? `<select data-filter="status" aria-label="Статус решения">${options([['all', 'Статус'], ['solved', 'Решена'], ['unsolved', 'Не решена']], status)}</select>` : ''}<select data-filter="tag" aria-label="Тема">${options([['all', 'Тема'], ...allTags.map(value => [value, value])], tag)}</select>${hasFilters ? link(url('/problems', {user: params.get('user')}), 'Сбросить', 'filter-reset') : ''}</div>`;
+    const list = listState(table, 'В банке пока нет задач.');
+    const body = showStats ? `<div class="problems-layout"><div class="problems-main">${toolbar}${list}</div><aside class="progress-stack">${cards}</aside></div>` : `<div class="problems-main">${toolbar}${list}</div>`;
+    return `${header(target && params.has('user') ? 'Задачи: ' + target.handle : 'Задачи')}${body}`;
   }
 
   function submissionTable(items, {inProblem = false, showUser = false} = {}) {
     if (!items.length) return '<div class="empty">Посылок пока нет.</div>';
-    return `<div class="panel table-wrap"><table class="data-table"><thead><tr><th scope="col">Посылка</th>${inProblem ? '' : '<th scope="col">Задача</th>'}${showUser ? '<th scope="col">Участник</th>' : ''}<th scope="col">Вердикт</th><th scope="col">Время GPU, мс</th><th scope="col">Отправлено, МСК</th></tr></thead><tbody>${items.map(item => {
+    return `<div class="panel table-wrap"><table class="data-table"><thead><tr><th class="num" scope="col">Посылка</th>${inProblem ? '' : '<th scope="col">Задача</th>'}${showUser ? '<th scope="col">Участник</th>' : ''}<th scope="col">Вердикт</th><th class="num" scope="col">Время GPU, мс</th><th scope="col">Отправлено, МСК</th></tr></thead><tbody>${items.map(item => {
       const problem = M.problem(item.problemId, item.contestId || null);
-      return `<tr><td class="mono">${link('/submission/' + item.id, '#' + item.id, '')}</td>${inProblem ? '' : `<td>${link(problemUrl(item.problemId, item.contestId || 'practice'), problem?.title || item.problemId)}<div class="subline">${item.contestId ? escape(M.contest(item.contestId)?.title || item.contestId) : 'Практика'}</div></td>`}${showUser ? `<td>${link('/profile?user=' + encodeURIComponent(item.userId), userName(item.userId))}</td>` : ''}<td>${verdict(item)}${item.status === 'accepted' && !M.canCompare(item) ? '<div class="subline">Старый профиль проверки</div>' : ''}</td><td class="mono">${item.status === 'accepted' ? time(item.timeMs) : '-'}</td><td>${date(item.createdAt)}</td></tr>`;
+      return `<tr><td class="num mono">${link('/submission/' + item.id, '#' + item.id, '')}</td>${inProblem ? '' : `<td>${link(problemUrl(item.problemId, item.contestId || 'practice'), problem?.title || item.problemId)}<div class="subline">${item.contestId ? escape(M.contest(item.contestId)?.title || item.contestId) : 'Практика'}</div></td>`}${showUser ? `<td>${link('/profile?user=' + encodeURIComponent(item.userId), userName(item.userId))}</td>` : ''}<td>${verdict(item)}${item.status === 'accepted' && !M.canCompare(item) ? '<div class="subline">Старый профиль проверки</div>' : ''}</td><td class="num mono">${item.status === 'accepted' ? time(item.timeMs) : '-'}</td><td>${date(item.createdAt)}</td></tr>`;
     }).join('')}</tbody></table></div>`;
+  }
+
+  function mainPage() {
+    const current = M.user();
+    const latest = M.submissions({}).slice(0, 8);
+    const submissionsList = latest.length ? submissionTable(latest, {showUser: true}) : '<div class="panel"><div class="empty">Посылок пока нет.</div></div>';
+    const upcoming = M.contests().filter(item => M.phase(item.id) === 'upcoming').sort((a, b) => new Date(a.startAt) - new Date(b.startAt))[0] || null;
+    let contestBlock;
+    if (upcoming) {
+      const minutes = Math.max(0, Math.round((new Date(upcoming.endAt) - new Date(upcoming.startAt)) / 60000));
+      const hours = Math.floor(minutes / 60);
+      const rest = minutes % 60;
+      const durationText = `${hours ? hours + ' ч' : ''}${hours && rest ? ' ' : ''}${rest ? rest + ' мин' : ''}` || '0 мин';
+      const meta = [['Начало', date(upcoming.startAt) + ' МСК'], ['Длительность', durationText], ['Задачи', String(upcoming.problemIds.length)]].map(([label, value]) => `<li><span>${label}</span><span>${escape(value)}</span></li>`).join('');
+      const register = !upcoming.registrationOpen ? '<p class="muted contest-register">Регистрация закрыта</p>' : current && M.joined(upcoming.id, current.id) ? '<p class="success contest-register">Вы зарегистрированы</p>' : `<button class="btn primary contest-register" data-action="join-contest" data-id="${escape(upcoming.id)}">Зарегистрироваться</button>`;
+      contestBlock = `<div class="panel dashboard-contest"><h2>Ближайший контест</h2><div class="dashboard-contest-title">${link('/contest/' + encodeURIComponent(upcoming.id), upcoming.title, 'task-link')}</div><ul class="contest-meta">${meta}</ul><div class="contest-countdown">До начала <time data-countdown="${escape(upcoming.startAt)}">--:--:--</time></div>${register}</div>`;
+    } else {
+      contestBlock = '<div class="panel dashboard-contest"><h2>Ближайший контест</h2><p class="muted">Ближайших контестов пока нет.</p></div>';
+    }
+    const top = M.users().filter(user => user.rating !== null && user.rating !== undefined).sort((a, b) => b.rating - a.rating || a.handle.localeCompare(b.handle));
+    const rankOf = value => top.findIndex(item => item.rating === value) + 1;
+    const ownIndex = current ? top.findIndex(user => user.id === current.id) : -1;
+    let ratingTitle = 'Лучшие по рейтингу';
+    let ratingUsers;
+    if (ownIndex >= 0) {
+      ratingTitle = 'Ваш рейтинг';
+      ratingUsers = top.slice(Math.max(0, Math.min(top.length - 5, ownIndex - 2)), Math.max(5, Math.min(top.length, ownIndex + 3))).slice(0, 5);
+    } else {
+      ratingUsers = top.slice(0, 5);
+    }
+    const ratingRows = ratingUsers.map(user => `<tr${user.id === current?.id ? ' class="own-row"' : ''}><td class="num">${rankOf(user.rating)}</td><td>${link('/profile?user=' + encodeURIComponent(user.id), user.handle)}${user.id === current?.id ? ' <span class="small muted">вы</span>' : ''}</td><td class="num mono">${user.rating}</td></tr>`);
+    const ratingsBlock = top.length ? `<div class="panel"><h2>${ratingTitle}</h2><div class="table-wrap"><table class="data-table"><thead><tr><th class="num" scope="col">Место</th><th scope="col">Участник</th><th class="num" scope="col">Рейтинг</th></tr></thead><tbody>${ratingRows.join('')}</tbody></table></div></div>` : '<div class="panel"><h2>Ваш рейтинг</h2><p class="muted">Рейтингов пока нет.</p></div>';
+    return `${hero()}<div class="dashboard"><section class="dashboard-main"><div class="dashboard-head"><h2>Последние посылки</h2>${link('/submissions', 'Все посылки')}</div>${submissionsList}</section><aside class="dashboard-side">${contestBlock}${ratingsBlock}</aside></div>`;
   }
 
   function submissions(params, problem = null, context = 'practice') {
@@ -200,7 +265,7 @@
 
   function leaders(problem, context) {
     const rows = M.leaderboard(problem.id, context === 'practice' ? null : context);
-    return `<p class="small muted">${escape(context === 'practice' ? 'Практика' : M.contest(context)?.title)} / ${escape(problem.benchmark.gpu)} / ${escape(problem.benchmark.caseLabel)} / ${escape(problem.benchmark.testVersion)}</p>${rows.length ? `<div class="panel table-wrap"><table class="data-table"><thead><tr><th scope="col">Место</th><th scope="col">Участник</th><th scope="col">Лучшее время, мс</th><th scope="col">Посылка</th></tr></thead><tbody>${rows.map(row => `<tr class="${row.user.id === M.user()?.id ? 'own-row' : ''}"><td>${row.rank}</td><td>${link('/profile?user=' + encodeURIComponent(row.user.id), row.user.handle)}</td><td class="mono">${time(row.submission.timeMs)}</td><td>${link('/submission/' + row.submission.id, '#' + row.submission.id)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">Сопоставимых принятых решений пока нет.</div>'}`;
+    return `<p class="small muted">${escape(context === 'practice' ? 'Практика' : M.contest(context)?.title)} / ${escape(problem.benchmark.gpu)} / ${escape(problem.benchmark.caseLabel)} / ${escape(problem.benchmark.testVersion)}</p>${rows.length ? `<div class="panel table-wrap"><table class="data-table"><thead><tr><th class="num" scope="col">Место</th><th scope="col">Участник</th><th class="num" scope="col">Лучшее время, мс</th><th class="num" scope="col">Посылка</th></tr></thead><tbody>${rows.map(row => `<tr class="${row.user.id === M.user()?.id ? 'own-row' : ''}"><td class="num">${row.rank}</td><td>${link('/profile?user=' + encodeURIComponent(row.user.id), row.user.handle)}</td><td class="num mono">${time(row.submission.timeMs)}</td><td class="num">${link('/submission/' + row.submission.id, '#' + row.submission.id)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty">Сопоставимых принятых решений пока нет.</div>'}`;
   }
 
   function runKey(problemId, context) {
@@ -239,7 +304,7 @@
     const statement = `<section class="statement statement-pane" id="statement" aria-label="Условие задачи"><div class="tool-window-head">Условие</div><div class="statement-body"><p>${escape(problem.statement)}</p><p class="formula">${escape(problem.formula)}</p><h2>Контракт решения</h2><pre class="example">${escape(problem.signature)};</pre><p>${escape(problem.contract || 'Указатели указывают на память GPU. Обвязка передает данные и размеры.')}</p><p class="small">Размеры входа: ${escape(problem.limits.input || '1 <= N <= 2^24')}.</p><p class="small">${escape(accuracyText(problem.tolerance))}</p><h2>Пример</h2><pre class="example">${escape(problem.example)}</pre><details class="methodology"><summary>Среда и замер</summary><p>${escape(problem.benchmark.gpu)}. ${escape(problem.benchmark.caseLabel)}. ${problem.benchmark.warmups} прогревов, ${problem.benchmark.runs} прогонов. Метрика: ${escape(problem.benchmark.method)}, мс. Эталон: ${time(problem.benchmark.referenceMs)} мс. Передачи CPU/GPU не входят в замер. Профиль частот фиксирован.</p><p class="small muted">${escape(problem.benchmark.compiler)} / ${escape(problem.benchmark.profileId)} / ${escape(problem.benchmark.testVersion)}</p></details></div></section>`;
     const editor = `<section class="editor-section" id="editor"><div class="panel editor-panel"><div class="editor-title"><span class="editor-file-tab active"><span class="file-tab-mark" aria-hidden="true">CU</span><span>solution.cu</span></span><label class="text-link file-button">Выбрать файл<input id="code-file" type="file" accept=".cu,.cpp" aria-label="Загрузить код из файла"></label></div><div class="code-surface"><div class="editor-gutter" aria-hidden="true"><div class="gutter-content"></div></div><div class="editor-code-area"><div class="code-active-line" aria-hidden="true"></div><pre class="code-highlight" aria-hidden="true"><code></code></pre><textarea id="solution-code" class="code-editor" data-problem="${id}" data-context="${context}" data-owner="${current?.id || 'guest'}" aria-label="Код решения на C++ и CUDA" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off">${escape(draft.code)}</textarea></div></div><div class="editor-actions"><button class="text-link" data-action="reset-code">Восстановить шаблон</button><button class="btn secondary run-btn" data-action="run"><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M4 2.5v11l9-5.5z"/></svg>Проверить пример</button>${primaryAction}</div><div class="editor-status"><span class="status-left save-state" id="save-state">${M.storageError() ? 'Черновик только в этой вкладке' : 'Черновик сохранен'}</span><span class="status-right"><span class="cursor-position" aria-live="off"></span><span>CUDA / UTF-8</span></span></div></div><div id="run-result" class="run-result">${runResult(id, context)}</div>${view.undo[runKey(id, context)] ? '<div class="notice" id="reset-notice">Код заменен. <button class="text-link" data-action="undo-reset">Отменить</button></div>' : ''}<a href="#statement" class="back-to-statement" data-anchor="statement">К условию</a></section>`;
     const tabs = `<nav class="tabs problem-tabs" aria-label="Разделы задачи">${[['statement', 'Условие и решение'], ['submissions', contest ? 'Мои посылки в контесте' : 'Мои посылки'], ['leaders', 'Лидеры']].map(([value, label]) => link(problemUrl(id, context, value), label, 'tab' + (tab === value ? ' active' : ''))).join('')}</nav>`;
-    const metadata = `<div class="problem-meta"><span>${difficultyNames[problem.difficulty]}</span><span>Время: ${problem.limits.timeSeconds} с</span><span>Память GPU: ${problem.limits.memoryMb} MB</span></div>`;
+    const metadata = `<div class="problem-meta"><span>${difficultyTag(problem.difficulty)}</span><span>Время: ${problem.limits.timeSeconds} с</span><span>Память GPU: ${problem.limits.memoryMb} MB</span></div>`;
     return `<div class="breadcrumbs">${link(contest ? '/contest/' + context : '/problems', contest ? contest.title : 'Практика')}${contest && phase === 'finished' ? ' / Завершено' : ''}</div>${header(problem.code + '. ' + problem.title, '', tab === 'statement' ? '<a class="editor-anchor text-link" href="#editor" data-anchor="editor">К редактору</a>' : '')}${metadata}${tabs}${phase === 'finished' ? `<p class="notice">${practiceAvailable ? 'Соревнование завершено. Новые решения можно отправлять в практике.' : 'Соревнование завершено. Прием решений закрыт.'}</p>` : ''}${tab === 'statement' ? `<div class="problem-workspace">${statement}${editor}</div>` : tab === 'submissions' ? submissions(params, problem, context) : leaders(problem, context)}`;
   }
 
@@ -302,12 +367,15 @@
     const current = route();
     const path = current.path;
     let content;
-    if (path === '/problems') content = bank(current.params);
+    if (path === '/') content = mainPage();
+    else if (path === '/auth') content = bank(new URLSearchParams(), false);
+    else if (path === '/problems') content = bank(current.params);
     else if (path === '/submissions') content = submissions(current.params);
     else if (path.startsWith('/problem/')) content = problemScreen(decodeURIComponent(path.split('/')[2]), current.params);
     else if (path.startsWith('/submission/')) content = submissionScreen(path.split('/')[2]);
     else content = window.ExtraScreens.render(path, {M, user: M.user(), params: current.params, escape, header, link, view, renderList: listState}) || notFound();
     app.innerHTML = shell(path, content);
+    if (path === '/auth') openAuth(current.params.get('mode') || 'login', current.params.get('return') || location.hash.slice(1));
     if (M.storageError()) document.getElementById('content').insertAdjacentHTML('afterbegin', '<div class="error" role="alert">Хранилище браузера недоступно. Изменения сохранятся только до обновления страницы.</div>');
     document.title = 'GPU Forces - ' + (document.querySelector('h1')?.textContent || 'Платформа');
     document.querySelector('.prototype-tools')?.addEventListener('toggle', event => {view.previewOpen = event.target.open;});
@@ -359,8 +427,25 @@
   }
 
   function requestLogin(returnTo) {
-    M.setReturnTo(returnTo);
-    navigate(url('/auth', {return: returnTo}));
+    openAuth('login', returnTo || location.hash.slice(1) || '');
+  }
+
+  function openAuth(mode, returnTo) {
+    view.authMode = ['login', 'register', 'reset'].includes(mode) ? mode : 'login';
+    view.authReturn = returnTo || '';
+    const dialog = document.getElementById('auth-dialog');
+    dialog.innerHTML = window.ExtraScreens.authDialog({M, user: M.user(), params: new URLSearchParams(), escape, header, link, view, renderList: listState});
+    if (dialog.open) {
+      dialog.querySelector('.form input')?.focus({preventScroll: true});
+    } else {
+      dialog.showModal();
+      dialog.querySelector('.form input')?.focus({preventScroll: true});
+    }
+  }
+
+  function closeAuth() {
+    const dialog = document.getElementById('auth-dialog');
+    if (dialog.open) dialog.close();
   }
 
   function currentProblem() {
@@ -526,12 +611,24 @@
   }
 
   document.addEventListener('click', event => {
+    const authLink = event.target.closest('a[href^="#/auth"], a[href^="#auth"], a[href^="auth"]');
+    if (authLink) {
+      event.preventDefault();
+      const raw = authLink.getAttribute('href').replace(/^#/, '');
+      const sep = raw.indexOf('?');
+      const params = new URLSearchParams(sep < 0 ? '' : raw.slice(sep + 1));
+      openAuth(params.get('mode') || 'login', params.get('return') || location.hash.slice(1));
+      return;
+    }
     const anchor = event.target.closest('[data-anchor], .skip-link');
     if (anchor) {event.preventDefault(); const target = document.getElementById(anchor.dataset.anchor || 'content'); target?.scrollIntoView({behavior: 'smooth'}); target?.focus({preventScroll: true}); return;}
     const actionElement = event.target.closest('[data-action]');
     if (!actionElement) return;
     const action = actionElement.dataset.action;
     if (action === 'submit') sendSolution();
+    else if (action === 'signin') openAuth('login', location.hash.slice(1));
+    else if (action === 'close-auth') closeAuth();
+    else if (action === 'auth-mode') openAuth(actionElement.dataset.mode || 'login', view.authReturn);
     else if (action === 'add-contest-author') changeContestAuthor('add', actionElement.dataset.id);
     else if (action === 'remove-contest-author') changeContestAuthor('remove', actionElement.dataset.id);
     else if (action === 'reset-contest-filters') {
@@ -547,6 +644,10 @@
     else if (action === 'reset-code') {const {problem, context} = currentProblem(); view.undo[runKey(problem.id, context)] = M.resetDraft(problem.id, context); render();}
     else if (action === 'undo-reset') {const {problem, context} = currentProblem(); const key = runKey(problem.id, context); M.restoreDraft(problem.id, context, view.undo[key]); delete view.undo[key]; render();}
     else if (action === 'retry-list') {view.listState = 'filled'; render();}
+    else if (action === 'reset-contests-filter') {
+      const phase = route().params.get('phase') || 'now';
+      navigate(url('/contests', {phase: phase === 'now' ? null : phase}));
+    }
     else if (action === 'reconnect') {view.connection = 'online'; render();}
     else if (action === 'join-contest') {
       if (!M.user()) {requestLogin(location.hash.slice(1)); return;}
@@ -669,13 +770,14 @@
     event.preventDefault();
     const values = Object.fromEntries(new FormData(form));
     if (name === 'login' || name === 'register') {
-      const requestedReturn = route().params.get('return');
+      const requestedReturn = view.authReturn;
       if (requestedReturn?.startsWith('/') && !requestedReturn.startsWith('//')) M.setReturnTo(requestedReturn);
       const result = name === 'login' ? M.login(values.identifier) : M.register({handle: values.handle, email: values.email});
       if (!result.ok) {formError(result.error); return;}
       resetAccountViews();
       form.reset();
-      const target = M.takeReturnTo() || route().params.get('return') || '/profile';
+      closeAuth();
+      const target = M.takeReturnTo() || requestedReturn || '/profile';
       navigate(target.startsWith('/') && !target.startsWith('//') ? target : '/profile');
     } else if (name === 'reset') {
       const message = document.getElementById('form-message');
@@ -685,7 +787,7 @@
   });
 
   window.addEventListener('hashchange', () => {saveEditor(); lastPhase = null; render(); document.getElementById('content')?.focus({preventScroll: true}); window.scrollTo({top: 0, behavior: 'instant'});});
-  if (!location.hash) history.replaceState(null, '', '#/problems');
+  if (!location.hash) history.replaceState(null, '', '#/');
   render();
   M.submissions().filter(item => pending.includes(item.status)).forEach(item => simulate(item.id));
   setInterval(updateCountdowns, 1000);

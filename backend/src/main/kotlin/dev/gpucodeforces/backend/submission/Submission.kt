@@ -231,4 +231,21 @@ interface SubmissionRepository : JpaRepository<Submission, UUID> {
         """,
     )
     fun search(userId: UUID, problemId: String?, status: SubmissionStatus?, contextKey: String?): List<SubmissionRow>
+
+    /**
+     * Newest submissions of all users, without code and diagnostic. A virtual attempt is seen by its owner alone, so
+     * its submissions are left out; the condition is spelled as in submissions_feed_idx, which serves this query.
+     */
+    @Query(
+        """
+        SELECT new dev.gpucodeforces.backend.submission.SubmissionRow(
+            s.id, s.userId, s.problemId, s.problemVersionId, s.contestId, s.status, s.score, s.scoreType, s.judgeHash, s.processor,
+            s.language, s.createdAt, s.benchmarkEnvironmentKey, s.contextKey, s.finishedAt)
+        FROM Submission s
+        WHERE s.contextKey NOT LIKE 'virtual:%'
+        ORDER BY s.createdAt DESC
+        LIMIT :limit OFFSET :offset
+        """,
+    )
+    fun findLatest(offset: Int, limit: Int): List<SubmissionRow>
 }

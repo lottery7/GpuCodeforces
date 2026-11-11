@@ -7,6 +7,7 @@ import dev.gpucodeforces.backend.api.model.ContestInput
 import dev.gpucodeforces.backend.api.model.GetContestStandings200ResponseInner
 import dev.gpucodeforces.backend.api.model.GetProblem200Response
 import dev.gpucodeforces.backend.api.model.GetUserProfile200Response
+import dev.gpucodeforces.backend.api.model.ListLatestSubmissions200Response
 import dev.gpucodeforces.backend.api.model.ListProblemLeaders200ResponseInner
 import dev.gpucodeforces.backend.api.model.ListProblems200Response
 import dev.gpucodeforces.backend.api.model.ListSubmissions200Response
@@ -220,6 +221,9 @@ class SubmissionIntegrationTest {
         processor = ProcessorRun(processor, "test toolchain", "test model", "executor-1"),
     )
 
+    private fun latestSubmissions(query: String): List<Submission> = client.get().uri("/submissions/latest?$query").exchange()
+        .expectStatus().isOk.expectBody(ListLatestSubmissions200Response::class.java).returnResult().responseBody!!.items
+
     @Test
     @AllowFullScan("problems", "FROM gpucodeforces\\.problems p", "Exact catalogue totals and tags inspect current ids; only page metadata reaches the application")
     fun `submit, judge events through RabbitMQ, history, results, recheck, contest, example and console`() {
@@ -267,8 +271,18 @@ class SubmissionIntegrationTest {
                 .expectBody(ListSubmissions200Response::class.java).returnResult().responseBody!!.total,
         ).isEqualTo(1)
 
+        // Latest submissions of all users, newest first, without code, limited by limit.
+        val latest = latestSubmissions("limit=2")
+        assertThat(latest.map { it.id }).containsExactly(second.id, first.id)
+        assertThat(latest.first().code).isNull()
+        assertThat(latest.first().user.id).isEqualTo(alice.id)
+        assertThat(latestSubmissions("offset=1&limit=1").map { it.id }).containsExactly(first.id)
+
         val bank = client.get().uri("/problems").cookie("session", aliceCookie).exchange()
             .expectBody(ListProblems200Response::class.java).returnResult().responseBody!!
+        assertThat(bank.solvedCount).isEqualTo(1)
+        assertThat(bank.totalCount).isEqualTo(bank.items.size)
+        assertThat(bank.streak).isEqualTo(1)
         val vectorAdd = bank.items.single { it.id == "vector_add" }
         assertThat(vectorAdd.solved).isTrue()
         assertThat(vectorAdd.solvedCount).isEqualTo(1)
@@ -475,6 +489,8 @@ class SubmissionIntegrationTest {
         client.get().uri("/virtual/${virtual.id}").cookie("session", victimCookie).exchange().expectStatus().isForbidden
         val (virtualSubmission, virtualRequest) = training("virtual:${virtual.id}")
         client.get().uri("/submissions/${virtualSubmission.id}").cookie("session", victimCookie).exchange().expectStatus().isForbidden
+        // the public feed keeps a virtual attempt as private as the submission page does
+        assertThat(latestSubmissions("limit=100").map { it.id }).doesNotContain(virtualSubmission.id)
         @Language("SQL") val expire = "UPDATE gpucodeforces.virtual_participations SET started_at = now() - interval '2 hours', ends_at = now() - interval '1 second' WHERE id = ?"
         jdbc.update(expire, UUID.fromString(virtual.id))
         client.post().uri("/submissions").cookie("session", authorCookie).contentType(MediaType.APPLICATION_JSON)

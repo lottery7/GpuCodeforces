@@ -93,7 +93,8 @@ class ProblemsController(
         val measured = problems.associate { it.version.id to referenceViews(it.version, problemContext) }
         val results = results(problemContext, problems, measured, subject?.id)
         val items = problems.map { it.toApiModel(results.getValue(it.version.problemId), measured.getValue(it.version.id)) }
-        return ResponseEntity.ok(ListProblems200Response(items, page.total, page.tags))
+        val streak = subject?.id?.let(submissionStats::streak) ?: 0
+        return ResponseEntity.ok(ListProblems200Response(items, page.total, page.tags, page.solvedCount, page.poolSize, streak))
     }
 
     override fun getProblem(id: String, context: String): ResponseEntity<GetProblem200Response> {
