@@ -13,6 +13,26 @@ class SubmissionStatsTest {
     private val stats = SubmissionStats(repository)
 
     @Test
+    fun `duel record scope preserves its captured environment and deadline after the platform profile changes`() {
+        val user = UUID.randomUUID()
+        val contest = UUID.randomUUID()
+        val start = Instant.parse("2026-01-01T12:00:00Z")
+        val end = start.plusSeconds(3600)
+        val scope = ResultScope(contest, mapOf("task" to "hash"), "new-profile", "original-environment", start, end)
+        fun accepted(time: String, at: Instant, environment: String) = AcceptedSubmission(
+            UUID.randomUUID(), user, "task", contest, "hash", "original-profile", BigDecimal(time), at, environment,
+        )
+        val counted = accepted("4", start, "original-environment")
+        val after = accepted("1", end, "original-environment")
+        val before = accepted("1", start.minusNanos(1), "original-environment")
+        val newEnvironment = accepted("1", start, "new-environment")
+        given(repository.findWithStatus(SubmissionStatus.ACCEPTED, listOf("task"))).willReturn(listOf(counted, before, after, newEnvironment))
+
+        assertThat(stats.bestTime(user, "task", scope)).isEqualByComparingTo("4")
+        assertThat(stats.leaders("task", scope, 20).single().submission).isSameAs(counted)
+    }
+
+    @Test
     fun `records exclude previous hardware and mock results under the same profile`() {
         val user = UUID.randomUUID()
         val scope = ResultScope(null, mapOf("optimization" to "hash"), "gpu", "real-current")
@@ -62,5 +82,31 @@ class SubmissionStatsTest {
 
         assertThat(stats.firstAcceptedInContest(contest))
             .containsEntry(user, mapOf("coding" to coding.createdAt, "guess" to guess.createdAt))
+    }
+
+    @Test
+    fun `duel results use the fastest accepted pinned solution inside the contest window and captured cohort`() {
+        val user = UUID.randomUUID()
+        val contest = UUID.randomUUID()
+        val version = UUID.randomUUID()
+        val start = Instant.parse("2026-01-01T12:00:00Z")
+        val end = start.plusSeconds(3600)
+        val scope = ResultScope(contest, mapOf("coding" to "hash"), "current-other-profile", "captured")
+        fun submission(
+            time: String?, at: Instant = start.plusSeconds(60), environment: String? = "captured",
+            versionId: UUID = version, problem: String = "coding", hash: String = "hash", contestId: UUID = contest,
+        ) = AcceptedSubmission(UUID.randomUUID(), user, problem, contestId, hash, "original-profile", time?.let(::BigDecimal), at, environment, versionId)
+        val early = submission("4", at = start)
+        val later = submission("2", at = start.plusSeconds(300))
+        val lastInstant = submission("1.5", at = end.minusNanos(1))
+        val ignored = listOf(
+            submission("0.01", at = start.minusNanos(1)), submission("0.02", at = end),
+            submission("0.03", environment = "other"), submission("0.04", versionId = UUID.randomUUID()),
+            submission("0.05", problem = "other"), submission("0.06", hash = "other"),
+            submission("0.07", contestId = UUID.randomUUID()), submission(null),
+        )
+        given(repository.findWithStatusInContest(SubmissionStatus.ACCEPTED, contest)).willReturn(ignored + early + later + lastInstant)
+
+        assertThat(stats.duelBestTimes(scope, version, start, end)).containsExactlyEntriesOf(mapOf(user to BigDecimal("1.5")))
     }
 }

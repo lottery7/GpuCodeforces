@@ -70,7 +70,7 @@ class ProblemsController(
         val tags = pool.flatMap { it.version.tags }.distinct().sorted()
         if (format != null && format !in ProblemFormatData.FORMATS) throw BadRequestException("Неизвестный формат")
         val filtered = problemService.filter(pool, q, difficulty, tag).filter { format == null || it.version.format == format }
-        val measured = filtered.associate { it.version.id to references.view(it.version) }
+        val measured = filtered.associate { it.version.id to reference(it.version, problemContext) }
         val environmentKey = references.environmentKey() ?: "unavailable"
         val results = filtered.groupBy { problem ->
             if (problem.version.format == ProblemFormatData.STANDARD) environmentKey else measured[problem.version.id]?.environmentKey ?: "unavailable"
@@ -90,10 +90,12 @@ class ProblemsController(
         val version = problem.version
         val spec = problemCatalog.spec(version)
         val format = problemCatalog.format(version)
-        val reference = references.view(version)
+        val reference = reference(version, problemContext)
         val environmentKey = if (version.format == ProblemFormatData.STANDARD) references.environmentKey() else reference?.environmentKey
         val summary = version.toApiModel(submissionStats.problemResults(scope(problemContext, listOf(problem), environmentKey ?: "unavailable"), viewer?.id).getValue(id), reference)
-        val gpuName = references.environmentName() ?: gpuProperties.name
+        val frozenDuel = (problemContext as? ProblemContext.InContest)?.contest?.takeIf { it.format == "duel" && it.benchmarkEnvironmentKey != null }
+        val gpuName = reference?.gpuName ?: frozenDuel?.gpu ?: references.environmentName() ?: gpuProperties.name
+        val synthetic = reference?.synthetic ?: judgeProperties.synthetic
         val guessSubmissionId = if (viewer != null && version.format == ProblemFormatData.GUESS && reference?.status == "ready" && reference.key != null) {
             submissionRepository.findGuess(viewer.id, version.id, (problemContext as? ProblemContext.InContest)?.contest?.id, reference.key)?.id?.toString()
         } else null
@@ -107,7 +109,7 @@ class ProblemsController(
                 BigDecimal.valueOf(spec.limits.timeLimitMs).movePointLeft(3),
                 // The page shows it as GPU memory; without a GPU limit the solution is bounded by its RAM limit.
                 (spec.limits.gpuMemoryLimitMb ?: spec.limits.memoryLimitMb).toInt(),
-                environmentMarkdown(spec, gpuName.takeUnless { judgeProperties.synthetic }),
+                environmentMarkdown(spec, gpuName.takeUnless { synthetic }),
             ).format(GetProblem200Response.FormatEnum.fromValue(version.format))
                 .versionId(version.id.toString())
                 .baselineTimeMs(summary.baselineTimeMs)
@@ -115,7 +117,7 @@ class ProblemsController(
                 .firstCode(format.firstCode)
                 .secondCode(format.secondCode)
                 .guessSubmissionId(guessSubmissionId)
-                .benchmark(benchmark(spec, format, gpuName, judgeProperties.synthetic)),
+                .benchmark(benchmark(spec, format, gpuName, synthetic)),
         )
     }
 
@@ -156,12 +158,19 @@ class ProblemsController(
         )
     }
 
-    private fun scope(context: ProblemContext, problems: List<ContextProblem>, environmentKey: String = references.environmentKey() ?: "unavailable") = ResultScope(
-        (context as? ProblemContext.InContest)?.contest?.id,
-        problems.associate { it.version.problemId to it.version.judgeHash },
-        gpuProperties.profile,
-        environmentKey,
-    )
+    private fun reference(version: ProblemVersion, context: ProblemContext): ReferenceMeasurementView? {
+        val contest = (context as? ProblemContext.InContest)?.contest?.takeIf { it.format == "duel" }
+        return contest?.benchmarkEnvironmentKey?.let { references.viewInEnvironment(version, it) } ?: references.view(version)
+    }
+
+    private fun scope(context: ProblemContext, problems: List<ContextProblem>, environmentKey: String = references.environmentKey() ?: "unavailable"): ResultScope {
+        val contest = (context as? ProblemContext.InContest)?.contest
+        val duel = contest?.takeIf { it.format == "duel" }
+        return ResultScope(
+            contest?.id, problems.associate { it.version.problemId to it.version.judgeHash }, gpuProperties.profile,
+            duel?.benchmarkEnvironmentKey ?: environmentKey, duel?.startAt, duel?.endAt,
+        )
+    }
 
     private fun sorted(items: List<ProblemApiModel>, sort: String): List<ProblemApiModel> {
         val byCode = compareBy<ProblemApiModel> { it.code }

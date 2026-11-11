@@ -92,6 +92,8 @@ class SubmissionViews(
         val environmentKey = references.environmentKey()
         return rows.map { row ->
             val contest = row.contestId?.let { contests.getValue(it) }
+            val duel = contest?.takeIf { it.format == "duel" }
+            val comparableEnvironment = duel?.benchmarkEnvironmentKey ?: environmentKey
             // Accepted results are comparable while the context still judges this problem the same way.
             val contextHash = comparableHashes.getOrPut(row.problemId to row.contestId) { contextJudgeHash(row.problemId, row.contestId) }
             SubmissionApiModel(
@@ -104,8 +106,9 @@ class SubmissionViews(
                 row.createdAt.atOffset(ZoneOffset.UTC),
                 SubmissionApiModel.StatusEnum.fromValue(row.status.value),
                 row.timeMs,
-                row.status == SubmissionStatus.ACCEPTED && row.timeMs != null && row.judgeHash == contextHash && row.gpuProfile == gpuProperties.profile &&
-                    environmentKey != null && row.benchmarkEnvironmentKey == environmentKey,
+                row.status == SubmissionStatus.ACCEPTED && row.timeMs != null && row.judgeHash == contextHash &&
+                    comparableEnvironment != null && row.benchmarkEnvironmentKey == comparableEnvironment &&
+                    (duel == null || !row.createdAt.isBefore(duel.startAt) && row.createdAt.isBefore(duel.endAt)),
             ).format(SubmissionApiModel.FormatEnum.fromValue(versions.getValue(row.problemVersionId).format))
         }
     }

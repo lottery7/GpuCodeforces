@@ -26,15 +26,16 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/RuntimeInfo'}
         default: {$ref: '#/components/responses/Error'}
-  /duels/topics:
+  /duels/problems:
     get:
-      operationId: listDuelTopics
+      operationId: listDuelProblems
+      security: [{session: []}]
       responses:
         '200':
-          description: Темы опубликованных задач с отправкой кода.
+          description: Опубликованные задачи с отправкой кода для выбора в приглашении.
           content:
             application/json:
-              schema: {type: array, items: {type: string}}
+              schema: {type: array, items: {$ref: '#/components/schemas/DuelProblem'}}
         default: {$ref: '#/components/responses/Error'}
   /duels/current:
     get:
@@ -42,13 +43,29 @@ paths:
       security: [{session: []}]
       responses:
         '200':
-          description: Свой поиск, исходящее приглашение или начавшаяся дуэль.
+          description: Последний свой незавершенный поиск или исходящее приглашение.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/DuelRequest'}
-        '204': {description: Активного запроса или дуэли нет.}
+        '204': {description: Ожидающего запроса нет.}
         default: {$ref: '#/components/responses/Error'}
   /duels:
+    get:
+      operationId: listDuels
+      security: [{session: []}]
+      parameters:
+        - name: phase
+          in: query
+          schema: {type: string, enum: [active, finished, all], default: active}
+        - {$ref: '#/components/parameters/Offset'}
+        - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: Свои дуэли и приглашения; новые первыми, одна запись на комнату.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DuelPage'}
+        default: {$ref: '#/components/responses/Error'}
     post:
       operationId: createDuel
       security: [{session: []}]
@@ -509,6 +526,7 @@ paths:
     get:
       operationId: listContests
       summary: Список соревнований
+      description: Только обычные контесты. Свои дуэли и приглашения доступны через GET /duels.
       parameters:
         - {$ref: '#/components/parameters/Query'}
         - {name: phase, in: query, schema: {type: string, enum: [upcoming, live, finished]}}
@@ -579,6 +597,17 @@ paths:
       responses:
         '204': {description: Пользователь зарегистрирован}
         default: {$ref: '#/components/responses/Error'}
+  /contests/{id}/surrender:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      operationId: surrenderContest
+      summary: Сдаться в дуэли
+      description: Только участник идущей дуэли. Дуэль немедленно завершается поражением сдавшегося. Повтор своей сдачи не меняет результат.
+      security: [{session: []}]
+      responses:
+        '204': {description: Сдача сохранена; можно открыть другую дуэль.}
+        default: {$ref: '#/components/responses/Error'}
   /contests/{id}/standings:
     parameters:
       - {$ref: '#/components/parameters/Id'}
@@ -586,9 +615,11 @@ paths:
       operationId: getContestStandings
       summary: Таблица контеста
       description: |
-        Сначала число решенных задач, затем меньшее суммарное время сдачи. Задача решена, если принята хотя бы одна
+        В дуэли место определяется наименьшим временем принятого решения общей задачи среди посылок, отправленных
+        за время дуэли. Время отправки не используется как дополнительный критерий. Сдавшийся участник проигрывает.
+        В обычном контесте сначала число решенных задач, затем меньшее суммарное время сдачи. Задача решена, если принята хотя бы одна
         посылка (верный ответ в пределах лимита времени); время сдачи задачи - от начала контеста до первой принятой
-        посылки. Время работы решения на GPU и неверные попытки на место не влияют. Равные результаты имеют одинаковое
+        посылки. Время работы решения на GPU и неверные попытки на место обычного контеста не влияют. Равные результаты имеют одинаковое
         место. Правильный ответ guess считается принятой посылкой без замера GPU. До начала список пуст.
       responses:
         '200':
@@ -602,6 +633,8 @@ paths:
                   required: [rank, user, solved, totalSeconds, times]
                   properties:
                     rank: {type: integer}
+                    bestTimeMs: {type: number, nullable: true, description: Лучшее время кода в дуэли; null без принятого решения.}
+                    surrendered: {type: boolean, description: Участник сдался в этой дуэли.}
                     user: {$ref: '#/components/schemas/User'}
                     solved: {type: integer}
                     totalSeconds: {type: integer, description: Сумма времен сдачи решенных задач.}
@@ -693,14 +726,14 @@ components:
       enum: [queued, invited, matched, declined, cancelled, expired]
     CreateDuelRequest:
       type: object
-      required: [mode, topics]
+      required: [mode]
       properties:
         mode: {$ref: '#/components/schemas/DuelMode'}
         opponentHandle: {type: string, minLength: 1, maxLength: 32}
-        topics: {type: array, uniqueItems: true, maxItems: 20, items: {type: string}}
+        problemId: {type: string, nullable: true, description: Конкретная задача для приглашения по нику; null означает случайную. В random не задается.}
     DuelRequest:
       type: object
-      required: [id, mode, status, creator, opponent, topics, createdAt, expiresAt, contestId]
+      required: [id, mode, status, creator, opponent, createdAt, expiresAt, contestId]
       properties:
         id: {type: string}
         mode: {$ref: '#/components/schemas/DuelMode'}
@@ -710,13 +743,30 @@ components:
           allOf:
             - {$ref: '#/components/schemas/User'}
           nullable: true
-        topics: {type: array, items: {type: string}}
+        problemId: {type: string, nullable: true}
+        problemTitle: {type: string, nullable: true}
+        difficulty: {type: string, enum: [easy, medium, hard], nullable: true}
+        startAt: {type: string, format: date-time, nullable: true}
+        surrenderedUserId: {type: string, nullable: true}
         createdAt: {type: string, format: date-time}
         expiresAt: {type: string, format: date-time}
         contestId: {type: string, nullable: true}
+    DuelProblem:
+      type: object
+      required: [id, title, difficulty]
+      properties:
+        id: {type: string}
+        title: {type: string}
+        difficulty: {type: string, enum: [easy, medium, hard]}
+    DuelPage:
+      type: object
+      required: [items, total]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/DuelRequest'}}
+        total: {type: integer}
     NotificationType:
       type: string
-      enum: [duel_invitation, duel_started, duel_declined, duel_cancelled]
+      enum: [duel_invitation, duel_started, duel_declined, duel_cancelled, duel_surrendered]
     Notification:
       type: object
       required: [id, type, message, duelRequestId, duelStatus, contestId, createdAt, readAt]
@@ -861,6 +911,8 @@ components:
         format: {type: string, enum: [standard, duel], default: standard}
         challengerId: {type: string, nullable: true, description: Инициатор дуэли; null у обычного контеста.}
         opponentId: {type: string, nullable: true, description: Приглашенный соперник; null у обычного контеста.}
+        surrenderedUserId: {type: string, nullable: true, description: Сдавшийся участник дуэли.}
+        resultsPending: {type: boolean, description: После конца еще ожидаются проверки своевременно отправленных посылок. При сдаче false.}
         startAt: {type: string, format: date-time}
         endAt: {type: string, format: date-time}
         authors: {type: array, items: {$ref: '#/components/schemas/User'}}

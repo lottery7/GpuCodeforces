@@ -17,7 +17,8 @@ function NotificationItem({ item, close }: { item: AppNotification; close: () =>
       cache.setQueriesData({ queryKey: ['duel-request', result.id] }, result);
       void cache.invalidateQueries({ queryKey: ['notifications'] });
       void cache.invalidateQueries({ queryKey: ['current-duel'] });
-      if (result.status === 'matched' && result.contestId) { close(); navigate(`/contest/${encodeURIComponent(result.contestId)}`); }
+      void cache.invalidateQueries({ queryKey: ['duels'] });
+      if (result.status === 'matched' && result.contestId && Date.parse(result.expiresAt) > Date.now()) { close(); navigate(`/contest/${encodeURIComponent(result.contestId)}`); }
     },
   });
   const status = action.data?.status ?? item.duelStatus;

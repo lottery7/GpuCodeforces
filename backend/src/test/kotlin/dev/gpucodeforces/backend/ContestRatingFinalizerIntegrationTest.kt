@@ -2,6 +2,8 @@ package dev.gpucodeforces.backend
 
 import dev.gpucodeforces.backend.api.model.GetUserProfile200Response
 import dev.gpucodeforces.backend.contest.Contest
+import dev.gpucodeforces.backend.contest.ContestProblem
+import dev.gpucodeforces.backend.contest.ContestProblemRepository
 import dev.gpucodeforces.backend.contest.ContestRegistration
 import dev.gpucodeforces.backend.contest.ContestRegistrationRepository
 import dev.gpucodeforces.backend.contest.ContestRepository
@@ -44,6 +46,9 @@ class ContestRatingFinalizerIntegrationTest {
 
     @Autowired
     lateinit var contestRegistrationRepository: ContestRegistrationRepository
+
+    @Autowired
+    lateinit var contestProblemRepository: ContestProblemRepository
 
     @Autowired
     lateinit var userRepository: UserRepository
@@ -148,6 +153,42 @@ class ContestRatingFinalizerIntegrationTest {
         val afterGrace = contest.endAt.plus(RatingFinalizationService.VERDICT_GRACE).plusSeconds(1)
         assertThat(ratingFinalizationService.finalize(contest.id, afterGrace)).isTrue()
         assertThat(ratingHistoryRepository.findByIdUserId(dave.id)).hasSize(1)
+    }
+
+    @Test
+    fun `surrender rates both registered duel participants even when neither submitted code`() {
+        fun player(): User {
+            val handle = "forfeit_${UUID.randomUUID().toString().take(8)}"
+            return userRepository.save(User(handle, "$handle@example.com", "hash"))
+        }
+        val loser = player()
+        val winner = player()
+        val now = Instant.now()
+        val contest = contestRepository.save(Contest(
+            id = UUID.randomUUID(), title = "Дуэль со сдачей", startAt = now.minusSeconds(3600), endAt = now.plusSeconds(3600),
+            gpu = "NVIDIA GeForce RTX 3060", format = "duel", challengerId = loser.id, opponentId = winner.id,
+            benchmarkEnvironmentKey = "captured-environment",
+        ))
+        val version = problemCatalog.currentVersion("vector_add")!!
+        contestProblemRepository.save(ContestProblem(contest.id, version.problemId, 0, version.id))
+        listOf(loser, winner).forEach { contestRegistrationRepository.save(ContestRegistration(contest.id, it.id)) }
+        contest.surrenderedUserId = loser.id
+        contest.endAt = now.minusSeconds(1)
+        contestRepository.save(contest)
+
+        assertThat(ratingFinalizationService.finalize(contest.id, now)).isTrue()
+
+        val winnerHistory = ratingHistoryRepository.findByIdUserId(winner.id).single()
+        val loserHistory = ratingHistoryRepository.findByIdUserId(loser.id).single()
+        assertThat(winnerHistory.rank).isEqualTo(1)
+        assertThat(winnerHistory.ratingDelta).isPositive()
+        assertThat(loserHistory.rank).isEqualTo(2)
+        assertThat(loserHistory.ratingDelta).isNegative()
+        assertThat(userRepository.findById(winner.id).orElseThrow().rating).isEqualTo(winnerHistory.ratingAfter)
+        assertThat(userRepository.findById(loser.id).orElseThrow().rating).isEqualTo(loserHistory.ratingAfter)
+        assertThat(ratingFinalizationService.finalize(contest.id, now)).isTrue()
+        assertThat(ratingHistoryRepository.findByIdUserId(winner.id)).hasSize(1)
+        assertThat(ratingHistoryRepository.findByIdUserId(loser.id)).hasSize(1)
     }
 
     companion object {

@@ -1,14 +1,17 @@
 package dev.gpucodeforces.backend.contest
 
 import dev.gpucodeforces.backend.api.model.GetContestStandings200ResponseInner
+import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
 import dev.gpucodeforces.backend.common.BadRequestException
-import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.common.ForbiddenException
+import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.common.NotFoundApiException
 import dev.gpucodeforces.backend.common.UnauthorizedException
 import dev.gpucodeforces.backend.common.toUuidOrBadRequest
 import dev.gpucodeforces.backend.common.toUuidOrNotFound
 import dev.gpucodeforces.backend.problem.ProblemCatalog
+import dev.gpucodeforces.backend.rating.RatingFinalizationService
+import dev.gpucodeforces.backend.submission.ResultScope
 import dev.gpucodeforces.backend.submission.SubmissionStats
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.backend.user.UserRepository
@@ -16,6 +19,7 @@ import dev.gpucodeforces.backend.user.toApiModel
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.math.BigDecimal
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -30,6 +34,7 @@ class ContestService(
     private val problemCatalog: ProblemCatalog,
     private val gpuProperties: GpuProperties,
     private val submissionStats: SubmissionStats,
+    private val references: ReferenceMeasurements,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -38,7 +43,7 @@ class ContestService(
         val now = Instant.now()
         val trimmed = query?.trim()?.lowercase().orEmpty()
         val filtered = contestRepository.findAll().filter { contest ->
-            (phase == null || contest.phaseAt(now).value == phase) &&
+            contest.format == "standard" && (phase == null || contest.phaseAt(now).value == phase) &&
                 (!mine || contest.authors.any { it.id == viewer!!.id }) &&
                 (
                     trimmed.isEmpty() ||
@@ -112,15 +117,10 @@ class ContestService(
         }
     }
 
-    /**
-     * Registered participants by solved problems, then by the smaller total solve time. A problem is solved by an
-     * accepted submission (correct within the time limit); its solve time runs from the contest start to the
-     * creation of the first accepted submission, so neither the judge queue nor the measured GPU time matters.
-     * Wrong attempts cost nothing. Equal results share a place.
-     */
     fun standings(id: String): List<GetContestStandings200ResponseInner> {
         val contest = get(id)
         if (contest.phaseAt(Instant.now()) == ContestPhase.UPCOMING) return emptyList()
+        if (contest.format == "duel") return duelStandings(contest)
         val solvedAt = submissionStats.firstAcceptedInContest(contest.id)
         val userIds = contestRegistrationRepository.findByIdContestId(contest.id).map { it.id.userId }
         val rows = userRepository.findAllById(userIds).map { participant ->
@@ -135,14 +135,47 @@ class ContestService(
         }
     }
 
+    fun resultsPending(contest: Contest, now: Instant): Boolean =
+        contest.format == "duel" && contest.surrenderedUserId == null && contest.phaseAt(now) == ContestPhase.FINISHED &&
+            contest.ratingAppliedAt == null && now.isBefore(contest.endAt.plus(RatingFinalizationService.VERDICT_GRACE)) &&
+            submissionStats.pendingInContest(contest.id) > 0
+
+    private fun duelStandings(contest: Contest): List<GetContestStandings200ResponseInner> {
+        val problem = problemsOf(contest.id).singleOrNull() ?: throw NotFoundApiException("Общая задача дуэли не найдена")
+        val version = problem.problemVersionId?.let { problemCatalog.versions(listOf(it))[it] }
+            ?: problemCatalog.currentVersion(problem.id.problemId) ?: throw NotFoundApiException("Версия задачи дуэли не найдена")
+        val times = submissionStats.duelBestTimes(
+            ResultScope(
+                contest.id, mapOf(version.problemId to version.judgeHash), gpuProperties.profile,
+                contest.benchmarkEnvironmentKey ?: references.environmentKey(),
+            ),
+            version.id, contest.startAt, contest.endAt,
+        )
+        val participants = listOfNotNull(contest.challengerId, contest.opponentId).distinct()
+        val rows = userRepository.findAllById(participants).map { user ->
+            DuelStanding(user, times[user.id], contest.surrenderedUserId == user.id)
+        }
+        val order = compareBy<DuelStanding> { it.surrendered }.thenBy(nullsLast<BigDecimal>()) { it.bestTimeMs }
+        return rows.sortedWith(order.thenBy { it.user.handle.lowercase() }).map { row ->
+            val rank = 1 + rows.count { order.compare(it, row) < 0 }
+            GetContestStandings200ResponseInner(rank, row.user.toApiModel(), if (row.bestTimeMs != null) 1 else 0, 0, emptyMap())
+                .bestTimeMs(row.bestTimeMs).surrendered(row.surrendered)
+        }
+    }
+
     fun buildRulesMarkdown(contest: Contest, problems: List<ContestProblem>, viewer: User?): String {
-        val header = "## Правила\n\n" +
-            (if (contest.format == "duel") "Дуэль двух участников. " else "") +
+        val header = "## Правила\n\n" + if (contest.format == "duel") {
+            "Побеждает участник с меньшим лучшим временем принятого решения. Учитываются посылки общей задачи, " +
+                "отправленные от начала до конца дуэли в одном окружении проверки. Время отправки и неверные попытки " +
+                "не влияют на место. Принятое решение побеждает отсутствие решения; равные времена или отсутствие " +
+                "решений у обоих дают ничью. Сдавшийся участник проигрывает независимо от результатов, соперник побеждает."
+        } else {
             "Задача решена, если принята хотя бы одна посылка: верный ответ на всех тестах в пределах лимита времени. " +
-            "Правильный ответ в угадывании считается принятой посылкой. " +
-            "Место определяется числом решённых задач, затем меньшим суммарным временем сдачи. Время сдачи задачи - " +
-            "от начала контеста до отправки первой принятой посылки; длительность проверки, время работы решения на GPU " +
-            "и неверные попытки на место не влияют. Равные результаты делят место."
+                "Правильный ответ в угадывании считается принятой посылкой. " +
+                "Место определяется числом решённых задач, затем меньшим суммарным временем сдачи. Время сдачи задачи - " +
+                "от начала контеста до отправки первой принятой посылки; длительность проверки, время работы решения на GPU " +
+                "и неверные попытки на место не влияют. Равные результаты делят место."
+        }
         val isAuthor = viewer != null && contest.authors.any { it.id == viewer.id }
         if (contest.phaseAt(Instant.now()) == ContestPhase.UPCOMING && !isAuthor) return header
         val versions = problemCatalog.versions(problems.mapNotNull { it.problemVersionId })
@@ -177,3 +210,5 @@ class ContestService(
         )
     }
 }
+
+private class DuelStanding(val user: User, val bestTimeMs: BigDecimal?, val surrendered: Boolean)

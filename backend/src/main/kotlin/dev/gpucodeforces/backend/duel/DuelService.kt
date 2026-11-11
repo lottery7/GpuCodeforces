@@ -1,9 +1,11 @@
 package dev.gpucodeforces.backend.duel
 
+import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
 import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.common.ForbiddenException
 import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.common.NotFoundApiException
+import dev.gpucodeforces.backend.common.ServiceUnavailableException
 import dev.gpucodeforces.backend.common.toUuidOrNotFound
 import dev.gpucodeforces.backend.contest.Contest
 import dev.gpucodeforces.backend.contest.ContestProblem
@@ -24,10 +26,11 @@ import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 
+data class DuelList(val items: List<DuelRequest>, val total: Int)
+
 @Service
 class DuelService(
     private val requests: DuelRequestRepository,
-    private val activeUsers: ActiveDuelRepository,
     private val matchmakingLock: MatchmakingLockRepository,
     private val users: UserRepository,
     private val catalog: ProblemCatalog,
@@ -36,66 +39,76 @@ class DuelService(
     private val registrations: ContestRegistrationRepository,
     private val notifications: NotificationRepository,
     private val gpu: GpuProperties,
+    private val references: ReferenceMeasurements,
 ) {
-    fun topics(): List<String> = codingPool().flatMap { it.tags }.distinct().sortedBy { it.lowercase() }
+    fun problems(): List<ProblemVersion> = codingPool().sortedWith(compareBy<ProblemVersion> { it.code }.thenBy { it.title }.thenBy { it.problemId })
 
     @Transactional
-    fun create(mode: String, selectedTopics: Collection<String>, opponentHandle: String?, creator: User): DuelRequest {
+    fun create(mode: String, opponentHandle: String?, problemId: String?, creator: User): DuelRequest {
         val now = lockAndExpire()
         if (mode !in setOf("random", "invite")) throw BadRequestException("Неизвестный способ поиска соперника")
-        if (activeRequest(creator.id) != null) throw BadRequestException("Завершите текущую дуэль или отмените поиск")
-        val pool = codingPool()
-        val knownTopics = pool.flatMap { it.tags }.associateBy { it.lowercase() }
-        if (selectedTopics.size > 20) throw BadRequestException("Можно выбрать не больше 20 тем")
-        val topics = selectedTopics.map { topic ->
-            knownTopics[topic.trim().lowercase()] ?: throw BadRequestException("Тема $topic недоступна для дуэли")
-        }.distinct()
-        val candidates = pool.filter { matchesTopics(it, topics) }
-        if (candidates.isEmpty()) throw BadRequestException("Нет доступных задач по выбранным темам")
+        if (mode == "random" && (opponentHandle != null || problemId != null)) {
+            throw BadRequestException("Случайный поиск сам выбирает соперника и задачу")
+        }
+        if (mode == "random") {
+            requests.findByCreatorIdAndModeAndStatus(creator.id, "random", "queued")?.let {
+                matchWaiting(now)
+                return it
+            }
+        }
+        val selected = problemId?.let {
+            catalog.currentVersion(it)?.takeIf { version -> !version.draft && version.format != "guess" }
+                ?: throw BadRequestException("Задача недоступна для дуэли")
+        }
+        if (selected == null && codingPool().isEmpty()) throw BadRequestException("Нет доступных задач для дуэли")
         val opponent = if (mode == "invite") {
             val handle = opponentHandle?.trim()?.takeIf { it.isNotEmpty() } ?: throw BadRequestException("Укажите ник соперника")
             users.findByHandleIgnoreCase(handle)?.also {
                 if (it.id == creator.id) throw BadRequestException("Нельзя вызвать на дуэль себя")
             } ?: throw BadRequestException("Пользователь с таким ником не найден")
-        } else {
-            if (opponentHandle != null) throw BadRequestException("Ник соперника не нужен для случайного поиска")
-            null
+        } else null
+        if (opponent != null) {
+            requests.findByCreatorIdAndStatusInOrderByCreatedAtDesc(creator.id, WAITING)
+                .firstOrNull { it.status == "invited" && it.opponentId == opponent.id && it.problemVersionId == selected?.id }
+                ?.let { return it }
         }
         val request = requests.save(DuelRequest(
             id = UUID.randomUUID(), mode = mode, status = if (mode == "random") "queued" else "invited",
-            creatorId = creator.id, opponentId = opponent?.id, topics = topics, createdAt = now,
-            expiresAt = now.plus(if (mode == "random") QUEUE_TTL else INVITE_TTL),
+            creatorId = creator.id, opponentId = opponent?.id, topics = emptyList(), createdAt = now,
+            expiresAt = now.plus(if (mode == "random") QUEUE_TTL else INVITE_TTL), problemVersionId = selected?.id,
         ))
-        reserve(creator.id, request.id)
-        if (opponent != null) {
-            notify(opponent.id, "duel_invitation", "${creator.handle} приглашает вас на дуэль", request, now)
-            return request
-        }
-        val waiting = requests.findByModeAndStatusOrderByCreatedAt("random", "queued")
-        for (peer in waiting) {
-            if (peer.creatorId == creator.id || activeRequest(peer.creatorId)?.id != peer.id) continue
-            val common = candidates.filter { matchesTopics(it, peer.topics) }
-            if (common.isEmpty()) continue
-            val peerUser = users.findById(peer.creatorId).orElseThrow()
-            val contest = start(peerUser, creator, common.random(), now)
-            matched(peer, creator.id, contest)
-            matched(request, peer.creatorId, contest)
-            notify(peer.creatorId, "duel_started", "Соперник найден. Дуэль началась", peer, now)
-            notify(creator.id, "duel_started", "Соперник найден. Дуэль началась", request, now)
-            break
-        }
+        if (opponent != null) notify(opponent.id, "duel_invitation", "${creator.handle} приглашает вас на дуэль", request, now)
+        else matchWaiting(now)
         return request
     }
 
     @Transactional
     fun current(user: User): DuelRequest? {
-        lockAndExpire()
-        return activeRequest(user.id)
+        val now = lockAndExpire()
+        matchWaiting(now)
+        return requests.findByCreatorIdAndStatusInOrderByCreatedAtDesc(user.id, WAITING).firstOrNull()
+    }
+
+    @Transactional
+    fun list(phase: String, offset: Int, limit: Int, user: User): DuelList {
+        if (phase !in setOf("active", "finished", "all") || offset < 0 || limit !in 1..100) throw BadRequestException("Неверные параметры списка")
+        val now = lockAndExpire()
+        matchWaiting(now)
+        val rows = requests.visibleTo(user.id)
+            .groupBy { it.contestId ?: it.id }
+            .values.map { group -> group.firstOrNull { it.creatorId == user.id } ?: group.first() }
+            .filter { request ->
+                val active = request.status in ACTIVE && request.expiresAt.isAfter(now)
+                phase == "all" || phase == "active" && active || phase == "finished" && !active
+            }
+            .sortedWith(compareByDescending<DuelRequest> { it.createdAt }.thenBy { it.id })
+        return DuelList(rows.drop(offset).take(limit), rows.size)
     }
 
     @Transactional
     fun get(id: String, viewer: User): DuelRequest {
-        lockAndExpire()
+        val now = lockAndExpire()
+        matchWaiting(now)
         return visible(id, viewer)
     }
 
@@ -106,17 +119,15 @@ class DuelService(
         if (request.mode != "invite" || request.opponentId != recipient.id) throw ForbiddenException("Принять приглашение может только соперник")
         if (request.status == "matched") return request
         if (request.status != "invited") throw BadRequestException("Приглашение уже недоступно")
-        val recipientRequest = activeRequest(recipient.id)
-        if (recipientRequest?.status == "matched") throw BadRequestException("Сначала завершите текущую дуэль")
+        val environment = references.environmentKey() ?: throw ServiceUnavailableException("Ожидаем доступное окружение проверки")
         val creator = users.findById(request.creatorId).orElseThrow()
-        if (activeRequest(creator.id)?.id != request.id) throw BadRequestException("Приглашение уже недоступно")
-        val problem = codingPool().filter { matchesTopics(it, request.topics) }.randomOrNull()
-            ?: throw BadRequestException("Нет доступных задач по выбранным темам")
-        if (recipientRequest != null) cancelWaiting(recipientRequest, now)
-        val contest = start(creator, recipient, problem, now)
-        matched(request, recipient.id, contest)
-        reserve(creator.id, request.id)
-        reserve(recipient.id, request.id)
+        val pinned = request.problemVersionId
+        val problem = if (pinned != null) catalog.versions(listOf(pinned))[pinned] ?: throw BadRequestException("Выбранная версия задачи недоступна")
+            else codingPool().randomOrNull() ?: throw BadRequestException("Нет доступных задач для дуэли")
+        val startedAt = Instant.now()
+        if (!request.expiresAt.isAfter(startedAt)) throw BadRequestException("Срок приглашения истёк")
+        val contest = start(creator, recipient, problem, environment, startedAt)
+        matched(request, recipient.id, contest, problem)
         notify(creator.id, "duel_started", "${recipient.handle} принял приглашение. Дуэль началась", request, now)
         notify(recipient.id, "duel_started", "Вы приняли приглашение. Дуэль началась", request, now)
         return request
@@ -130,7 +141,6 @@ class DuelService(
         if (request.status == "declined") return request
         if (request.status != "invited") throw BadRequestException("Приглашение уже недоступно")
         request.status = "declined"
-        release(request)
         notify(request.creatorId, "duel_declined", "${recipient.handle} отклонил приглашение", request, now)
         return request
     }
@@ -142,51 +152,68 @@ class DuelService(
         if (request.creatorId != creator.id) throw ForbiddenException("Отменить поиск может только его автор")
         if (request.status == "cancelled") return request
         if (request.status !in WAITING) throw BadRequestException("Этот поиск уже завершён")
-        cancelWaiting(request, now)
+        request.status = "cancelled"
+        if (request.mode == "invite") notify(request.opponentId!!, "duel_cancelled", "Приглашение на дуэль отменено", request, now)
         return request
     }
 
-    @Scheduled(fixedDelayString = "PT1M")
+    @Transactional
+    fun surrender(contestId: String, user: User) {
+        lockAndExpire()
+        val contest = contests.findForUpdate(contestId.toUuidOrNotFound("Дуэль не найдена")) ?: throw NotFoundApiException("Дуэль не найдена")
+        val now = Instant.now()
+        if (contest.format != "duel") throw BadRequestException("Сдаться можно только в дуэли")
+        if (user.id != contest.challengerId && user.id != contest.opponentId) throw ForbiddenException("Сдаться может только участник дуэли")
+        if (contest.surrenderedUserId == user.id) return
+        if (contest.surrenderedUserId != null) throw BadRequestException("Соперник уже завершил дуэль")
+        if (now.isBefore(contest.startAt) || !now.isBefore(contest.endAt)) throw BadRequestException("Дуэль уже не идёт")
+        contest.surrenderedUserId = user.id
+        contest.endAt = now
+        val related = requests.findByContestId(contest.id)
+        related.forEach { it.expiresAt = now }
+        val opponentId = if (user.id == contest.challengerId) contest.opponentId!! else contest.challengerId!!
+        val request = related.firstOrNull { it.creatorId == opponentId } ?: related.firstOrNull()
+        if (request != null) notify(opponentId, "duel_surrendered", "${user.handle} сдался. Дуэль завершена", request, now)
+    }
+
+    @Scheduled(fixedDelayString = "\${platform.duels.match-interval:PT5S}")
     @Transactional
     fun expire() {
-        lockAndExpire()
+        val now = lockAndExpire()
+        matchWaiting(now)
     }
 
     private fun lockAndExpire(): Instant {
         checkNotNull(matchmakingLock.acquire()) { "Matchmaking lock is missing" }
         val now = Instant.now()
         requests.findByStatusInAndExpiresAtLessThanEqual(WAITING, now).forEach { it.status = "expired" }
-        val active = activeUsers.findByRequestIdIsNotNull()
-        val byId = requests.findAllById(active.mapNotNull { it.requestId }.distinct()).associateBy { it.id }
-        active.forEach { slot ->
-            val request = byId.getValue(slot.requestId!!)
-            if (!request.expiresAt.isAfter(now) || request.status !in ACTIVE) slot.requestId = null
-        }
         return now
     }
 
     private fun codingPool(): List<ProblemVersion> = catalog.currentVersions().filter { !it.draft && it.format != "guess" }
 
-    private fun matchesTopics(problem: ProblemVersion, topics: Collection<String>): Boolean =
-        topics.isEmpty() || problem.tags.any { tag -> topics.any { it.equals(tag, ignoreCase = true) } }
-
-    private fun activeRequest(userId: UUID): DuelRequest? =
-        activeUsers.findById(userId).orElse(null)?.requestId?.let { requests.findById(it).orElseThrow() }
-
-    private fun reserve(userId: UUID, requestId: UUID) {
-        val slot = activeUsers.findById(userId).orElseGet { activeUsers.save(ActiveDuel(userId)) }
-        slot.requestId = requestId
-    }
-
-    private fun release(request: DuelRequest) {
-        activeUsers.findByRequestIdIsNotNull().filter { it.requestId == request.id }.forEach { it.requestId = null }
-    }
-
-    private fun cancelWaiting(request: DuelRequest, now: Instant) {
-        request.status = "cancelled"
-        release(request)
-        if (request.mode == "invite") {
-            notify(request.opponentId!!, "duel_cancelled", "Приглашение на дуэль отменено", request, now)
+    private fun matchWaiting(now: Instant) {
+        val environment = references.environmentKey() ?: return
+        val pool = codingPool()
+        if (pool.isEmpty()) return
+        val waiting = requests.findByModeAndStatusOrderByCreatedAt("random", "queued")
+        for (first in waiting) {
+            if (first.status != "queued") continue
+            val second = waiting.firstOrNull { it.status == "queued" && it.creatorId != first.creatorId } ?: continue
+            val firstUser = users.findById(first.creatorId).orElseThrow()
+            val secondUser = users.findById(second.creatorId).orElseThrow()
+            val problem = pool.random()
+            val startedAt = Instant.now()
+            val expired = listOf(first, second).filter { !it.expiresAt.isAfter(startedAt) }
+            if (expired.isNotEmpty()) {
+                expired.forEach { it.status = "expired" }
+                continue
+            }
+            val contest = start(firstUser, secondUser, problem, environment, startedAt)
+            matched(first, second.creatorId, contest, problem)
+            matched(second, first.creatorId, contest, problem)
+            notify(first.creatorId, "duel_started", "Соперник найден. Дуэль началась", first, now)
+            notify(second.creatorId, "duel_started", "Соперник найден. Дуэль началась", second, now)
         }
     }
 
@@ -196,20 +223,28 @@ class DuelService(
         return request
     }
 
-    private fun start(first: User, second: User, problem: ProblemVersion, now: Instant): Contest {
+    private fun start(first: User, second: User, problem: ProblemVersion, environment: String, now: Instant): Contest {
+        val hours = when (problem.difficulty) {
+            "easy" -> 1L
+            "medium" -> 2L
+            "hard" -> 3L
+            else -> throw BadRequestException("Неизвестная сложность задачи")
+        }
         val contest = contests.save(Contest(
-            id = UUID.randomUUID(), title = "Дуэль: ${first.handle} vs ${second.handle}", startAt = now, endAt = now.plus(DUEL_DURATION),
-            gpu = gpu.name, authors = mutableSetOf(first), format = "duel", challengerId = first.id, opponentId = second.id,
+            id = UUID.randomUUID(), title = "Дуэль: ${first.handle} vs ${second.handle}", startAt = now, endAt = now.plus(Duration.ofHours(hours)),
+            gpu = references.environmentName() ?: gpu.name, authors = mutableSetOf(first), format = "duel", challengerId = first.id, opponentId = second.id,
+            benchmarkEnvironmentKey = environment,
         ))
         contestProblems.save(ContestProblem(contest.id, problem.problemId, 0, problem.id))
         registrations.saveAll(listOf(ContestRegistration(contest.id, first.id), ContestRegistration(contest.id, second.id)))
         return contest
     }
 
-    private fun matched(request: DuelRequest, opponentId: UUID, contest: Contest) {
+    private fun matched(request: DuelRequest, opponentId: UUID, contest: Contest, problem: ProblemVersion) {
         request.status = "matched"
         request.opponentId = opponentId
         request.contestId = contest.id
+        request.problemVersionId = problem.id
         request.expiresAt = contest.endAt
     }
 
@@ -222,6 +257,5 @@ class DuelService(
         private val ACTIVE = WAITING + "matched"
         private val QUEUE_TTL = Duration.ofMinutes(15)
         private val INVITE_TTL = Duration.ofHours(24)
-        private val DUEL_DURATION = Duration.ofMinutes(30)
     }
 }

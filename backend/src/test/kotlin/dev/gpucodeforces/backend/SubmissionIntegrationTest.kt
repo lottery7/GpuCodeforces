@@ -24,6 +24,11 @@ import dev.gpucodeforces.backend.problem.ProblemVersionRepository
 import dev.gpucodeforces.backend.submission.MeasurementData
 import dev.gpucodeforces.backend.submission.SubmissionRepository
 import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
+import dev.gpucodeforces.backend.contest.ContestRepository
+import dev.gpucodeforces.backend.contest.ContestProblem
+import dev.gpucodeforces.backend.contest.ContestProblemRepository
+import dev.gpucodeforces.backend.contest.ContestRegistration
+import dev.gpucodeforces.backend.contest.ContestRegistrationRepository
 import dev.gpucodeforces.judge.api.GpuInfo
 import dev.gpucodeforces.judge.api.JudgeEvent
 import dev.gpucodeforces.judge.api.JudgeResult
@@ -70,6 +75,7 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.UUID
 import dev.gpucodeforces.backend.problem.Problem as StoredProblem
+import dev.gpucodeforces.backend.contest.Contest as StoredContest
 
 /** The whole submission path: REST -> judge gateway (stub) -> events through RabbitMQ -> results everywhere. */
 @Tag("integration")
@@ -99,6 +105,10 @@ class SubmissionIntegrationTest {
 
     @Autowired
     lateinit var transactionTemplate: TransactionTemplate
+
+    @Autowired lateinit var contests: ContestRepository
+    @Autowired lateinit var contestProblems: ContestProblemRepository
+    @Autowired lateinit var registrations: ContestRegistrationRepository
 
     @MockitoBean
     lateinit var references: ReferenceMeasurements
@@ -337,6 +347,29 @@ class SubmissionIntegrationTest {
         val recheckRequest = nextGatewayRequest()
         publish(event(recheckRequest, 1, JUDGE_FINISHED, result = measured))
         assertThat(awaitStatus(invalid.id, "accepted", cookie).timeMs).isEqualByComparingTo("2.0")
+    }
+
+    @Test
+    fun `a duel refuses new measurements from a different environment and resumes when its environment returns`() {
+        val (alice, cookie) = register("duel_cohort_alice")
+        val (bob, _) = register("duel_cohort_bob")
+        val version = problemCatalog.currentVersion("vector_add")!!
+        val room = contests.save(StoredContest(
+            UUID.randomUUID(), "Проверка среды дуэли", Instant.now().minusSeconds(60), Instant.now().plusSeconds(3600), "Original GPU",
+            format = "duel", challengerId = UUID.fromString(alice.id), opponentId = UUID.fromString(bob.id),
+            benchmarkEnvironmentKey = "frozen-duel-environment",
+        ))
+        contestProblems.save(ContestProblem(room.id, version.problemId, 0, version.id))
+        registrations.saveAll(listOf(ContestRegistration(room.id, UUID.fromString(alice.id)), ContestRegistration(room.id, UUID.fromString(bob.id))))
+        val body = SubmitSolutionRequest(version.problemId, "void solve() {}").contestId(room.id.toString())
+
+        client.post().uri("/submissions").cookie("session", cookie).contentType(MediaType.APPLICATION_JSON)
+            .body(body).exchange().expectStatus().isEqualTo(503)
+
+        given(references.environmentKey()).willReturn("frozen-duel-environment")
+        client.post().uri("/submissions").cookie("session", cookie).contentType(MediaType.APPLICATION_JSON)
+            .body(body).exchange().expectStatus().isAccepted
+        assertThat(nextGatewayRequest().problem.id).isEqualTo(problemCatalog.spec(version).id)
     }
 
     companion object {

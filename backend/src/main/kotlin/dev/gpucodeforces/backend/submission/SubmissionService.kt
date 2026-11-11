@@ -4,6 +4,7 @@ import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.common.ForbiddenException
 import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.common.NotFoundApiException
+import dev.gpucodeforces.backend.common.ServiceUnavailableException
 import dev.gpucodeforces.backend.common.toUuidOrNotFound
 import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
 import dev.gpucodeforces.backend.contest.ContestPhase
@@ -60,6 +61,11 @@ class SubmissionService(
         }
         val version = problem.version
         val contest = (problem.context as? ProblemContext.InContest)?.contest
+        val duel = contest?.takeIf { it.format == "duel" }
+        val scope = ResultScope(
+            contest?.id, mapOf(version.problemId to version.judgeHash), gpuProperties.profile,
+            duel?.benchmarkEnvironmentKey ?: references.environmentKey() ?: "unavailable", duel?.startAt, duel?.endAt,
+        )
         val submission = transactionTemplate.execute {
             submissionRepository.save(
                 Submission(
@@ -72,7 +78,7 @@ class SubmissionService(
                     environmentMarkdown = environmentMarkdown(problemCatalog.spec(version), (contest?.gpu ?: gpuProperties.name).takeUnless { judgeProperties.synthetic }),
                     judgeHash = version.judgeHash,
                     gpuProfile = gpuProperties.profile,
-                    previousBestTimeMs = submissionStats.bestTime(author.id, version.problemId, contest?.id, version.judgeHash, gpuProperties.profile, references.environmentKey() ?: "unavailable"),
+                    previousBestTimeMs = submissionStats.bestTime(author.id, version.problemId, scope),
                 ),
             )
         }!!
@@ -268,6 +274,9 @@ class SubmissionService(
         val contest = context.contest
         if (contest.phaseAt(Instant.now()) != ContestPhase.LIVE) throw BadRequestException("Контест не идёт; решение можно отправить в практику")
         if (!contestService.isRegistered(contest.id, author.id)) throw ForbiddenException("Для отправки нужна регистрация на контест")
+        if (contest.format == "duel" && contest.benchmarkEnvironmentKey != null && references.environmentKey() != contest.benchmarkEnvironmentKey) {
+            throw ServiceUnavailableException("Окружение проверки этой дуэли сейчас недоступно")
+        }
         return context
     }
 

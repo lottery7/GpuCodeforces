@@ -5,7 +5,7 @@ import { api } from '../api/client';
 import type { Contest, ContestQuery } from '../api/types';
 import { useSession } from '../auth';
 import { Empty, ErrorMessage, LoginRequired, PageHeader, SearchInput, Tabs } from '../ui';
-import { canJoinContest, dateTime, phaseOf } from '../utils';
+import { dateTime, phaseOf } from '../utils';
 
 const phases = ['live', 'upcoming', 'finished', 'mine'] as const;
 
@@ -49,7 +49,7 @@ export default function Contests() {
   ];
 
   return <>
-    <PageHeader title="Соревнования" actions={<><Link className="btn secondary" to={user ? '/duels/new' : '/login?returnTo=%2Fduels%2Fnew'}>Создать дуэль</Link><Link className="btn primary" to={user ? '/contests/new' : '/login?returnTo=%2Fcontests%2Fnew'}>Создать контест</Link></>} />
+    <PageHeader title="Соревнования" actions={<Link className="btn primary" to={user ? '/contests/new' : '/login?returnTo=%2Fcontests%2Fnew'}>Создать контест</Link>} />
     <Tabs items={entries} selected={selected} />
     {selected === 'mine' && !user && !isLoading ? <LoginRequired returnTo={returnTo}>Здесь будут контесты, в которых вы указаны автором.</LoginRequired> : <>
       <div className="toolbar">
@@ -61,11 +61,11 @@ export default function Contests() {
       {contests.data && (contests.data.length ? <div className="table-wrap"><table className="data-table contest-list" aria-label="Список соревнований">
         <thead><tr><th>Название</th><th>Начало, МСК</th><th>Длительность</th><th>Задачи</th>{selected === 'mine' ? <th>Статус</th> : selected !== 'finished' && <th>Участие</th>}</tr></thead>
         <tbody>{contests.data.map(contest => <tr key={contest.id}>
-          <td><Link to={`/contest/${encodeURIComponent(contest.id)}`}>{contest.title}</Link>{contest.format === 'duel' && <div className="subline">Дуэль</div>}</td>
+          <td><Link to={`/contest/${encodeURIComponent(contest.id)}`}>{contest.title}</Link></td>
           <td><time dateTime={contest.startAt}>{dateTime(contest.startAt)}</time></td>
           <td>{duration(contest)}</td><td>{contest.problemCount}</td>
           {selected === 'mine' ? <td>{({ upcoming: 'До начала', live: 'Идет', finished: 'Завершен' })[phaseOf(contest)]}</td> : selected !== 'finished' && <td className="contest-registration">
-            {contest.registered ? <span className="success">{selected === 'upcoming' ? 'Вы зарегистрированы' : 'Вы участвуете'}</span> : !canJoinContest(contest, user?.id) ? <span className="muted">По приглашению</span> : user ? <button className="btn secondary" disabled={join.isPending} onClick={() => join.mutate(contest.id)}>{join.isPending && join.variables === contest.id ? 'Регистрация...' : contest.format === 'duel' ? 'Принять дуэль' : 'Зарегистрироваться'}</button> : <Link className="btn secondary" to={`/login?returnTo=${encodeURIComponent(returnTo)}`}>Зарегистрироваться</Link>}
+            {contest.registered ? <span className="success">{selected === 'upcoming' ? 'Вы зарегистрированы' : 'Вы участвуете'}</span> : user ? <button className="btn secondary" disabled={join.isPending} onClick={() => join.mutate(contest.id)}>{join.isPending && join.variables === contest.id ? 'Регистрация...' : 'Зарегистрироваться'}</button> : <Link className="btn secondary" to={`/login?returnTo=${encodeURIComponent(returnTo)}`}>Зарегистрироваться</Link>}
             {join.variables === contest.id && <ErrorMessage error={join.error} reveal />}
           </td>}
         </tr>)}</tbody>

@@ -6,6 +6,7 @@ import dev.gpucodeforces.backend.common.ServiceUnavailableException
 import dev.gpucodeforces.backend.problem.ProblemCatalog
 import dev.gpucodeforces.backend.problem.ProblemVersion
 import dev.gpucodeforces.backend.submission.InvalidMeasurementException
+import dev.gpucodeforces.backend.submission.MeasurementData
 import dev.gpucodeforces.backend.submission.JudgeGateway
 import dev.gpucodeforces.backend.submission.JudgeProperties
 import dev.gpucodeforces.backend.submission.SendOutcome
@@ -35,6 +36,7 @@ data class ReferenceMeasurementView(
     val synthetic: Boolean,
     val diagnostic: String?,
     val environmentKey: String? = null,
+    val gpuName: String? = null,
 )
 
 @Service
@@ -63,12 +65,28 @@ class ReferenceMeasurements(
         }
         if (rows.all { it.status == "ready" }) {
             val byRole = rows.associateBy { it.role }
+            val measured = json.readValue(checkNotNull(rows.first().measurement), MeasurementData::class.java)
             return ReferenceMeasurementView(
                 benchmarkKey, "ready", byRole["baseline"]?.timeMs, byRole["first"]?.timeMs, byRole["second"]?.timeMs,
-                rows.mapNotNull { it.measuredAt }.maxOrNull(), properties.synthetic, null, environment.key,
+                rows.mapNotNull { it.measuredAt }.maxOrNull(), measured.synthetic, null, environment.key, measured.gpuName,
             )
         }
         return pending(benchmarkKey, null, environment.key).copy(status = if (rows.any { it.status == "running" || it.leaseUntil != null }) "running" else "pending")
+    }
+
+    fun viewInEnvironment(version: ProblemVersion, environmentKey: String): ReferenceMeasurementView? {
+        val roles = roles(version)
+        if (roles.isEmpty()) return null
+        val benchmarkKey = "${version.id}:$environmentKey"
+        val rows = ensure(version, environmentKey, roles)
+        if (rows.any { it.status == "failed" }) return pending(benchmarkKey, "Не удалось измерить эталон", environmentKey).copy(status = "failed")
+        if (rows.any { it.status != "ready" }) return pending(benchmarkKey, null, environmentKey)
+        val byRole = rows.associateBy { it.role }
+        val measured = json.readValue(checkNotNull(rows.first().measurement), MeasurementData::class.java)
+        return ReferenceMeasurementView(
+            benchmarkKey, "ready", byRole["baseline"]?.timeMs, byRole["first"]?.timeMs, byRole["second"]?.timeMs,
+            rows.mapNotNull { it.measuredAt }.maxOrNull(), measured.synthetic, null, environmentKey, measured.gpuName,
+        )
     }
 
     fun requireReady(version: ProblemVersion): ReferenceMeasurementView {

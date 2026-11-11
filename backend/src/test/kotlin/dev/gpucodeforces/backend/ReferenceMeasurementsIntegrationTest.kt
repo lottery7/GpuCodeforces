@@ -1,19 +1,29 @@
 package dev.gpucodeforces.backend
 
+import dev.gpucodeforces.backend.api.model.GetProblem200Response
 import dev.gpucodeforces.backend.benchmark.ReferenceEnvironmentMonitor
+import dev.gpucodeforces.backend.benchmark.ReferenceJob
 import dev.gpucodeforces.backend.benchmark.ReferenceJobRepository
 import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
 import dev.gpucodeforces.backend.benchmark.ReferenceVersionLockRepository
 import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.common.ServiceUnavailableException
+import dev.gpucodeforces.backend.contest.Contest
+import dev.gpucodeforces.backend.contest.ContestProblem
+import dev.gpucodeforces.backend.contest.ContestProblemRepository
+import dev.gpucodeforces.backend.contest.ContestRepository
 import dev.gpucodeforces.backend.problem.ProblemCatalog
 import dev.gpucodeforces.backend.problem.ProblemSyncService
 import dev.gpucodeforces.backend.problem.ProblemVersion
 import dev.gpucodeforces.backend.submission.JudgeExecutorView
 import dev.gpucodeforces.backend.submission.JudgeGateway
 import dev.gpucodeforces.backend.submission.JudgeProperties
+import dev.gpucodeforces.backend.submission.MeasuredTest
+import dev.gpucodeforces.backend.submission.MeasurementData
 import dev.gpucodeforces.backend.submission.SendOutcome
 import dev.gpucodeforces.backend.submission.SubmissionRepository
+import dev.gpucodeforces.backend.user.User
+import dev.gpucodeforces.backend.user.UserRepository
 import dev.gpucodeforces.judge.api.ExecutorHeartbeat
 import dev.gpucodeforces.judge.api.GpuInfo
 import dev.gpucodeforces.judge.api.GpuSlotStatus
@@ -36,11 +46,13 @@ import org.mockito.Mockito.mock
 import org.mockito.Mockito.doAnswer
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 import org.springframework.test.context.bean.override.mockito.MockitoBean
 import org.springframework.transaction.support.TransactionTemplate
+import org.springframework.test.web.servlet.client.RestTestClient
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.postgresql.PostgreSQLContainer
@@ -55,6 +67,7 @@ import java.util.UUID
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class ReferenceMeasurementsIntegrationTest {
+    @LocalServerPort var port: Int = 0
     @Autowired lateinit var references: ReferenceMeasurements
     @Autowired lateinit var catalog: ProblemCatalog
     @Autowired lateinit var sync: ProblemSyncService
@@ -65,12 +78,16 @@ class ReferenceMeasurementsIntegrationTest {
     @Autowired lateinit var transactions: TransactionTemplate
     @Autowired lateinit var json: JsonMapper
     @Autowired lateinit var submissions: SubmissionRepository
+    @Autowired lateinit var contests: ContestRepository
+    @Autowired lateinit var contestProblems: ContestProblemRepository
+    @Autowired lateinit var users: UserRepository
     @MockitoBean lateinit var gateway: JudgeGateway
 
     private var model = "NVIDIA GeForce RTX 3060"
     private var online = true
     private val sent = mutableListOf<SubmissionRequest>()
     private val requestPlaceholder = mock(SubmissionRequest::class.java)
+    private val client by lazy { RestTestClient.bindToServer().baseUrl("http://localhost:$port/api").build() }
 
     @BeforeEach
     fun setup() {
@@ -133,6 +150,23 @@ class ReferenceMeasurementsIntegrationTest {
         assertThat(value!!.toDouble()).isCloseTo(expected, within(1e-9))
     }
 
+    private fun frozenProblem(version: ProblemVersion, environment: String, device: String): GetProblem200Response {
+        fun player(): User {
+            val handle = "reference_${UUID.randomUUID().toString().take(8)}"
+            return users.save(User(handle, "$handle@example.com", "hash"))
+        }
+        val first = player()
+        val second = player()
+        val now = Instant.now()
+        val contest = contests.save(Contest(
+            id = UUID.randomUUID(), title = "Дуэль", startAt = now.minusSeconds(60), endAt = now.plusSeconds(3600),
+            gpu = device, format = "duel", challengerId = first.id, opponentId = second.id, benchmarkEnvironmentKey = environment,
+        ))
+        contestProblems.save(ContestProblem(contest.id, version.problemId, 0, version.id))
+        return client.get().uri("/problems/${version.problemId}?context=${contest.id}").exchange().expectStatus().isOk
+            .expectBody(GetProblem200Response::class.java).returnResult().responseBody!!
+    }
+
     private fun complete(request: SubmissionRequest, times: List<Double>, verdict: Verdict = Verdict.ACCEPTED, device: String = model) {
         val jobId = "job-${request.submissionId}"
         references.apply(JudgeEvent(request.submissionId, 1, 1, SubmissionStatus.TESTING, Instant.now(), "reference-executor", Progress(1, times.size), jobId = jobId))
@@ -157,12 +191,23 @@ class ReferenceMeasurementsIntegrationTest {
         complete(first, listOf(1.0, 9.0))
         assertTime(references.requireReady(original).baselineTimeMs, 3.0)
         val oldKey = references.requireReady(original).key
+        val oldEnvironment = references.environmentKey()!!
         references.refresh()
         assertThat(sent).hasSize(1)
 
         model = "NVIDIA GeForce RTX 4090"
         references.refresh()
         assertThat(references.view(original)!!.status).isEqualTo("running")
+        val historical = references.viewInEnvironment(original, oldEnvironment)!!
+        assertTime(historical.baselineTimeMs, 3.0)
+        assertThat(historical.gpuName).isEqualTo("NVIDIA GeForce RTX 3060")
+        assertThat(historical.synthetic).isFalse()
+        val frozen = frozenProblem(original, oldEnvironment, "NVIDIA GeForce RTX 3060")
+        val frozenBenchmark = checkNotNull(frozen.benchmark)
+        assertTime(frozen.baselineTimeMs, 3.0)
+        assertThat(frozenBenchmark.gpuName).isEqualTo("NVIDIA GeForce RTX 3060")
+        assertThat(frozenBenchmark.synthetic).isFalse()
+        assertThat(frozen.environmentMarkdown).contains("NVIDIA GeForce RTX 3060").doesNotContain("NVIDIA GeForce RTX 4090")
         assertThat(references.view(original)!!.baselineTimeMs).isNull()
         assertThat(references.view(original)!!.key).isNotEqualTo(oldKey)
         complete(first, listOf(0.01, 0.01), device = "NVIDIA GeForce RTX 3060")
@@ -180,6 +225,31 @@ class ReferenceMeasurementsIntegrationTest {
         assertTime(references.requireReady(updated).baselineTimeMs, 4.0)
         assertTime(references.requireReady(original).baselineTimeMs, 8.0)
         assertThat(submissions.count()).isZero()
+    }
+
+    @Test
+    fun `a frozen synthetic baseline stays marked and hides GPU metadata under a real runtime`() {
+        val (_, version) = importProblem("optimization")
+        val environment = "historical-mock-${UUID.randomUUID()}"
+        jobs.save(ReferenceJob(
+            id = UUID.randomUUID(), problemVersionId = version.id, environmentKey = environment, role = "baseline", status = "ready",
+            timeMs = BigDecimal("3"), measuredAt = Instant.now(), measurement = json.writeValueAsString(MeasurementData(
+                "geometric_mean", catalog.spec(version).timing.effectiveMode.name.lowercase(), "Mock GPU", "mock test", true,
+                listOf(MeasuredTest(BigDecimal.ONE, 1), MeasuredTest(BigDecimal("9"), 1)),
+            )),
+        ))
+
+        val measured = references.viewInEnvironment(version, environment)!!
+        val frozen = frozenProblem(version, environment, "Mock GPU")
+        val frozenBenchmark = checkNotNull(frozen.benchmark)
+
+        assertThat(properties.synthetic).isFalse()
+        assertThat(measured.synthetic).isTrue()
+        assertThat(measured.gpuName).isEqualTo("Mock GPU")
+        assertTime(frozen.baselineTimeMs, 3.0)
+        assertThat(frozenBenchmark.synthetic).isTrue()
+        assertThat(frozenBenchmark.gpuName).isNull()
+        assertThat(frozen.environmentMarkdown).doesNotContain("GPU:", "Mock GPU", model)
     }
 
     @Test

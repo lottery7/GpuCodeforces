@@ -138,12 +138,11 @@ describe('Дуэль', () => {
     vi.spyOn(api, 'getContest').mockResolvedValue(duel);
     vi.spyOn(api, 'getProfile').mockResolvedValue({ user: opponent, solvedCount: 0, contests: [] });
     vi.spyOn(api, 'allProblems').mockResolvedValue([{ ...task, format: 'standard' }]);
-    vi.spyOn(api, 'contestStandings').mockResolvedValue([{ rank: 1, user: opponent, solved: 1, totalSeconds: 1200, times: { [task.id]: 1200 } }]);
-    vi.spyOn(api, 'problemLeaders').mockResolvedValue([{ rank: 1, user: opponent, timeMs: 0.052, submissionId: 'fast' }]);
+    vi.spyOn(api, 'contestStandings').mockResolvedValue([{ rank: 1, user: opponent, solved: 1, totalSeconds: 0, times: {}, bestTimeMs: 0.052 }]);
     open('/contest/duel');
     const board = await screen.findByRole('region', { name: 'Результаты дуэли' });
     expect(await within(board).findByText('0.052')).toBeVisible();
-    expect(within(board).getByText('Решена за 0:20:00')).toBeVisible();
+    expect(within(board).queryByText(/Решена за/)).not.toBeInTheDocument();
     expect(within(board).getByText(opponent.handle)).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Принять дуэль' })).not.toBeInTheDocument();
     expect(screen.getByText('Дуэль по приглашению')).toBeVisible();
@@ -163,21 +162,17 @@ describe('Дуэль', () => {
     expect(within(standings).getByRole('columnheader', { name: 'A' })).toBeVisible();
   });
 
-  it('определяет победителя по времени сдачи независимо от скорости GPU', async () => {
+  it('показывает победителя по лучшему времени кода', async () => {
     vi.spyOn(api, 'getContest').mockResolvedValue({ ...duel, endAt: new Date(Date.now() - 1000).toISOString() });
     vi.spyOn(api, 'getProfile').mockResolvedValue({ user: opponent, solvedCount: 0, contests: [] });
     vi.spyOn(api, 'allProblems').mockResolvedValue([{ ...task, format: 'standard' }]);
     vi.spyOn(api, 'contestStandings').mockResolvedValue([
-      { rank: 1, user: owner, solved: 1, totalSeconds: 600, times: { [task.id]: 600 } },
-      { rank: 2, user: opponent, solved: 1, totalSeconds: 1200, times: { [task.id]: 1200 } },
-    ]);
-    vi.spyOn(api, 'problemLeaders').mockResolvedValue([
-      { rank: 1, user: opponent, timeMs: 0.05, submissionId: 'fast' },
-      { rank: 2, user: owner, timeMs: 1, submissionId: 'slow' },
+      { rank: 1, user: opponent, solved: 1, totalSeconds: 0, times: {}, bestTimeMs: 0.05 },
+      { rank: 2, user: owner, solved: 1, totalSeconds: 0, times: {}, bestTimeMs: 1 },
     ]);
     open('/contest/duel');
     const board = await screen.findByRole('region', { name: 'Результаты дуэли' });
-    expect(await within(board).findByText(/Победитель:/)).toHaveTextContent(owner.handle);
+    expect(await within(board).findByText(/Победитель:/)).toHaveTextContent(opponent.handle);
     expect(await within(board).findByText('0.050')).toBeVisible();
   });
 
@@ -208,8 +203,10 @@ describe('Экран решения', () => {
   it('показывает условия сравнения без служебной таблицы окружения', async () => {
     vi.spyOn(api, 'getProblem').mockResolvedValue({ ...task, environmentMarkdown: 'Mock GPU sm_86 nvcc', benchmark: { inputDescription: 'Три размера векторов', aggregation: 'geometric_mean', timingMode: 'wall', warmupRuns: 1, maxRuns: 3, gpuName: 'Mock GPU', synthetic: true } });
     open('/problem/vector');
-    expect(await screen.findByText('Три размера векторов')).toBeVisible();
-    expect(screen.getByText('Геометрическое среднее по тестам')).toBeVisible();
+    const measurements = await screen.findByText('Замеры: геометрическое среднее');
+    expect(screen.getByText('Три размера векторов')).not.toBeVisible();
+    await userEvent.click(measurements);
+    expect(screen.getByText('Три размера векторов')).toBeVisible();
     expect(screen.queryByText(/Mock GPU/)).not.toBeInTheDocument();
     expect(screen.queryByText('Среда и замер')).not.toBeInTheDocument();
   });

@@ -41,6 +41,10 @@ class Contest(
     val challengerId: UUID? = null,
     @Column(name = "opponent_id")
     val opponentId: UUID? = null,
+    @Column(name = "surrendered_user_id")
+    var surrenderedUserId: UUID? = null,
+    @Column(name = "benchmark_environment_key")
+    var benchmarkEnvironmentKey: String? = null,
 ) {
     constructor(title: String, startAt: Instant, endAt: Instant, gpu: String) :
         this(UUID.randomUUID(), title, startAt, endAt, gpu)

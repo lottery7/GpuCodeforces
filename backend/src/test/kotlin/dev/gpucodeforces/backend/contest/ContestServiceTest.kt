@@ -1,10 +1,13 @@
 package dev.gpucodeforces.backend.contest
 
+import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
 import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.common.ForbiddenException
 import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.common.UnauthorizedException
 import dev.gpucodeforces.backend.problem.ProblemCatalog
+import dev.gpucodeforces.backend.problem.ProblemVersion
+import dev.gpucodeforces.backend.submission.ResultScope
 import dev.gpucodeforces.backend.submission.SubmissionStats
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.backend.user.UserRepository
@@ -16,6 +19,7 @@ import org.mockito.BDDMockito.given
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
+import java.math.BigDecimal
 import java.time.Instant
 import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
@@ -29,6 +33,8 @@ class ContestServiceTest {
     private val contestRegistrationRepository = mock(ContestRegistrationRepository::class.java)
     private val userRepository = mock(UserRepository::class.java)
     private val problemCatalog = mock(ProblemCatalog::class.java)
+    private val stats = mock(SubmissionStats::class.java)
+    private val references = mock(ReferenceMeasurements::class.java)
     private val service = ContestService(
         contestRepository,
         contestProblemRepository,
@@ -36,7 +42,8 @@ class ContestServiceTest {
         userRepository,
         problemCatalog,
         GpuProperties(),
-        mock(SubmissionStats::class.java),
+        stats,
+        references,
     )
 
     private fun user(handle: String = "author") = User(handle, "$handle@example.com", "hash")
@@ -48,8 +55,32 @@ class ContestServiceTest {
         format: String = "standard",
         challengerId: UUID? = null,
         opponentId: UUID? = null,
+        surrenderedUserId: UUID? = null,
+        benchmarkEnvironmentKey: String? = null,
     ) = Contest(id = UUID.randomUUID(), title = "Контест", startAt = startAt, endAt = endAt,
-        gpu = "NVIDIA GeForce RTX 4090", authors = authors, format = format, challengerId = challengerId, opponentId = opponentId)
+        gpu = "NVIDIA GeForce RTX 4090", authors = authors, format = format, challengerId = challengerId, opponentId = opponentId,
+        surrenderedUserId = surrenderedUserId, benchmarkEnvironmentKey = benchmarkEnvironmentKey)
+
+    private fun duel(challenger: User, opponent: User, times: Map<UUID, BigDecimal>, surrendered: UUID? = null): Contest {
+        val contest = contestFixture(
+            startAt = Instant.now().minusSeconds(60), endAt = Instant.now().plusSeconds(3600), format = "duel",
+            challengerId = challenger.id, opponentId = opponent.id, surrenderedUserId = surrendered, benchmarkEnvironmentKey = "captured-environment",
+        )
+        val version = ProblemVersion(
+            id = UUID.randomUUID(), problemId = "vector", code = "1", title = "Векторы", difficulty = "easy", tags = emptyList(),
+            authors = emptyList(), draft = false, statementMarkdown = "Условие", starterCode = "", judgeSpec = "{}",
+            contentHash = "content", judgeHash = "judge", revision = null,
+        )
+        given(contestRepository.findById(contest.id)).willReturn(Optional.of(contest))
+        given(contestProblemRepository.findByIdContestIdOrderByPosition(contest.id)).willReturn(listOf(ContestProblem(contest.id, version.problemId, 0, version.id)))
+        given(problemCatalog.versions(listOf(version.id))).willReturn(mapOf(version.id to version))
+        given(userRepository.findAllById(listOf(challenger.id, opponent.id))).willReturn(listOf(opponent, challenger))
+        given(stats.duelBestTimes(
+            ResultScope(contest.id, mapOf(version.problemId to version.judgeHash), "rtx3060", "captured-environment"),
+            version.id, contest.startAt, contest.endAt,
+        )).willReturn(times)
+        return contest
+    }
 
     private fun input(
         authorIds: Set<String>,
@@ -200,5 +231,90 @@ class ContestServiceTest {
 
         assertThatThrownBy { service.update(contest.id.toString(), input(setOf(challenger.id.toString())), challenger) }
             .isInstanceOf(ForbiddenException::class.java).hasMessageContaining("нельзя редактировать")
+    }
+
+    @Test
+    fun `a duel ranks accepted solutions by their fastest measured time in the captured environment`() {
+        val challenger = user("challenger")
+        val opponent = user("opponent")
+        val contest = duel(challenger, opponent, mapOf(challenger.id to BigDecimal("4"), opponent.id to BigDecimal("1")))
+        given(references.environmentKey()).willReturn("current-different-environment")
+
+        val rows = service.standings(contest.id.toString())
+
+        assertThat(rows.map { it.user.id }).containsExactly(opponent.id.toString(), challenger.id.toString())
+        assertThat(rows.map { it.rank }).containsExactly(1, 2)
+        assertThat(rows.first().bestTimeMs).isEqualByComparingTo("1")
+        assertThat(rows.all { it.totalSeconds == 0 && it.times.isEmpty() }).isTrue()
+        verify(references, never()).environmentKey()
+    }
+
+    @Test
+    fun `equal duel times share a place without a submission time tiebreak`() {
+        val challenger = user("challenger")
+        val opponent = user("opponent")
+        val contest = duel(challenger, opponent, mapOf(challenger.id to BigDecimal("1.00"), opponent.id to BigDecimal("1.0")))
+
+        assertThat(service.standings(contest.id.toString()).map { it.rank }).containsExactly(1, 1)
+    }
+
+    @Test
+    fun `a duel without accepted submissions is a tie`() {
+        val contest = duel(user("challenger"), user("opponent"), emptyMap())
+
+        val rows = service.standings(contest.id.toString())
+
+        assertThat(rows.map { it.rank }).containsExactly(1, 1)
+        assertThat(rows.all { it.bestTimeMs == null && it.solved == 0 && it.surrendered == false }).isTrue()
+    }
+
+    @Test
+    fun `an accepted duel solution beats the absence of an accepted solution`() {
+        val challenger = user("challenger")
+        val opponent = user("opponent")
+        val contest = duel(challenger, opponent, mapOf(opponent.id to BigDecimal("20")))
+
+        val rows = service.standings(contest.id.toString())
+
+        assertThat(rows.map { it.user.id }).containsExactly(opponent.id.toString(), challenger.id.toString())
+        assertThat(rows.map { it.rank }).containsExactly(1, 2)
+        assertThat(rows.last().bestTimeMs).isNull()
+    }
+
+    @Test
+    fun `a surrendered participant loses even with the fastest accepted solution`() {
+        val challenger = user("challenger")
+        val opponent = user("opponent")
+        val contest = duel(challenger, opponent, mapOf(challenger.id to BigDecimal("0.5"), opponent.id to BigDecimal("2")), challenger.id)
+
+        val rows = service.standings(contest.id.toString())
+
+        assertThat(rows.first().user.id).isEqualTo(opponent.id.toString())
+        assertThat(rows.last().rank).isEqualTo(2)
+        assertThat(rows.last().surrendered).isTrue()
+        assertThat(rows.last().bestTimeMs).isEqualByComparingTo("0.5")
+    }
+
+    @Test
+    fun `surrender gives the opponent first place even without an accepted solution`() {
+        val challenger = user("challenger")
+        val opponent = user("opponent")
+        val contest = duel(challenger, opponent, emptyMap(), challenger.id)
+
+        val rows = service.standings(contest.id.toString())
+
+        assertThat(rows.first().user.id).isEqualTo(opponent.id.toString())
+        assertThat(rows.first().rank).isEqualTo(1)
+        assertThat(rows.first().solved).isZero()
+        assertThat(rows.last().rank).isEqualTo(2)
+    }
+
+    @Test
+    fun `the ordinary contest list excludes duels`() {
+        val standard = contestFixture()
+        val duel = contestFixture(format = "duel", challengerId = UUID.randomUUID(), opponentId = UUID.randomUUID())
+        given(contestRepository.findAll()).willReturn(listOf(standard, duel))
+
+        assertThat(service.list(null, null, mine = false, viewer = null)).containsExactly(standard)
     }
 }

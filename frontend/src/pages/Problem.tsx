@@ -101,6 +101,7 @@ function EditorPane({ problem, context, contest, contestLoading, phase, onCloseO
     event.currentTarget.querySelector<HTMLButtonElement>(`[data-view="${next}"]`)?.focus();
   }
   return <section className="editor-section" id="editor" aria-label="Редактор решения">
+    <OptimizationSummary problem={problem} />
     <div className="panel editor-panel">
       <div className="editor-title">{problem.format === 'optimization' ? <div className="solution-tabs" role="tablist" aria-label="Код оптимизации" onKeyDown={switchCodeTab}><button type="button" role="tab" id="solution-tab" data-view="solution" aria-controls="solution-panel" aria-selected={view === 'solution'} tabIndex={view === 'solution' ? 0 : -1} onClick={() => setView('solution')}>Ваше решение</button><button type="button" role="tab" id="original-tab" data-view="original" aria-controls="original-panel" aria-selected={view === 'original'} tabIndex={view === 'original' ? 0 : -1} onClick={() => setView('original')}>Исходное решение</button></div> : <span className="editor-file-tab active"><span className="file-tab-mark" aria-hidden="true">CU</span>solution.cu</span>}
         <div className="inline"><button type="button" className="text-link" onClick={download}>Скачать код</button><label className="text-link file-button">Выбрать файл<input type="file" accept=".cu,.cpp,.cuh,.h,.txt" aria-label="Загрузить код из файла" onChange={async event => {
@@ -171,7 +172,6 @@ function GuessPane({ problem, context, contest, phase, contestLoading }: { probl
   const feedbackRef = useFeedbackVisibility(saved || guess.error || join.error);
   const blocked = !referencesReady || guess.isPending || join.isPending || Boolean(saved) || Boolean(user && problem.guessSubmissionId && !previous.data) || contestLoading || phase === 'upcoming' || phase === 'finished';
   return <section className="guess-pane" id="editor" aria-label="Выберите более быстрый код">
-    <div className="guess-heading"><h2>Какой код быстрее?</h2><p>Выберите вариант для этого набора данных. После проверки откроется разбор. Изменить ответ нельзя.</p></div>
     {!referencesReady && <ReferenceStatus problem={problem} />}
     <fieldset className="guess-comparison" disabled={blocked}><legend className="visually-hidden">Выберите более быстрый код</legend>
       <div className="guess-codes">{[problem.firstCode, problem.secondCode].map((code, index) => {
@@ -179,12 +179,12 @@ function GuessPane({ problem, context, contest, phase, contestLoading }: { probl
         const selected = (saved?.guessResult?.choice ?? choice) === value;
         const correct = saved?.guessResult?.correctChoice === value;
         return <section className={`panel editor-panel guess-code-card${selected ? ' selected' : ''}${saved ? correct ? ' answer-correct' : selected ? ' answer-wrong' : '' : ''}`} key={value}>
-          <div className="guess-code-heading"><span className="guess-code-number">{index + 1}</span><h3>Вариант {index + 1}</h3>{correct && <span className="success">Быстрее</span>}</div>
+          <div className="guess-code-heading"><h3>Вариант {index + 1}</h3></div>
           <CodeEditor value={code ?? ''} readOnly label={`Код ${index + 1}`} />
           <label className="guess-pick"><input type="radio" name="guess" value={value} checked={selected} onChange={() => setChoice(value)} /><span className="guess-pick-mark" aria-hidden="true" /><span>{guessLabels[value]}</span></label>
         </section>;
       })}</div>
-      <label className={`guess-equal guess-pick${saved?.guessResult?.correctChoice === 'equal' ? ' answer-correct' : ''}`}><input type="radio" name="guess" value="equal" aria-label="Одинаково" checked={(saved?.guessResult?.choice ?? choice) === 'equal'} onChange={() => setChoice('equal')} /><span className="guess-equal-symbol" aria-hidden="true">=</span><span><strong>Одинаково</strong><small>Оба варианта дают одно время</small></span><span className="guess-pick-mark" aria-hidden="true" /></label>
+      <label className={`guess-equal guess-pick${saved?.guessResult?.correctChoice === 'equal' ? ' answer-correct' : ''}`}><input type="radio" name="guess" value="equal" aria-label="Одинаково" checked={(saved?.guessResult?.choice ?? choice) === 'equal'} onChange={() => setChoice('equal')} /><span className="guess-equal-symbol" aria-hidden="true">=</span><span><strong>Одинаково</strong></span><span className="guess-pick-mark" aria-hidden="true" /></label>
     </fieldset>
     {phase === 'finished' ? <Link className="btn secondary" to={problemPath(problem.id)}>Продолжить в практике</Link>
       : phase === 'upcoming' ? <p className="muted">Ответы принимаются после начала.</p>
@@ -192,6 +192,7 @@ function GuessPane({ problem, context, contest, phase, contestLoading }: { probl
       : contest?.format === 'duel' && !canJoinContest(contest, user.id) ? <p className="muted">Ответить могут только участники дуэли.</p>
       : context !== 'practice' && !contest?.registered ? <button className="btn primary" disabled={blocked} onClick={() => join.mutate()}>{join.isPending ? 'Регистрируем...' : contest?.format === 'duel' ? 'Принять дуэль' : 'Участвовать'}</button>
       : !saved && <button className="btn primary guess-submit" disabled={blocked || !choice} onClick={() => { if (choice) guess.mutate(choice); }}>{guess.isPending ? 'Проверяем ответ...' : 'Проверить выбор'}</button>}
+    {!saved && referencesReady && phase !== 'finished' && <p className="small muted guess-attempt-note">Одна попытка. После проверки откроется разбор.</p>}
     <div ref={feedbackRef}><ErrorMessage error={guess.error || join.error || previous.error} />
       {referencesReady && previous.isFetching && !saved && <p role="status">Загрузка предыдущего ответа...</p>}
       {referencesReady && previous.error && <button className="text-link" onClick={() => void previous.refetch()}>Повторить загрузку ответа</button>}
@@ -205,9 +206,7 @@ function OptimizationSummary({ problem }: { problem: ProblemDetail }) {
   const ready = problem.referenceMeasurement?.status === 'ready';
   const baseline = ready && problem.baselineTimeMs != null && problem.baselineTimeMs > 0 ? problem.baselineTimeMs : null;
   const speedup = baseline != null && problem.bestTimeMs != null && problem.bestTimeMs > 0 ? baseline / problem.bestTimeMs : null;
-  return <section className="optimization-summary" aria-label="Цель оптимизации">
-    <div className="optimization-summary-heading"><span className="small muted">Оптимизация решения</span><h2>Сделайте исходный код быстрее</h2></div>
-    <p>Редактор содержит рабочее решение. Измените его, сохранив корректность. Исходный код всегда доступен на соседней вкладке.</p>
+  return <section className="optimization-summary" aria-label="Результаты оптимизации">
     {!ready ? <ReferenceStatus problem={problem} /> : baseline != null ? <dl className="optimization-metrics"><div><dt>Исходное решение</dt><dd><TimeValue value={baseline} /><span> мс</span></dd></div><div><dt>Ваш лучший результат</dt><dd>{problem.bestTimeMs != null ? <><TimeValue value={problem.bestTimeMs} /><span> мс</span></> : <span className="metric-empty">Нет посылок</span>}</dd></div>{speedup != null && <div className={speedup > 1 ? 'metric-improved' : ''}><dt>Ускорение</dt><dd>{speedup.toFixed(3)}x</dd></div>}</dl> : <p className="small muted">Время исходного решения недоступно.</p>}
   </section>;
 }
@@ -265,11 +264,12 @@ export default function Problem() {
     queryKey: ['contest', context, user?.id],
     queryFn: ({ signal }) => api.getContest(context, signal),
     enabled: context !== 'practice' && !isLoading,
-    refetchInterval: q => q.state.data && Date.now() >= Date.parse(q.state.data.endAt) ? false : 5000,
+    refetchInterval: q => q.state.data && Date.now() >= Date.parse(q.state.data.endAt) && !q.state.data.resultsPending ? false : 5000,
   });
   const phase = phaseOf(contest.data, now);
   const isGuess = problem.data?.format === 'guess';
-  const tab = isGuess && requestedTab === 'leaders' ? 'statement' : requestedTab;
+  const isDuel = contest.data?.format === 'duel';
+  const tab = (isGuess || isDuel) && requestedTab === 'leaders' ? 'statement' : requestedTab;
   useEffect(() => {
     const previous = previousPhase.current;
     if (phase && previous?.context === context && previous.phase && previous.phase !== phase) {
@@ -287,14 +287,14 @@ export default function Problem() {
     <div className="problem-meta"><span>{formatLabels[problem.data.format ?? 'standard']}</span><span>{difficultyLabels[problem.data.difficulty]}</span>{!isGuess && <><span>Лимит: {problem.data.timeLimitSeconds} с</span><span>Память: {problem.data.memoryLimitMb} МБ</span></>}</div>
     <Tabs selected={tab} items={[
       { id: 'statement', label: isGuess ? 'Условие и ответ' : 'Условие и решение', to: problemPath(id, context) },
-      { id: 'submissions', label: isGuess ? 'Мой ответ' : context === 'practice' ? 'Мои посылки' : 'Мои посылки в контесте', to: problemPath(id, context, 'submissions') },
-      ...(!isGuess ? [{ id: 'leaders', label: 'Лидеры', to: problemPath(id, context, 'leaders') }] : []),
+      { id: 'submissions', label: isGuess ? 'История ответов' : 'Мои посылки', to: problemPath(id, context, 'submissions') },
+      ...(!isGuess && !isDuel ? [{ id: 'leaders', label: 'Лидеры', to: problemPath(id, context, 'leaders') }] : []),
     ]} />
     {context !== 'practice' && contest.error && <ErrorMessage error={contest.error} />}
-    {phase === 'finished' && <p className="notice">Соревнование завершено. Новые решения в практике не изменят его результаты.</p>}
-    {contest.data?.format === 'duel' && <><p className="notice">{phase === 'finished' ? 'Дуэль завершена.' : `${phase === 'upcoming' ? 'До начала' : 'До конца'} дуэли: ${Math.max(0, Math.ceil((Date.parse(phase === 'upcoming' ? contest.data.startAt : contest.data.endAt) - now) / 1000))} с.`}</p><DuelBoard contest={contest.data} commonProblem={problem.data} finished={phase === 'finished'} /></>}
+    {phase === 'finished' && !isDuel && <p className="notice">Соревнование завершено. Новые решения в практике не изменят его результаты.</p>}
+    {isDuel && contest.data && <DuelBoard contest={contest.data} finished={phase === 'finished'} contestUpdatedAt={contest.dataUpdatedAt} />}
     {tab === 'statement' ? <div className={isGuess ? 'guess-workspace' : 'problem-workspace'}>
-      <section className="statement statement-pane" id="statement" ref={statementRef} tabIndex={-1} aria-label="Условие задачи"><div className="tool-window-head">Условие</div><div className="statement-body"><OptimizationSummary problem={problem.data} /><Markdown>{problem.data.statementMarkdown}</Markdown><BenchmarkInfo benchmark={problem.data.benchmark} /></div></section>
+      <section className="statement statement-pane" id="statement" ref={statementRef} tabIndex={-1} aria-label="Условие задачи"><div className="tool-window-head">Условие</div><div className="statement-body"><Markdown>{problem.data.statementMarkdown}</Markdown><BenchmarkInfo benchmark={problem.data.benchmark} /></div></section>
       {isGuess ? <GuessPane key={`${user?.id || 'guest'}:${id}:${context}:${problem.data.versionId ?? ''}:${problem.data.referenceMeasurement?.key ?? ''}`} problem={problem.data} context={context} contest={contest.data} phase={phase} contestLoading={context !== 'practice' && (contest.isPending || Boolean(contest.error))} /> : <EditorPane key={`${user?.id || 'guest'}:${id}:${context}`} problem={problem.data} context={context} contest={contest.data} phase={phase} onCloseOutput={returnToStatement} contestLoading={context !== 'practice' && (contest.isPending || Boolean(contest.error))} />}
     </div> : tab === 'submissions' ? <SubmissionList key={`${id}:${context}:${user?.id || 'guest'}`} problemId={id} context={context} /> : <Leaders problemId={id} context={context} finished={phase === 'finished'} />}
   </>}</QueryState>;
