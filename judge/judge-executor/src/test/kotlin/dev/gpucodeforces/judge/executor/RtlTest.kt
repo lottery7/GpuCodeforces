@@ -19,6 +19,7 @@ import dev.gpucodeforces.judge.executor.processor.scalarBits
 import dev.gpucodeforces.judge.executor.processor.rtl.RtlChecks
 import dev.gpucodeforces.judge.executor.processor.rtl.RtlTestbench
 import dev.gpucodeforces.judge.executor.processor.rtl.RtlToolchain
+import dev.gpucodeforces.judge.executor.processor.unitLimit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -133,11 +134,11 @@ class RtlTest {
 
     @Test
     fun `cycle limit keeps the score within the limit`() {
-        assertEquals(2252, RtlBackend.cycleLimit(1e6, 444, 100_000_000))
+        assertEquals(2252, unitLimit(1e6, cap = 100_000_000, perUnit = 444))
         // a circuit too large for a single cycle still runs one, and fails on its score
-        assertEquals(1, RtlBackend.cycleLimit(100.0, 444, 100_000_000))
-        assertEquals(1000, RtlBackend.cycleLimit(1e12, 444, 1000))
-        assertEquals(1000, RtlBackend.cycleLimit(1e6, 0, 1000))
+        assertEquals(1, unitLimit(100.0, cap = 100_000_000, perUnit = 444))
+        assertEquals(1000, unitLimit(1e12, cap = 1000, perUnit = 444))
+        assertEquals(1000, unitLimit(1e6, cap = 1000, perUnit = 0))
     }
 
     @Test

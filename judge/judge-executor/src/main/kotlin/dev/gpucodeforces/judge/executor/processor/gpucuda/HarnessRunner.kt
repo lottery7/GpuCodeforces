@@ -20,13 +20,13 @@ import dev.gpucodeforces.judge.executor.util.BoundedBuffer
 import dev.gpucodeforces.judge.executor.util.FileTrees
 import dev.gpucodeforces.judge.executor.util.Proc
 import dev.gpucodeforces.judge.executor.util.daemonThread
+import dev.gpucodeforces.judge.executor.util.nextNonce
 import dev.gpucodeforces.judge.executor.util.readBoundedLines
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.SecureRandom
 import java.time.Duration
-import java.util.HexFormat
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.BlockingQueue
 import java.util.concurrent.TimeUnit
@@ -91,7 +91,7 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
         // Only the output directory is writable for the solution: the binary and the manifest stay out of its reach.
         val outDir = Files.createDirectories(runDir.resolve("out"))
         FileTrees.makeWritableByAll(outDir)
-        val nonce = HexFormat.of().formatHex(ByteArray(12).also { random.nextBytes(it) })
+        val nonce = random.nextNonce()
 
         val hostArrays = sig.arrays.filter { it.memory == MemorySpace.HOST }
         val deviceArrays = sig.arrays.filter { it.memory == MemorySpace.DEVICE }

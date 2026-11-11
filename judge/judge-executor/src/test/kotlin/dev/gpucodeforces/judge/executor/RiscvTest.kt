@@ -14,6 +14,7 @@ import dev.gpucodeforces.judge.executor.processor.riscv.RiscvBackend
 import dev.gpucodeforces.judge.executor.processor.riscv.RiscvCounts
 import dev.gpucodeforces.judge.executor.processor.riscv.RiscvHarness
 import dev.gpucodeforces.judge.executor.processor.riscv.RiscvToolchain
+import dev.gpucodeforces.judge.executor.processor.unitLimit
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -80,9 +81,9 @@ class RiscvTest {
 
     @Test
     fun `instruction limit and versions`() {
-        assertEquals(20_000_000, RiscvBackend.instructionLimit(2e7, 5_000_000_000))
-        assertEquals(1, RiscvBackend.instructionLimit(0.5, 5_000_000_000))
-        assertEquals(1000, RiscvBackend.instructionLimit(1e12, 1000))
+        assertEquals(20_000_000, unitLimit(2e7, cap = 5_000_000_000))
+        assertEquals(1, unitLimit(0.5, cap = 5_000_000_000))
+        assertEquals(1000, unitLimit(1e12, cap = 1000))
         assertEquals("11.1.3", RiscvToolchain.parseQemuVersion("qemu-riscv64 version 11.1.3\nCopyright (c) 2003-2026"))
     }
 }
