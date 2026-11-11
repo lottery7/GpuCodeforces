@@ -167,6 +167,7 @@ class GpuCudaBackend(
         minSmClockMhz = o.stats.minSm,
         maxSmClockMhz = o.stats.maxSm,
         throttled = o.stats.throttled,
+        clocksLocked = slot.clocksLocked,
     )
 
     private fun <T> timed(stage: String, block: () -> T): T {

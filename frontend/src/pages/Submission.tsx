@@ -9,8 +9,9 @@ import { SyntheticResultsNotice } from '../components/RuntimeNotice';
 import { writeDraft } from '../drafts';
 import { GPU_CUDA, useProcessors } from '../processors';
 import { ErrorMessage, Markdown, PageHeader, QueryState, ScoreValue, Status, UserLink } from '../ui';
-import { dateTime, pendingStatuses, problemPath } from '../utils';
+import { dateTime, pendingStatuses, problemPath, shortId } from '../utils';
 import { HackForm } from '../components/Hacks';
+
 
 /** Names of the further numbers the judge reports, by processor. */
 const metricLabels: Record<string, string> = {
@@ -69,8 +70,8 @@ export default function Submission() {
   const gpu = item?.processor === GPU_CUDA;
   const language = item ? processors.language(item.processor, item.language)?.title ?? item.language : '';
   return <QueryState query={submission}>{item && <>
-    <PageHeader title={`${isGuess ? 'Ответ' : 'Посылка'} #${item.id}`} actions={!isGuess && owner && typeof item.code === 'string' ? <button type="button" className="btn secondary" onClick={edit}>Открыть в редакторе</button> : undefined} />
-    <p className="breadcrumbs"><Link to={problemPath(item.problemId, context)}>{item.problemTitle}</Link><span>/</span><UserLink user={item.user} /><span>/</span>{item.contestId ? <Link to={`/contest/${encodeURIComponent(item.contestId)}`}>{item.contestTitle || 'Контест'}</Link> : 'Практика'}<span>/</span><span>{processors.title(item.processor)}, {language}</span><span>/</span><time dateTime={item.createdAt}>{dateTime(item.createdAt)} МСК</time></p>
+    <PageHeader title={`${isGuess ? 'Ответ' : 'Посылка'} #${shortId(item.id)}`} actions={!isGuess && owner && typeof item.code === 'string' ? <button type="button" className="btn secondary" onClick={edit}>Открыть в редакторе</button> : undefined} />
+    <p className="breadcrumbs"><Link to={problemPath(item.problemId, context, undefined, { processor: item.processor, language: item.language })}>{item.problemTitle}</Link><span>/</span><UserLink user={item.user} /><span>/</span>{item.contestId ? <Link to={`/contest/${encodeURIComponent(item.contestId)}`}>{item.contestTitle || 'Контест'}</Link> : 'Практика'}<span>/</span><span>{processors.title(item.processor)}, {language}</span><span>/</span><time dateTime={item.createdAt}>{dateTime(item.createdAt)} МСК</time></p>
     <div className="submission-verdict-bar" aria-live="polite">
       <h2><Status status={item.status} />{item.totalTests != null && <span className="muted"> {item.passedTests ?? 0}/{item.totalTests}</span>}</h2>
       {accepted && !isGuess && <p className="metrics">{item.measurement?.aggregation === 'geometric_mean' ? 'Геометрическое среднее' : gpu ? 'Время GPU' : 'Результат'}: <strong><ScoreValue score={item.score} /></strong></p>}
@@ -87,8 +88,9 @@ export default function Submission() {
       {owner && !pending && !accepted && item.diagnostic && <pre className="diagnostic" tabIndex={0} aria-label="Диагностика посылки">{item.diagnostic}</pre>}
     </section>
     {isGuess ? owner && item.guessResult ? <GuessResult result={item.guessResult} /> : <p className="muted small">Выбранный ответ доступен автору.</p> : <>
-      {accepted && <p><Link to={problemPath(item.problemId, context, 'leaders', { processor: item.processor, language: item.language })}>Таблица лидеров</Link></p>}
+      {accepted && <p>{context.startsWith('virtual:') ? <Link to={`/virtual/${encodeURIComponent(context.slice(8))}`}>Виртуальное участие</Link> : item.contestId && !context.startsWith('upsolve:') ? <Link to={`/contest/${encodeURIComponent(item.contestId)}?tab=standings`}>Результаты соревнования</Link> : <Link to={problemPath(item.problemId, context, 'leaders', { processor: item.processor, language: item.language })}>Таблица лидеров</Link>}</p>}
       {(owner || item.sourcePublic) && typeof item.code === 'string' ? <details className="disclosure" open={!accepted && !pending}><summary>Код решения</summary><div className="editor-panel"><CodeEditor value={item.code} readOnly language={item.language} label="Исходный код посылки" /></div></details> : <p className="muted small">Исходный код доступен автору посылки.</p>}
+
     </>}
     {item.hackable && item.contestId && <HackForm submissionId={item.id} contestId={item.contestId} />}
     {item.environmentMarkdown && !isGuess && <details className="disclosure"><summary>Среда и методика замера</summary><Markdown>{item.environmentMarkdown}</Markdown></details>}

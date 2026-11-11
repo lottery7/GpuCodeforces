@@ -5,32 +5,22 @@
 .optimization-editors { display: flex; flex: 1; min-height: 0; flex-direction: column; }
 .optimization-editors > [role="tabpanel"]:not([hidden]) { display: flex; flex: 1; min-height: 0; flex-direction: column; }
 .optimization-editors > [hidden] { display: none; }
-.optimization-summary { padding-bottom: 20px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
-.optimization-summary-heading { margin-bottom: 12px; }
-.optimization-summary-heading h2 { margin: 4px 0 0; font-size: 20px; }
-.optimization-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 18px; }
+.optimization-summary { flex: none; margin-bottom: 8px; }
+.optimization-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0; }
 .optimization-metrics > div { padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
-.optimization-metrics dt { color: var(--muted); font-size: 11px; line-height: 1.4; min-height: 30px; }
-.optimization-metrics dd { margin: 5px 0 0; color: var(--text-strong); font: 20px/1.5 var(--mono); white-space: nowrap; }
-.optimization-metrics dd > span:last-child { font-size: 12px; color: var(--muted); }
+.optimization-metrics dt { color: var(--muted); font-size: 11px; line-height: 1.4; }
+.optimization-metrics dd { margin: 5px 0 0; color: var(--text-strong); font: 18px/1.4 var(--mono); overflow-wrap: anywhere; }
+.optimization-metrics dd .score-unit { display: block; margin-top: 3px; color: var(--muted); font: 11px/1.4 var(--font); white-space: normal; }
 .optimization-metrics .metric-empty { font: 12px/1.5 var(--font); }
 .optimization-metrics .metric-improved dd { color: var(--success); }
 .benchmark-info { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
-.benchmark-info h2 { margin: 0 0 8px; font-size: 14px; }
-.benchmark-facts { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; font-size: 12px; color: var(--muted); }
-.benchmark-facts > span { display: inline-flex; align-items: center; gap: 6px; }
-.benchmark-facts > span::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
-.benchmark-info details { margin-top: 12px; color: var(--muted); font-size: 12px; }
+.benchmark-info p { color: var(--muted); font-size: 12px; }
 .benchmark-info summary { display: list-item; width: fit-content; margin-bottom: 8px; color: var(--accent); }
-.guess-heading { margin-bottom: 18px; }
-.guess-heading h2 { margin-bottom: 6px; font-size: 20px; }
-.guess-heading p { color: var(--muted); }
+.guess-attempt-note { margin-top: 8px; }
 .guess-comparison { min-width: 0; margin: 0; padding: 0; border: 0; }
 .guess-comparison .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 .guess-code-card { overflow: hidden; border-radius: 8px; transition: border-color .15s; }
 .guess-code-heading { display: flex; align-items: center; gap: 10px; min-height: 54px; padding: 10px 14px; background: var(--surface); border-bottom: 1px solid var(--border); }
-.guess-code-heading .success { margin-left: auto; font-size: 12px; }
-.guess-code-number { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid #555963; border-radius: 6px; color: var(--text-strong); font: 14px var(--mono); }
 .guess-pick { position: relative; display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 13px 16px; cursor: pointer; background: var(--surface); color: var(--text-strong); font-weight: 500; }
 .guess-pick input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; opacity: 0; cursor: inherit; }
 .guess-pick:hover { background: #30343d; }
@@ -43,8 +33,7 @@
 .guess-code-card > .guess-pick { border-top: 1px solid var(--border); }
 .guess-equal { margin-top: 14px; min-height: 66px; border: 1px solid var(--border); border-radius: 8px; }
 .guess-equal-symbol { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 6px; background: var(--chrome); color: var(--muted); font: 24px var(--mono); }
-.guess-equal strong, .guess-equal small { display: block; }
-.guess-equal small { color: var(--muted); font-size: 12px; font-weight: 400; }
+.guess-equal strong { display: block; }
 .guess-equal .guess-pick-mark { margin-left: auto; }
 .guess-comparison:disabled .guess-pick { cursor: default; }
 .guess-comparison .answer-correct { border-color: var(--success); }
@@ -62,7 +51,8 @@
 .guess-time-track { height: 6px; overflow: hidden; background: var(--bg); border-radius: 3px; }
 .guess-time-track span { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
 @media (max-width: 600px) {
-  .optimization-metrics { gap: 5px; }
+  .optimization-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+  .optimization-metrics > div:last-child:nth-child(odd) { grid-column: 1 / -1; }
   .optimization-metrics > div { padding: 9px; }
   .optimization-metrics dd { font-size: 16px; }
   .solution-tabs button { padding: 10px; font-size: 12px; }

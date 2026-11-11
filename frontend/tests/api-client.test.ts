@@ -22,9 +22,9 @@ describe('API client', () => {
       ? new Response(null, { status: 204 }) : Response.json({ id: 'duel' }, { status: 201 }));
     const api = createApi('http://localhost/api', fetcher);
     await expect(api.getCurrentDuel()).resolves.toBeNull();
-    await api.createDuel({ mode: 'invite', opponentHandle: 'new_cuda', topics: ['Память'], processor: 'gpu-cuda' });
+    await api.createDuel({ mode: 'invite', processor: 'gpu-cuda', opponentHandle: 'new_cuda', problemId: 'vector' });
     expect(new URL(requests[1]!.url).pathname).toBe('/api/duels');
-    expect(await requests[1]!.json()).toEqual({ mode: 'invite', opponentHandle: 'new_cuda', topics: ['Память'], processor: 'gpu-cuda' });
+    expect(await requests[1]!.json()).toEqual({ mode: 'invite', processor: 'gpu-cuda', opponentHandle: 'new_cuda', problemId: 'vector' });
     await expect(api.readNotification('note')).resolves.toBeUndefined();
     expect(new URL(requests[2]!.url).pathname).toBe('/api/notifications/note/read');
   });
@@ -45,6 +45,22 @@ describe('API client', () => {
     expect(requests.every(request => new URL(request.url).pathname === '/api/session')).toBe(true);
     expect(requests[1]!.headers.get('Content-Type')).toContain('application/json');
     expect(await requests[1]!.json()).toEqual({ identifier: 'new_cuda', password: 'password123' });
+  });
+
+  it('loads the duel bank and a paginated archive and submits surrender without a body', async () => {
+    const { requests, fetcher } = capture(request => request.method === 'POST' ? new Response(null, { status: 204 }) : Response.json({ items: [], total: 0 }));
+    const api = createApi('http://localhost/api', fetcher);
+    const controller = new AbortController();
+    await api.listDuelProblems({ processor: 'rtl', q: 'вектор + 001', difficulty: 'easy', offset: 10, limit: 10 }, controller.signal);
+    expect(new URL(requests[0]!.url).pathname).toBe('/api/duels/problems');
+    expect(Object.fromEntries(new URL(requests[0]!.url).searchParams)).toEqual({ processor: 'rtl', q: 'вектор + 001', difficulty: 'easy', offset: '10', limit: '10' });
+    controller.abort();
+    expect(requests[0]!.signal.aborted).toBe(true);
+    await api.listDuels({ processor: 'rtl', phase: 'finished', offset: 20, limit: 20 });
+    expect(Object.fromEntries(new URL(requests[1]!.url).searchParams)).toEqual({ processor: 'rtl', phase: 'finished', offset: '20', limit: '20' });
+    await expect(api.surrenderContest('room')).resolves.toBeUndefined();
+    expect(new URL(requests[2]!.url).pathname).toBe('/api/contests/room/surrender');
+    expect(await requests[2]!.text()).toBe('');
   });
 
   it('preserves query filters, explicit practice or contest context, code and cancellation', async () => {

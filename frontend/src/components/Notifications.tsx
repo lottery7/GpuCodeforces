@@ -9,15 +9,22 @@ import { dateTime } from '../utils';
 
 function NotificationItem({ item, close }: { item: AppNotification; close: () => void }) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { user } = useSession();
   const cache = useQueryClient();
+  const mounted = useRef(false);
+  const current = useRef({ key: location.key, userId: user?.id });
+  current.current = { key: location.key, userId: user?.id };
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const invitation = item.type === 'duel_invitation';
   const action = useMutation({
-    mutationFn: (kind: 'accept' | 'decline') => kind === 'accept' ? api.acceptDuel(item.duelRequestId) : api.declineDuel(item.duelRequestId),
-    onSuccess: result => {
-      cache.setQueriesData({ queryKey: ['duel-request', result.id] }, result);
+    mutationFn: (input: { kind: 'accept' | 'decline'; key: string; userId: string | undefined }) => input.kind === 'accept' ? api.acceptDuel(item.duelRequestId) : api.declineDuel(item.duelRequestId),
+    onSuccess: (result, input) => {
+      cache.setQueryData(['duel-request', result.id, input.userId], result);
       void cache.invalidateQueries({ queryKey: ['notifications'] });
       void cache.invalidateQueries({ queryKey: ['current-duel'] });
-      if (result.status === 'matched' && result.contestId) { close(); navigate(`/contest/${encodeURIComponent(result.contestId)}`); }
+      void cache.invalidateQueries({ queryKey: ['duels'] });
+      if (mounted.current && current.current.key === input.key && current.current.userId === input.userId && result.status === 'matched' && result.contestId && Date.parse(result.expiresAt) > Date.now()) { close(); navigate(`/contest/${encodeURIComponent(result.contestId)}`); }
     },
   });
   const status = action.data?.status ?? item.duelStatus;
@@ -25,7 +32,7 @@ function NotificationItem({ item, close }: { item: AppNotification; close: () =>
   return <li className={item.readAt ? 'notification-item' : 'notification-item unread'}>
     <p>{item.message}</p><time className="small muted" dateTime={item.createdAt}>{dateTime(item.createdAt)} МСК</time>
     <ErrorMessage error={action.error} />
-    {invitation && status === 'invited' && <div className="notification-actions"><button className="btn primary" disabled={action.isPending} onClick={() => action.mutate('accept')}>Принять дуэль</button><button className="btn secondary" disabled={action.isPending} onClick={() => action.mutate('decline')}>Отклонить</button></div>}
+    {invitation && status === 'invited' && <div className="notification-actions"><button className="btn primary" disabled={action.isPending} onClick={() => action.mutate({ kind: 'accept', key: location.key, userId: user?.id })}>Принять дуэль</button><button className="btn secondary" disabled={action.isPending} onClick={() => action.mutate({ kind: 'decline', key: location.key, userId: user?.id })}>Отклонить</button></div>}
     {status === 'cancelled' && <p className="small muted" role="status">Приглашение отменено.</p>}
     {status === 'declined' && <p className="small muted" role="status">Приглашение отклонено.</p>}
     {status === 'expired' && <p className="small muted" role="status">Срок приглашения истек.</p>}
@@ -73,15 +80,15 @@ export default function Notifications() {
   if (!user) return null;
   const count = notifications.data?.pages[0]?.unreadCount ?? 0;
   return <div className="notifications" ref={root}>
-    <button ref={button} className="notification-toggle" aria-label={`Уведомления${count ? `: ${count} непрочитанных` : ''}`} aria-expanded={opened} aria-controls="notifications-panel" onClick={() => { attempted.current.clear(); read.reset(); setOpened(value => !value); }}>
-      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg><span className="notification-toggle-label">Уведомления</span>{count > 0 && <span className="notification-count" aria-hidden="true">{count > 99 ? '99+' : count}</span>}
+    <button ref={button} className="notification-toggle" title="Уведомления" aria-label={`Уведомления${count ? `: ${count} непрочитанных` : ''}`} aria-expanded={opened} aria-controls="notifications-panel" onClick={() => { attempted.current.clear(); read.reset(); setOpened(value => !value); }}>
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg>{count > 0 && <span className="notification-count" aria-hidden="true">{count > 99 ? '99+' : count}</span>}
     </button>
     {opened && <div className="notifications-panel" id="notifications-panel" role="dialog" aria-label="Уведомления" tabIndex={-1} ref={panel}>
       <div className="notifications-heading"><h2>Уведомления</h2><button className="text-link" aria-label="Закрыть уведомления" onClick={() => { setOpened(false); button.current?.focus(); }}>Закрыть</button></div>
       <ErrorMessage error={notifications.error || read.error} />
       {notifications.error && <button className="text-link" onClick={() => void notifications.refetch()}>Повторить загрузку</button>}
-      {read.error && <button className="text-link" onClick={() => read.mutate(items.filter(item => !item.readAt).map(item => item.id))}>Повторить отметку о прочтении</button>}
-      {notifications.isPending ? <p role="status">Загрузка уведомлений...</p> : items.length ? <ul className="notification-list">{items.map(item => <NotificationItem key={item.id} item={item} close={() => setOpened(false)} />)}</ul> : !notifications.error && <Empty>Новых уведомлений нет.</Empty>}
+      {read.error && <button className="text-link" onClick={() => read.mutate(items.filter(item => !item.readAt).map(item => item.id))}>Отметить прочитанными</button>}
+      {notifications.isPending ? <p role="status">Загрузка уведомлений...</p> : items.length ? <ul className="notification-list">{items.map(item => <NotificationItem key={item.id} item={item} close={() => setOpened(false)} />)}</ul> : !notifications.error && <Empty>Уведомлений пока нет.</Empty>}
       {notifications.hasNextPage && <button className="btn secondary notification-more" disabled={notifications.isFetchingNextPage} onClick={() => void notifications.fetchNextPage()}>{notifications.isFetchingNextPage ? 'Загружаем...' : 'Загрузить еще'}</button>}
     </div>}
   </div>;

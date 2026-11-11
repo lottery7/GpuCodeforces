@@ -90,7 +90,7 @@ class ProblemsController(
         val page = problemListing.page(problemContext, viewer, subject?.id, filter, offset, limit)
         val versions = problemCatalog.versions(page.versionIds)
         val problems = page.versionIds.map { ContextProblem(versions.getValue(it), problemContext) }
-        val measured = problems.associate { it.version.id to references.views(it.version) }
+        val measured = problems.associate { it.version.id to referenceViews(it.version, problemContext) }
         val results = results(problemContext, problems, measured, subject?.id)
         val items = problems.map { it.toApiModel(results.getValue(it.version.problemId), measured.getValue(it.version.id)) }
         return ResponseEntity.ok(ListProblems200Response(items, page.total, page.tags))
@@ -103,16 +103,21 @@ class ProblemsController(
         val version = problem.version
         val spec = problemCatalog.spec(version)
         val format = problemCatalog.format(version)
-        val measured = references.views(version)
+        val measured = referenceViews(version, problemContext)
         val summary = problem.toApiModel(results(problemContext, listOf(problem), mapOf(version.id to measured), viewer?.id).getValue(id), measured)
         val details = problemService.processorsOf(problem).map { processor ->
             val processorSpec = spec.processorSpec(processor)!!
+            val reference = measured[processor]
+            val duel = (problemContext as? ProblemContext.InContest)?.contest?.takeIf { it.format == "duel" }
+            val historical = duel?.benchmarkEnvironmentKey?.let { it != references.environmentKey(processor) } == true
+            val device = reference?.model ?: if (historical && processor == Processors.GPU_CUDA) null else model(processor)
+            val synthetic = reference?.synthetic ?: judgeProperties.synthetic
             ProblemProcessorDetail(
                 processor,
                 version.starters[processor].orEmpty().filterKeys { it in processorSpec.languages },
                 Score(spec.scoreLimit(processorSpec)!!, Processors.get(processor).scoreType).toApiModel(),
-                environments.markdown(spec, version.judgeHash, processor),
-            ).benchmark(benchmark(spec, format, processor, model(processor), judgeProperties.synthetic))
+                environments.markdown(spec, version.judgeHash, processor, device ?: "Окружение дуэли", synthetic, format.aggregation()),
+            ).benchmark(benchmark(spec, format, processor, device, synthetic))
         }
         // a guess has one processor: the answer belongs to the measurements of that processor
         val guessReference = if (version.format == ProblemFormatData.GUESS) measured.values.singleOrNull() else null
@@ -178,12 +183,22 @@ class ProblemsController(
         )
     }
 
-    private fun scope(context: ProblemContext, problems: List<ContextProblem>, gpuEnvironmentKey: String = currentGpuEnvironment()) = ResultScope(
-        (context as? ProblemContext.InContest)?.contest?.id,
-        problems.associate { it.version.problemId to it.version.judgeHash },
-        gpuEnvironmentKey,
-        context.key,
-    )
+    private fun referenceViews(version: ProblemVersion, context: ProblemContext): Map<String, ReferenceMeasurementView> {
+        val duel = (context as? ProblemContext.InContest)?.contest?.takeIf { it.format == "duel" }
+        val environment = duel?.benchmarkEnvironmentKey ?: return references.views(version)
+        val measured = references.viewInEnvironment(version, duel.processor, environment) ?: return emptyMap()
+        return mapOf(duel.processor to measured)
+    }
+
+    private fun scope(context: ProblemContext, problems: List<ContextProblem>, gpuEnvironmentKey: String = currentGpuEnvironment()): ResultScope {
+        val contest = (context as? ProblemContext.InContest)?.contest
+        val duel = contest?.takeIf { it.format == "duel" }
+        return ResultScope(
+            contest?.id, problems.associate { it.version.problemId to it.version.judgeHash },
+            duel?.benchmarkEnvironmentKey ?: gpuEnvironmentKey, context.key, duel?.startAt, duel?.endAt,
+            finishedBefore = duel?.ratingAppliedAt,
+        )
+    }
 
     private fun currentGpuEnvironment(): String = references.environmentKey(Processors.GPU_CUDA) ?: "unavailable"
 

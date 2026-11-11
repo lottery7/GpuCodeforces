@@ -41,6 +41,28 @@ function open(path: string) {
 beforeEach(() => { session.user = owner; });
 
 describe('Решение задачи', () => {
+  it('повторяет финальный GET дуэли после ошибки, не объявляя результат по старому снимку', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T10:00:00Z'));
+    try {
+      const opponent = { ...owner, id: 'opponent', handle: 'opponent' };
+      const room: Contest = { id: 'room', title: 'Дуэль', format: 'duel', challengerId: owner.id, opponentId: opponent.id, startAt: '2026-01-01T09:00:00Z', endAt: '2026-01-01T10:00:02Z', authors: [owner], registered: true, processor: 'gpu-cuda', problemIds: [problem.id], problemCount: 1 };
+      const get = vi.spyOn(api, 'getContest').mockResolvedValueOnce(room).mockRejectedValueOnce(new Error('Нет связи с соревнованием.')).mockResolvedValue(room);
+      vi.spyOn(api, 'getProblem').mockResolvedValue(problem);
+      vi.spyOn(api, 'contestStandings').mockResolvedValue([{ rank: 1, user: owner, solved: 1, totalSeconds: 0, times: {}, bestScore: { value: 1, type: 'TIME_MS' } }, { rank: 2, user: opponent, solved: 0, totalSeconds: 0, times: {} }]);
+      open('/problem/vector-add?contest=room');
+      await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+      expect(screen.getByText('Нет связи с соревнованием.')).toBeVisible();
+      expect(screen.getByRole('button', { name: 'Повторить загрузку соревнования' })).toBeEnabled();
+      expect(screen.queryByText(/Победитель:/)).not.toBeInTheDocument();
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(get).toHaveBeenCalledTimes(3);
+      expect(screen.getByText(/Победитель:/)).toHaveTextContent(owner.handle);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('отправляет дорешивание в архивный контекст без конкурсной регистрации', async () => {
     vi.spyOn(api, 'getProblem').mockResolvedValue(problem);
     vi.spyOn(api, 'getContest').mockResolvedValue({ id: 'round', title: 'Архив', format: 'standard', startAt: '2026-01-01T09:00:00Z', endAt: '2026-01-01T10:00:00Z', authors: [], problemIds: [problem.id], problemCount: 1, registered: false, processor: 'gpu-cuda', finalized: true });
@@ -50,6 +72,20 @@ describe('Решение задачи', () => {
     open('/problem/vector-add?contest=upsolve%3Around');
     await userEvent.click(await screen.findByRole('button', { name: 'Отправить' }));
     expect(submit).toHaveBeenCalledWith({ problemId: problem.id, context: 'upsolve:round', processor: 'gpu-cuda', language: 'cuda', code: starter });
+    expect(join).not.toHaveBeenCalled();
+  });
+
+  it('сдает виртуальную попытку по серверному времени в ее собственный контекст', async () => {
+    vi.spyOn(api, 'getProblem').mockResolvedValue(problem);
+    vi.spyOn(api, 'getVirtual').mockResolvedValue({ id: 'attempt', contestId: 'round', startedAt: '2026-01-01T10:00:00Z', endsAt: '2026-01-01T11:00:00Z', serverNow: '2026-01-01T10:00:01Z', pending: false, solved: 0, totalSeconds: 0, times: {} });
+    vi.spyOn(api, 'getContest').mockResolvedValue({ id: 'round', title: 'Архив', format: 'standard', startAt: '2026-01-01T08:00:00Z', endAt: '2026-01-01T09:00:00Z', authors: [], problemIds: [problem.id], problemCount: 1, registered: false, processor: 'gpu-cuda', finalized: true });
+    const submit = vi.spyOn(api, 'submitSolution').mockResolvedValue({ ...record, context: 'virtual:attempt', status: 'queued' });
+    vi.spyOn(api, 'getSubmission').mockResolvedValue({ ...record, context: 'virtual:attempt', status: 'queued' });
+    const join = vi.spyOn(api, 'registerForContest');
+    open('/problem/vector-add?contest=virtual%3Aattempt');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Отправить' })).toBeEnabled());
+    await userEvent.click(screen.getByRole('button', { name: 'Отправить' }));
+    expect(submit).toHaveBeenCalledWith({ problemId: problem.id, context: 'virtual:attempt', processor: 'gpu-cuda', language: 'cuda', code: starter });
     expect(join).not.toHaveBeenCalled();
   });
 
@@ -65,6 +101,7 @@ describe('Решение задачи', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Проверить взлом' }));
     expect(hack).toHaveBeenCalledWith(record.id, input);
     expect(await screen.findByText(/Тест принят/)).toBeVisible();
+
   });
 
   it('не показывает результат примера как актуальный после правки кода', async () => {
@@ -118,12 +155,12 @@ describe('Процессоры задачи', () => {
     const leaders = vi.spyOn(api, 'problemLeaders').mockResolvedValue([]);
     const submit = vi.spyOn(api, 'submitSolution').mockResolvedValue({ ...record, id: '43', processor: 'rtl', language: 'systemverilog' });
     open('/problem/vector-add');
-    expect(await screen.findByText(/Лимит времени: 2000 мс/)).toBeVisible();
+    expect(await screen.findByText(/Лимит: 2000 мс/)).toBeVisible();
 
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Процессор' }), 'rtl');
 
     expect(await screen.findByLabelText('Код решения на C++ и CUDA')).toHaveValue('module solve; endmodule');
-    expect(screen.getByText(/Лимит тактов × глубины × транзисторов: 100\s000 такты × глубина × транзисторы/)).toBeVisible();
+    expect(screen.getByText(/Лимит: 100\s000 такты × глубина × транзисторы/)).toBeVisible();
     expect(screen.getByText('solution.sv')).toBeVisible();
 
     // the choice survives switching tabs
@@ -146,6 +183,21 @@ describe('Процессоры задачи', () => {
     expect(screen.getByText('Глубина логики')).toBeVisible();
     expect(screen.getByText('Транзисторы')).toBeVisible();
     expect(screen.queryByText(/Время GPU/)).not.toBeInTheDocument();
+  });
+
+  it('переносит код из завершенной дуэли в практику на том же процессоре и языке', async () => {
+    vi.spyOn(api, 'getProblem').mockResolvedValue(twoProcessors);
+    vi.spyOn(api, 'getContest').mockResolvedValue({ id: 'finished', title: 'Дуэль', format: 'duel', processor: 'rtl', startAt: new Date(Date.now() - 7200000).toISOString(), endAt: new Date(Date.now() - 1000).toISOString(), authors: [owner], problemIds: [problem.id], problemCount: 1, registered: true, finalized: true });
+    vi.spyOn(api, 'contestStandings').mockResolvedValue([]);
+    const submit = vi.spyOn(api, 'submitSolution').mockResolvedValue({ ...record, id: '43', contestId: null, processor: 'rtl', language: 'systemverilog' });
+    open('/problem/vector-add?contest=finished&processor=rtl&language=systemverilog');
+    const editor = await screen.findByLabelText('Код решения на C++ и CUDA');
+    fireEvent.change(editor, { target: { value: 'module solve; wire changed; endmodule' } });
+    await userEvent.click(await screen.findByRole('button', { name: 'Продолжить в практике' }));
+    expect(await screen.findByText('solution.sv')).toBeVisible();
+    expect(screen.getByLabelText('Код решения на C++ и CUDA')).toHaveValue('module solve; wire changed; endmodule');
+    await userEvent.click(await screen.findByRole('button', { name: 'Отправить' }));
+    expect(submit).toHaveBeenCalledWith({ problemId: problem.id, processor: 'rtl', language: 'systemverilog', code: 'module solve; wire changed; endmodule' });
   });
 });
 

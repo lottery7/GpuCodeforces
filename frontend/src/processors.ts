@@ -61,7 +61,9 @@ export function useProcessors() {
   const find = (id: string) => processors.find(processor => processor.id === id);
   return {
     processors,
+    isPending: query.isPending,
     error: query.error,
+    refetch: query.refetch,
     find,
     title: (id: string) => find(id)?.title ?? id,
     language: (processor: string, language: string) => find(processor)?.languages.find(item => item.id === language),

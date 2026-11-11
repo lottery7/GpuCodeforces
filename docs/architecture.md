@@ -48,7 +48,8 @@ flowchart TB
 ## Дуэли
 
 Поиск соперника и приглашения хранятся отдельно от начавшейся комнаты. Общая блокировка PostgreSQL
-сериализует подбор, принятие и отмену. Уведомления доступны только своему пользователю.
+сериализует подбор, принятие, отмену и сдачу. Можно вести несколько комнат одновременно;
+ожидающие запросы и история доступны в отдельном списке. Уведомления доступны только своему пользователю.
 
 ```mermaid
 sequenceDiagram
@@ -56,19 +57,22 @@ sequenceDiagram
   participant B as backend
   participant DB as PostgreSQL
   participant C as Соперник
-  A->>B: POST /api/duels (темы и способ поиска)
+  A->>B: POST /api/duels (соперник и конкретная или случайная задача)
   B->>DB: Записать поиск или приглашение
   alt Случайный соперник
     C->>B: POST /api/duels (случайный поиск)
-    B->>DB: Найти совместимый поиск под блокировкой
+    B->>DB: Найти другого ожидающего пользователя под блокировкой
   else Приглашение по нику
     C->>B: GET /api/notifications
     C->>B: POST /api/duels/{id}/accept
   end
-  B->>DB: Выбрать задачу, создать комнату и две регистрации
+  B->>DB: Закрепить задачу и среду, назначить 1/2/3 часа, создать две регистрации
   B->>DB: Уведомления о начале обоим участникам
   B-->>A: matched и contestId
   B-->>C: matched и contestId
+  A->>B: POST /api/contests/{id}/surrender
+  B->>DB: Завершить комнату поражением сдавшегося
+  B-->>C: Уведомление о сдаче
 ```
 
 ## Путь посылки
@@ -206,9 +210,12 @@ classDiagram
     String format
     UUID challengerId
     UUID opponentId
+    UUID surrenderedUserId
+    String benchmarkEnvironmentKey
     Instant hackEndAt
     Instant finalizedAt
     Instant ratingAppliedAt
+    JSON finalDuelResults
     phaseAt(now) ContestPhase
     hacksOpen(now) Boolean
   }
@@ -245,10 +252,9 @@ classDiagram
     String mode
     String processor
     String status
-    String[] topics
+    UUID problemVersionId
     Instant expiresAt
   }
-  class ActiveDuel
   class Notification {
     String type
     Instant createdAt
@@ -296,6 +302,7 @@ classDiagram
     ScoreType scoreType
     Map metrics
     JSON measurement
+    JSON expectedEnvironment
     Int passedTests
     Int totalTests
     String judgeHash
@@ -322,6 +329,7 @@ classDiagram
     BigDecimal score
     ScoreType scoreType
     JSON measurement
+    JSON expectedEnvironment
     String jobId
   }
   ProblemVersion "1" -- "*" ReferenceJob
@@ -330,8 +338,7 @@ classDiagram
   DuelRequest "*" --> "1" User : creator
   DuelRequest "*" --> "0..1" User : opponent
   DuelRequest "*" --> "0..1" Contest
-  ActiveDuel "0..1" --> "1" User
-  ActiveDuel "*" --> "0..1" DuelRequest
+  DuelRequest "*" --> "0..1" ProblemVersion : selected
   Notification "*" --> "1" User
   Notification "*" --> "1" DuelRequest
   Contest "*" --> "*" User : authors

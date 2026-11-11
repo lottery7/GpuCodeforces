@@ -1,15 +1,15 @@
 package dev.gpucodeforces.backend.submission
 
 import dev.gpucodeforces.backend.api.SubmissionsApi
-import dev.gpucodeforces.backend.api.model.ListSubmissions200Response
-import dev.gpucodeforces.backend.api.model.SubmitSolutionRequest
+import dev.gpucodeforces.backend.api.model.BenchmarkAggregation
 import dev.gpucodeforces.backend.api.model.GuessChoice
 import dev.gpucodeforces.backend.api.model.GuessResult
+import dev.gpucodeforces.backend.api.model.ListSubmissions200Response
 import dev.gpucodeforces.backend.api.model.MeasurementSummary
-import dev.gpucodeforces.backend.api.model.BenchmarkAggregation
 import dev.gpucodeforces.backend.api.model.MeasurementTiming
-import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
+import dev.gpucodeforces.backend.api.model.SubmitSolutionRequest
 import dev.gpucodeforces.backend.auth.CurrentUser
+import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
 import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.common.ForbiddenException
 import dev.gpucodeforces.backend.common.UnauthorizedException
@@ -24,16 +24,16 @@ import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.backend.user.UserRepository
 import dev.gpucodeforces.backend.user.UserService
 import dev.gpucodeforces.backend.user.toApiModel
+import dev.gpucodeforces.judge.api.Processors
+import java.math.BigDecimal
+import java.time.ZoneOffset
+import java.util.UUID
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.stereotype.Component
 import org.springframework.web.bind.annotation.RestController
-import dev.gpucodeforces.judge.api.Processors
-import java.math.BigDecimal
 import tools.jackson.databind.json.JsonMapper
-import java.time.ZoneOffset
 import java.time.Instant
-import java.util.UUID
 import dev.gpucodeforces.backend.api.model.Submission as SubmissionApiModel
 
 @RestController
@@ -101,6 +101,9 @@ class SubmissionViews(
         val gpuEnvironmentKey = references.environmentKey(Processors.GPU_CUDA)
         return rows.map { row ->
             val contest = row.contestId?.let { contests.getValue(it) }
+            val duel = contest?.takeIf { it.format == "duel" && row.contextKey == it.id.toString() }
+            val comparableEnvironment = duel?.benchmarkEnvironmentKey ?: gpuEnvironmentKey
+            val finishedBefore = duel?.ratingAppliedAt
             // Accepted results are comparable while the context still judges this problem the same way.
             val contextHash = comparableHashes.getOrPut(row.problemId to row.contestId) { contextJudgeHash(row.problemId, row.contestId) }
             SubmissionApiModel(
@@ -118,7 +121,9 @@ class SubmissionViews(
                 row.score?.let { scoreApiModel(it, row.scoreType!!) },
                 // Scores are compared within a processor; on the real GPU also within the current environment.
                 row.status == SubmissionStatus.ACCEPTED && row.score != null && row.judgeHash == contextHash &&
-                    (row.processor != Processors.GPU_CUDA || gpuEnvironmentKey != null && row.benchmarkEnvironmentKey == gpuEnvironmentKey),
+                    (row.processor != Processors.GPU_CUDA || comparableEnvironment != null && row.benchmarkEnvironmentKey == comparableEnvironment) &&
+                    (duel == null || row.processor == duel.processor && !row.createdAt.isBefore(duel.startAt) && row.createdAt.isBefore(duel.endAt)) &&
+                    (finishedBefore == null || row.finishedAt == null || !row.finishedAt.isAfter(finishedBefore)),
             ).format(SubmissionApiModel.FormatEnum.fromValue(versions.getValue(row.problemVersionId).format))
                 .context(row.contextKey)
         }
@@ -151,11 +156,13 @@ class SubmissionViews(
         // Official code is published once the contest stops taking solutions, yet not to somebody who is solving a
         // contest virtually right now.
         val open = contest != null && submission.official && !now.isBefore(contest.endAt) &&
+            (contest.format != "duel" || viewer != null && (viewer.id == contest.challengerId || viewer.id == contest.opponentId)) &&
             !(viewer != null && virtuals.existsByUserIdAndStartedAtLessThanEqualAndEndsAtGreaterThan(viewer.id, now, now))
         summary.sourcePublic(open)
         summary.recheckAllowed(
             isAuthor && (submission.status == SubmissionStatus.SYSTEM_ERROR || submission.status == SubmissionStatus.MEASUREMENT_ERROR) &&
-                !(submission.official && contest?.finalizedAt != null),
+                !(submission.official && (contest?.finalizedAt != null || contest?.format == "duel" &&
+                    (contest.ratingAppliedAt != null || contest.finalDuelResults != null))),
         )
         summary.hackable(
             open && contest.hacksOpen(now) && submission.status == SubmissionStatus.ACCEPTED && submission.guessChoice == null &&

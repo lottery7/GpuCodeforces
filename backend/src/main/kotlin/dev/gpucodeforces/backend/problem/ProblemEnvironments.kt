@@ -20,12 +20,12 @@ class ProblemEnvironments(
     private val judgeProperties: JudgeProperties,
 ) {
     /** [processor] must be one the problem declares. */
-    fun markdown(spec: ProblemSpec, judgeHash: String, processor: String): String {
+    fun markdown(spec: ProblemSpec, judgeHash: String, processor: String, model: String? = null, synthetic: Boolean? = null, aggregation: String = BenchmarkDefinition.MAX): String {
         val processorSpec = spec.processorSpec(processor) ?: error("problem ${spec.id} does not declare $processor")
         val tests = testsRepository.findById(ProcessorTestsId(judgeHash, processor)).orElse(null)?.tests
         // a mock judge runs nothing: naming hardware would mislead (JUDGE_MODE=mock)
-        val model = if (judgeProperties.synthetic) "тестовый исполнитель, код не исполняется" else processorCatalog.model(processor)
-        return environmentMarkdown(spec, processorSpec, model, tests)
+        val device = if (synthetic ?: judgeProperties.synthetic) "тестовый исполнитель, код не исполняется" else model ?: processorCatalog.model(processor)
+        return environmentMarkdown(spec, processorSpec, device, tests, aggregation)
     }
 
     /** Remembers the tests of an accepted submission, which ran every test of its processor. */

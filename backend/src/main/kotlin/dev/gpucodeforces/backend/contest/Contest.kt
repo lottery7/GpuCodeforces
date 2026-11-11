@@ -1,6 +1,7 @@
 package dev.gpucodeforces.backend.contest
 
 import dev.gpucodeforces.backend.user.User
+import dev.gpucodeforces.judge.api.ScoreType
 import jakarta.persistence.Column
 import jakarta.persistence.Entity
 import jakarta.persistence.FetchType
@@ -9,8 +10,11 @@ import jakarta.persistence.JoinColumn
 import jakarta.persistence.JoinTable
 import jakarta.persistence.ManyToMany
 import jakarta.persistence.Table
+import java.math.BigDecimal
 import java.time.Instant
 import java.util.UUID
+import org.hibernate.annotations.JdbcTypeCode
+import org.hibernate.type.SqlTypes
 
 @Entity
 @Table(name = "contests", schema = "gpucodeforces")
@@ -42,6 +46,13 @@ class Contest(
     val challengerId: UUID? = null,
     @Column(name = "opponent_id")
     val opponentId: UUID? = null,
+    @Column(name = "surrendered_user_id")
+    var surrenderedUserId: UUID? = null,
+    @Column(name = "benchmark_environment_key")
+    var benchmarkEnvironmentKey: String? = null,
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "final_duel_results", columnDefinition = "jsonb")
+    var finalDuelResults: List<FinalDuelResult>? = null,
 ) {
     /** End of the hack period after [endAt]; null when the contest has none. */
     @Column(name = "hack_end_at")
@@ -69,6 +80,10 @@ class Contest(
 
     override fun hashCode() = id.hashCode()
 }
+
+data class FinalDuelResult(val userId: UUID, val score: FinalDuelScore?, val rank: Int, val solved: Int)
+
+data class FinalDuelScore(val value: BigDecimal, val type: ScoreType)
 
 enum class ContestPhase(val value: String) {
     UPCOMING("upcoming"),

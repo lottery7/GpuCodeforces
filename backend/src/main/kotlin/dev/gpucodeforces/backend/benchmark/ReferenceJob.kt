@@ -48,6 +48,7 @@ class ReferenceJob(
     @JdbcTypeCode(SqlTypes.JSON) var measurement: String? = null,
     @Column(name = "measured_at") var measuredAt: Instant? = null,
     var diagnostic: String? = null,
+    @JdbcTypeCode(SqlTypes.JSON) @Column(name = "expected_environment") var expectedEnvironment: String? = null,
 ) {
     val submissionId: String get() = "reference-$id-r$generation"
 }

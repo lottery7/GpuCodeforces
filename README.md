@@ -43,7 +43,9 @@ is empty. The package format is described (in Russian) in
 [docs/backend/problem-package.md](docs/backend/problem-package.md).
 
 Supported formats are ordinary CUDA tasks, optimization of a supplied solution and guessing which of two
-solutions is faster. Duels match a random opponent or start after accepting an invitation; the shared task is selected by topic. Package metadata, participation
+solutions is faster. Duels match a random opponent or start after accepting an invitation. An invitation
+can select a task or use a random one. Duels last one, two or three hours by difficulty and rank the fastest
+accepted code; participants can surrender or play several duels at once. Package metadata, participation
 and scoring are described in [docs/backend/formats.md](docs/backend/formats.md).
 Baseline and guessing variants are measured automatically by the judge. Hardware or test changes
 trigger fresh measurements; packages do not contain manually entered times. See

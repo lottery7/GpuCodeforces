@@ -35,6 +35,11 @@ import dev.gpucodeforces.backend.problem.ProblemVersionRepository
 import dev.gpucodeforces.backend.submission.MeasurementData
 import dev.gpucodeforces.backend.submission.SubmissionRepository
 import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
+import dev.gpucodeforces.backend.contest.ContestProblem
+import dev.gpucodeforces.backend.contest.ContestProblemRepository
+import dev.gpucodeforces.backend.contest.ContestRegistration
+import dev.gpucodeforces.backend.contest.ContestRegistrationRepository
+import dev.gpucodeforces.backend.contest.FinalDuelResult
 import dev.gpucodeforces.judge.api.GpuInfo
 import dev.gpucodeforces.judge.api.JudgeEvent
 import dev.gpucodeforces.judge.api.JudgeResult
@@ -82,8 +87,10 @@ import java.time.temporal.ChronoUnit
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import java.util.UUID
 import dev.gpucodeforces.backend.problem.Problem as StoredProblem
+import dev.gpucodeforces.backend.contest.Contest as StoredContest
 
 /** The whole submission path: REST -> judge gateway (stub) -> events through RabbitMQ -> results everywhere. */
 @Tag("integration")
@@ -119,6 +126,9 @@ class SubmissionIntegrationTest {
 
     @Autowired
     lateinit var transactionTemplate: TransactionTemplate
+
+    @Autowired lateinit var contestProblems: ContestProblemRepository
+    @Autowired lateinit var registrations: ContestRegistrationRepository
 
     @MockitoBean
     lateinit var references: ReferenceMeasurements
@@ -546,6 +556,159 @@ class SubmissionIntegrationTest {
         val recheckRequest = nextGatewayRequest()
         publish(event(recheckRequest, 1, JUDGE_FINISHED, result = measured))
         assertThat(awaitStatus(invalid.id, "accepted", cookie).score!!.value).isEqualByComparingTo("2.0")
+    }
+
+    @Test
+    fun `a duel refuses new measurements from a different environment and resumes when its environment returns`() {
+        val (alice, cookie) = register("duel_cohort_alice")
+        val (bob, _) = register("duel_cohort_bob")
+        val version = problemCatalog.currentVersion("vector_add")!!
+        val room = contests.save(StoredContest(
+            UUID.randomUUID(), "Проверка среды дуэли", Instant.now().minusSeconds(60), Instant.now().plusSeconds(3600), "gpu-cuda",
+            format = "duel", challengerId = UUID.fromString(alice.id), opponentId = UUID.fromString(bob.id),
+            benchmarkEnvironmentKey = "frozen-duel-environment",
+        ))
+        contestProblems.save(ContestProblem(room.id, version.problemId, 0, version.id))
+        registrations.saveAll(listOf(ContestRegistration(room.id, UUID.fromString(alice.id)), ContestRegistration(room.id, UUID.fromString(bob.id))))
+        val body = SubmitSolutionRequest(version.problemId, "void solve() {}", "gpu-cuda", "cuda").contestId(room.id.toString())
+
+        client.post().uri("/submissions").cookie("session", cookie).contentType(MediaType.APPLICATION_JSON)
+            .body(body).exchange().expectStatus().isEqualTo(503)
+
+        given(references.environmentKey("gpu-cuda")).willReturn("frozen-duel-environment")
+        client.post().uri("/submissions").cookie("session", cookie).contentType(MediaType.APPLICATION_JSON)
+            .body(body).exchange().expectStatus().isAccepted
+        assertThat(nextGatewayRequest().problem.id).isEqualTo(problemCatalog.spec(version).id)
+    }
+
+    @Test
+    fun `submission time is captured before a runtime query crosses the duel deadline`() {
+        val handle = "arrival_${UUID.randomUUID().toString().take(8)}"
+        val (alice, cookie) = register(handle)
+        val (bob, _) = register("${handle}_b")
+        val version = problemCatalog.currentVersion("vector_add")!!
+        val room = contests.save(StoredContest(
+            UUID.randomUUID(), "Отправка до таймера", Instant.now().minusSeconds(60), Instant.now().plusSeconds(3600), "gpu-cuda",
+            format = "duel", challengerId = UUID.fromString(alice.id), opponentId = UUID.fromString(bob.id),
+            benchmarkEnvironmentKey = "arrival-environment",
+        ))
+        contestProblems.save(ContestProblem(room.id, version.problemId, 0, version.id))
+        registrations.saveAll(listOf(ContestRegistration(room.id, UUID.fromString(alice.id)), ContestRegistration(room.id, UUID.fromString(bob.id))))
+        val deadline = AtomicReference<Instant>()
+        given(references.environmentKey("gpu-cuda")).willAnswer {
+            if (deadline.get() == null) {
+                val at = Instant.now()
+                deadline.set(at)
+                transactionTemplate.executeWithoutResult { contests.findForUpdate(room.id)!!.endAt = at }
+            }
+            "arrival-environment"
+        }
+        val submission = client.post().uri("/submissions").cookie("session", cookie).contentType(MediaType.APPLICATION_JSON)
+            .body(SubmitSolutionRequest(version.problemId, "void solve() {}", "gpu-cuda", "cuda").contestId(room.id.toString()))
+            .exchange().expectStatus().isAccepted.expectBody(Submission::class.java).returnResult().responseBody!!
+        nextGatewayRequest()
+        assertThat(submissionRepository.findById(UUID.fromString(submission.id)).orElseThrow().createdAt).isBefore(deadline.get())
+    }
+
+    @Test
+    fun `finalization rejects slow admission and rechecks while late verdicts keep their application time`() {
+        val handle = "final_${UUID.randomUUID().toString().take(8)}"
+        val (alice, cookie) = register(handle)
+        val (bob, _) = register("${handle}_b")
+        val aliceId = UUID.fromString(alice.id)
+        val bobId = UUID.fromString(bob.id)
+        val version = problemCatalog.currentVersion("vector_add")!!
+        val room = contests.save(StoredContest(
+            UUID.randomUUID(), "Зафиксированная дуэль", Instant.now().minusSeconds(60), Instant.now().plusSeconds(3600), "gpu-cuda",
+            format = "duel", challengerId = aliceId, opponentId = bobId, benchmarkEnvironmentKey = "final-environment",
+        ))
+        contestProblems.save(ContestProblem(room.id, version.problemId, 0, version.id))
+        registrations.saveAll(listOf(ContestRegistration(room.id, aliceId), ContestRegistration(room.id, bobId)))
+        given(references.environmentKey("gpu-cuda")).willReturn("final-environment")
+        given(references.environmentKeyFor(any(JudgeResult::class.java) ?: JudgeResult(Verdict.ACCEPTED))).willReturn("final-environment")
+        val body = SubmitSolutionRequest(version.problemId, "void solve() {}", "gpu-cuda", "cuda").contestId(room.id.toString())
+        fun send(): Submission = client.post().uri("/submissions").cookie("session", cookie).contentType(MediaType.APPLICATION_JSON)
+            .body(body).exchange().expectStatus().isAccepted.expectBody(Submission::class.java).returnResult().responseBody!!
+        val error = send()
+        val errorRequest = nextGatewayRequest()
+        publish(event(errorRequest, 1, JUDGE_FINISHED, result = finished(Verdict.INTERNAL_ERROR, 0)))
+        awaitStatus(error.id, "system_error", cookie)
+        val late = send()
+        val lateRequest = nextGatewayRequest()
+        val cutoff = AtomicReference<Instant>()
+        given(references.environmentKey("gpu-cuda")).willAnswer {
+            if (cutoff.get() == null) {
+                val at = Instant.now()
+                cutoff.set(at)
+                transactionTemplate.executeWithoutResult {
+                    contests.findForUpdate(room.id)!!.apply {
+                        endAt = at
+                        ratingAppliedAt = at
+                        finalDuelResults = listOf(FinalDuelResult(aliceId, null, 1, 0), FinalDuelResult(bobId, null, 1, 0))
+                    }
+                }
+            }
+            "final-environment"
+        }
+        client.post().uri("/submissions").cookie("session", cookie).contentType(MediaType.APPLICATION_JSON)
+            .body(body).exchange().expectStatus().isBadRequest
+        assertThat(submissionRepository.search(aliceId, version.problemId, null, room.id.toString())).hasSize(2)
+        client.post().uri("/submissions/${error.id}/recheck").cookie("session", cookie).exchange().expectStatus().isBadRequest
+        publish(event(lateRequest, 1, JUDGE_FINISHED, result = finished(Verdict.ACCEPTED, 3)).copy(timestamp = cutoff.get().minusSeconds(1)))
+        val accepted = awaitStatus(late.id, "accepted", cookie)
+        assertThat(accepted.comparable).isFalse()
+        assertThat(submissionRepository.findById(UUID.fromString(late.id)).orElseThrow().finishedAt).isAfter(cutoff.get())
+    }
+
+    @Test
+    fun `ended duel code stays private to its participants while ordinary contest code becomes public`() {
+        val handle = "privacy_${UUID.randomUUID().toString().take(8)}"
+        val (author, authorCookie) = register(handle)
+        val (opponent, opponentCookie) = register("${handle}_b")
+        val (_, outsiderCookie) = register("${handle}_c")
+        val authorId = UUID.fromString(author.id)
+        val opponentId = UUID.fromString(opponent.id)
+        val version = problemCatalog.currentVersion("vector_add")!!
+        val source = "void solve() { const int privateValue = 42; }"
+        fun room(duel: Boolean): StoredContest {
+            val contest = contests.save(StoredContest(
+                UUID.randomUUID(), "Проверка доступа к коду", Instant.now().minusSeconds(60), Instant.now().plusSeconds(3600), "gpu-cuda",
+                format = if (duel) "duel" else "standard", challengerId = authorId.takeIf { duel }, opponentId = opponentId.takeIf { duel },
+                benchmarkEnvironmentKey = "submission-test-environment".takeIf { duel },
+            ))
+            contestProblems.save(ContestProblem(contest.id, version.problemId, 0, version.id))
+            registrations.saveAll(listOf(ContestRegistration(contest.id, authorId), ContestRegistration(contest.id, opponentId)))
+            return contest
+        }
+        fun accepted(contest: StoredContest): String {
+            val submission = client.post().uri("/submissions").cookie("session", authorCookie).contentType(MediaType.APPLICATION_JSON)
+                .body(SubmitSolutionRequest(version.problemId, source, "gpu-cuda", "cuda").contestId(contest.id.toString()))
+                .exchange().expectStatus().isAccepted.expectBody(Submission::class.java).returnResult().responseBody!!
+            val request = nextGatewayRequest()
+            publish(event(request, 1, JUDGE_FINISHED, result = finished(Verdict.ACCEPTED, 3)))
+            awaitStatus(submission.id, "accepted", authorCookie)
+            return submission.id
+        }
+        val duel = room(true)
+        val duelSubmission = accepted(duel)
+        assertThat(fetch(duelSubmission, authorCookie).code).isEqualTo(source)
+        assertThat(fetch(duelSubmission, opponentCookie).code).isNull()
+        transactionTemplate.executeWithoutResult { contests.findForUpdate(duel.id)!!.endAt = Instant.now() }
+        assertThat(fetch(duelSubmission, authorCookie).code).isEqualTo(source)
+        val opponentView = fetch(duelSubmission, opponentCookie)
+        assertThat(opponentView.code).isEqualTo(source)
+        assertThat(opponentView.sourcePublic).isTrue()
+        for (cookie in listOf(null, outsiderCookie)) {
+            val view = fetch(duelSubmission, cookie)
+            assertThat(view.code).isNull()
+            assertThat(view.sourcePublic).isFalse()
+        }
+        val ordinary = room(false)
+        val ordinarySubmission = accepted(ordinary)
+        transactionTemplate.executeWithoutResult { contests.findForUpdate(ordinary.id)!!.endAt = Instant.now() }
+        val publicView = fetch(ordinarySubmission)
+        assertThat(publicView.code).isEqualTo(source)
+        assertThat(publicView.sourcePublic).isTrue()
     }
 
     companion object {

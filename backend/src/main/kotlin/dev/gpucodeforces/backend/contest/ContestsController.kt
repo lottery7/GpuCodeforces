@@ -4,17 +4,19 @@ import dev.gpucodeforces.backend.api.ContestsApi
 import dev.gpucodeforces.backend.api.model.ContestInput
 import dev.gpucodeforces.backend.api.model.GetContestStandings200ResponseInner
 import dev.gpucodeforces.backend.auth.CurrentUser
+import dev.gpucodeforces.backend.duel.DuelService
 import dev.gpucodeforces.backend.user.User
+import java.time.Instant
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.RestController
-import java.time.Instant
 import dev.gpucodeforces.backend.api.model.Contest as ContestApiModel
 import dev.gpucodeforces.backend.api.model.VirtualParticipation as VirtualApiModel
 
 @RestController
 class ContestsController(
     private val contestService: ContestService,
+    private val duelService: DuelService,
     private val virtuals: VirtualParticipationService,
     private val virtualViews: VirtualViews,
 ) : ContestsApi {
@@ -41,7 +43,8 @@ class ContestsController(
         val problems = contestService.problemsOf(contest.id)
         val rulesMarkdown = contestService.buildRulesMarkdown(contest, problems, viewer)
         val registered = viewer != null && contestService.isRegistered(contest.id, viewer.id)
-        return ResponseEntity.ok(contest.toApiModel(problems, viewer, registered, Instant.now(), rulesMarkdown))
+        val now = Instant.now()
+        return ResponseEntity.ok(contest.toApiModel(problems, viewer, registered, now, rulesMarkdown, contestService.resultsPending(contest, now)))
     }
 
     override fun updateContest(id: String, contestInput: ContestInput): ResponseEntity<ContestApiModel> {
@@ -58,8 +61,13 @@ class ContestsController(
     override fun getContestStandings(id: String): ResponseEntity<List<GetContestStandings200ResponseInner>> =
         ResponseEntity.ok(contestService.standings(id))
 
+    override fun surrenderContest(id: String): ResponseEntity<Void> {
+        duelService.surrender(id, CurrentUser.resolve()!!)
+        return ResponseEntity.noContent().build()
+    }
+
     private fun Contest.toSummary(viewer: User?, now: Instant): ContestApiModel {
         val registered = viewer != null && contestService.isRegistered(id, viewer.id)
-        return toApiModel(contestService.problemsOf(id), viewer, registered, now)
+        return toApiModel(contestService.problemsOf(id), viewer, registered, now, resultsPending = contestService.resultsPending(this, now))
     }
 }

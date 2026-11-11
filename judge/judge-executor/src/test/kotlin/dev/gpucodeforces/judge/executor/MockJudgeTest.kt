@@ -99,6 +99,8 @@ class MockJudgeTest {
         assertEquals((1..events.size).toList(), events.map { it.seq })
         assertEquals("mock-1", result.gpu!!.executorId)
         assertEquals("mock-1", result.processor!!.executorId)
+        assertEquals("dev", result.processor!!.executorVersion)
+        assertEquals(false, result.gpu!!.clocksLocked)
         assertEquals(Score(1.0, ScoreType.TIME_MS), result.score)
         assertEquals(setOf("job-1"), events.map { it.jobId }.toSet())
     }

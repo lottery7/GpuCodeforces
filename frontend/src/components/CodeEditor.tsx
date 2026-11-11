@@ -72,6 +72,6 @@ export default function CodeEditor({ value, onChange, readOnly = false, language
       }}
     />
     </div>
-    <div className="editor-status"><span role={status ? 'status' : undefined}>{status || `${settings.status} / UTF-8`}</span><span>Строка {cursor.line}, столбец {cursor.column}</span></div>
+    {!readOnly && <div className="editor-status"><span role={status ? 'status' : undefined}>{status || `${settings.status} / UTF-8`}</span><span>Строка {cursor.line}, столбец {cursor.column}</span></div>}
   </>;
 }

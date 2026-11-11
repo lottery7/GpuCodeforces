@@ -6,6 +6,7 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate
 import org.springframework.stereotype.Repository
 import java.util.UUID
+import java.sql.Timestamp
 
 /** One page of a listing: the versions shown, how many problems match, and the tags of the whole context. */
 class ProblemPage(val versionIds: List<UUID>, val total: Int, val tags: List<String>)
@@ -33,6 +34,7 @@ class ProblemListing(private val jdbc: NamedParameterJdbcTemplate) {
     /** [subjectId] is the user whose solutions `solved` and the best score refer to. */
     fun page(context: ProblemContext, viewer: User?, subjectId: UUID?, filter: ProblemFilter, offset: Int, limit: Int): ProblemPage {
         val contest = (context as? ProblemContext.InContest)?.contest
+        val duel = contest?.takeIf { it.format == "duel" && context.key == it.id.toString() }
         val parameters = MapSqlParameterSource()
             .addValue("contestId", contest?.id)
             .addValue("contextKey", context.key)
@@ -46,7 +48,11 @@ class ProblemListing(private val jdbc: NamedParameterJdbcTemplate) {
             .addValue("processor", filter.processor)
             // a contest runs on one processor: its problems cannot be solved on another one there
             .addValue("processorOffered", contest == null || filter.processor == null || contest.processor == filter.processor)
-            .addValue("environmentKey", filter.gpuEnvironmentKey)
+            .addValue("environmentKey", duel?.benchmarkEnvironmentKey ?: filter.gpuEnvironmentKey)
+            .addValue("duelStart", duel?.startAt?.let(Timestamp::from))
+            .addValue("duelEnd", duel?.endAt?.let(Timestamp::from))
+            .addValue("duelFinishedBefore", duel?.ratingAppliedAt?.let(Timestamp::from))
+            .addValue("duelProcessor", duel?.processor)
             .addValue("offset", offset)
             .addValue("limit", limit)
         // A lookup per current/pinned id prevents a hash join from reading the growing version
@@ -73,7 +79,12 @@ class ProblemListing(private val jdbc: NamedParameterJdbcTemplate) {
             EXISTS (SELECT 1 FROM gpucodeforces.submissions s
                     WHERE s.problem_id = v.problem_id AND s.user_id = CAST(:subjectId AS uuid)
                       AND s.status = 'accepted'
-                      AND (:contextKey = 'practice' OR s.context_key = :contextKey))
+                      AND (:contextKey = 'practice' OR s.context_key = :contextKey)
+                      AND (CAST(:duelStart AS timestamptz) IS NULL OR (
+                          s.created_at >= :duelStart AND s.created_at < :duelEnd
+                          AND s.judge_hash = v.judge_hash AND s.processor = :duelProcessor
+                          AND (:duelProcessor <> 'gpu-cuda' OR s.benchmark_environment_key = :environmentKey)
+                          AND (CAST(:duelFinishedBefore AS timestamptz) IS NULL OR s.finished_at IS NULL OR s.finished_at <= :duelFinishedBefore))))
         """
         @Language("SQL") val filters = """
             AND (CAST(:query AS text) = '' OR strpos(lower(v.code || ' ' || v.title), :query) > 0)
@@ -90,6 +101,8 @@ class ProblemListing(private val jdbc: NamedParameterJdbcTemplate) {
                AND s.status = 'accepted' AND s.judge_hash = v.judge_hash AND s.processor = :processor
                AND s.context_key = :contextKey AND s.score IS NOT NULL
                AND (CAST(:environmentKey AS text) IS NULL OR s.benchmark_environment_key = :environmentKey)
+               AND (CAST(:duelStart AS timestamptz) IS NULL OR (s.created_at >= :duelStart AND s.created_at < :duelEnd))
+               AND (CAST(:duelFinishedBefore AS timestamptz) IS NULL OR s.finished_at IS NULL OR s.finished_at <= :duelFinishedBefore)
              ORDER BY s.score LIMIT 1)
         """
         @Language("SQL") val order = when {

@@ -97,7 +97,7 @@ class JudgePipelineTest {
         val (disposition, result) = process(backend)
         assertEquals(Disposition.ACK, disposition)
         assertEquals(Score(42.0, ScoreType.CYCLES_X_DEPTH_X_TRANSISTORS), result!!.score)
-        assertEquals(ProcessorRun(Processors.RTL, "fake 1.0", "Fake circuit", "exec-1"), result.processor)
+        assertEquals(ProcessorRun(Processors.RTL, "fake 1.0", "Fake circuit", "exec-1", "dev"), result.processor)
         assertTrue(!backend.runDir!!.exists(), "the run directory is removed after the verdict")
     }
 

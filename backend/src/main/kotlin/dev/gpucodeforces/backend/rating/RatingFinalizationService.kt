@@ -3,18 +3,21 @@ package dev.gpucodeforces.backend.rating
 import dev.gpucodeforces.backend.contest.Contest
 import dev.gpucodeforces.backend.contest.ContestRepository
 import dev.gpucodeforces.backend.contest.ContestService
+import dev.gpucodeforces.backend.contest.FinalDuelResult
+import dev.gpucodeforces.backend.contest.FinalDuelScore
 import dev.gpucodeforces.backend.submission.SubmissionStats
 import dev.gpucodeforces.backend.user.UserRating
 import dev.gpucodeforces.backend.user.UserRepository
+import dev.gpucodeforces.judge.api.ScoreType
 import dev.gpucodeforces.backend.submission.HackService
 import dev.gpucodeforces.backend.submission.SubmissionRepository
 import dev.gpucodeforces.backend.submission.SubmissionStatus
-import org.slf4j.LoggerFactory
-import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
+import org.slf4j.LoggerFactory
+import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
 
 @Service
 class RatingFinalizationService(
@@ -28,25 +31,39 @@ class RatingFinalizationService(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    /**
-     * Makes the results of a contest final and applies them to the ratings of its processor: after the hack period,
-     * once the hacks are judged and every accepted submission has passed the tests of the successful ones. Only users
-     * who sent at least one official submission are rated: registering without taking part changes nothing.
-     * Idempotent: a contest with ratingAppliedAt already set is left untouched. Returns whether the rating is applied
-     * now.
-     */
     @Transactional
     fun finalize(contestId: UUID, now: Instant): Boolean {
-        // the lock keeps new official submissions, rechecks and hacks out until the results are final
         val contest = contestRepository.findForUpdate(contestId) ?: return false
         if (contest.ratingAppliedAt != null) return true
         if (now.isBefore(contest.resultsAt)) return false
-        if (!settled(contest, now)) return false
-        contest.finalizedAt = now
+        val finalizedAt = maxOf(now, Instant.now())
+        val forfeit = contest.format == "duel" && contest.surrenderedUserId != null
+        if (contest.format == "duel") {
+            val pending = if (forfeit) 0 else submissionStats.pendingInContest(contest.id, contest.startAt, contest.endAt)
+            if (pending > 0) {
+                if (now.isBefore(contest.endAt.plus(VERDICT_GRACE))) {
+                    log.info("Contest {} ended, rating waits for {} submission(s) still being judged", contest.id, pending)
+                    return false
+                }
+                log.warn("Contest {}: {} submission(s) still unjudged {} after the end, rating is applied without them", contest.id, pending, VERDICT_GRACE)
+            }
+        } else if (!settled(contest, now)) return false
+        contest.finalizedAt = finalizedAt
 
         val processor = contest.processor
-        val participants = submissionStats.contestParticipants(contest.id)
-        val standings = contestService.standings(contestId.toString()).filter { UUID.fromString(it.user.id) in participants }
+        val submitted = if (forfeit) emptySet() else submissionStats.contestParticipants(contest.id)
+        val players = setOfNotNull(contest.challengerId, contest.opponentId)
+        val participants = if (contest.format == "duel") {
+            if (forfeit || submitted.any { it in players }) players else emptySet()
+        } else submitted
+
+        val allStandings = contestService.standings(contestId.toString())
+        if (contest.format == "duel" && contest.finalDuelResults == null) {
+            contest.finalDuelResults = allStandings.map { row ->
+                FinalDuelResult(UUID.fromString(row.user.id), row.bestScore?.let { FinalDuelScore(it.value, ScoreType.valueOf(it.type.value)) }, row.rank, row.solved)
+            }
+        }
+        val standings = allStandings.filter { UUID.fromString(it.user.id) in participants }
         if (standings.isNotEmpty()) {
             val users = userRepository.findAllById(standings.map { UUID.fromString(it.user.id) }).associateBy { it.id }
             val results = standings.map { row ->
@@ -65,7 +82,7 @@ class RatingFinalizationService(
             userRepository.recomputeRanks()
         }
         log.info("Contest {} rating of {} applied to {} participant(s)", contest.id, processor, standings.size)
-        contest.ratingAppliedAt = now
+        contest.ratingAppliedAt = finalizedAt
         contestRepository.save(contest)
         return true
     }

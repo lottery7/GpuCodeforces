@@ -140,6 +140,7 @@ data class ProcessorRun(
     /** What to show a person: "NVIDIA GeForce RTX 3060", "Verilator 5.x + Yosys 0.x". */
     val model: String,
     val executorId: String,
+    val executorVersion: String? = null,
 )
 
 data class TestResult(
@@ -179,6 +180,7 @@ data class GpuInfo(
     val minSmClockMhz: Int? = null,
     val maxSmClockMhz: Int? = null,
     val throttled: Boolean? = null,
+    val clocksLocked: Boolean? = null,
 )
 
 /** Published by executors to `judge.heartbeats` every few seconds. */

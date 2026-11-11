@@ -60,7 +60,7 @@ private const val SUPERSCRIPT_DIGITS = "⁰¹²³⁴⁵⁶⁷⁸⁹"
  * "Environment" block of the problem page for one processor: hardware or emulator, how the judge measures, the
  * limit and the tests of the processor. [tests] are null until the judge has reported them (see ProcessorTests).
  */
-fun environmentMarkdown(spec: ProblemSpec, processor: ProcessorSpec, model: String, tests: List<KnownTest>?): String {
+fun environmentMarkdown(spec: ProblemSpec, processor: ProcessorSpec, model: String, tests: List<KnownTest>?, aggregation: String = BenchmarkDefinition.MAX): String {
     val info = Processors.get(processor.id)
     // Validated with the problem: every declared processor has a limit.
     val limit = spec.scoreLimit(processor)!!
@@ -86,7 +86,8 @@ fun environmentMarkdown(spec: ProblemSpec, processor: ProcessorSpec, model: Stri
         Processors.RTL -> "Интерфейс модуля `${spec.signature.function}` — в шаблоне решения."
         else -> "Сигнатура: `${CSignature.declaration(spec.signature)}`."
     }
-    return (listOf("| Параметр | Значение |", "| --- | --- |") + rows + listOf("", "Score посылки — максимум по замерным тестам. $signature", "", testsMarkdown(tests)))
+    val aggregate = if (aggregation == BenchmarkDefinition.GEOMETRIC_MEAN) "геометрическое среднее по замерным тестам" else "максимум по замерным тестам"
+    return (listOf("| Параметр | Значение |", "| --- | --- |") + rows + listOf("", "Score посылки - $aggregate. $signature", "", testsMarkdown(tests)))
         .joinToString("\n")
 }
 

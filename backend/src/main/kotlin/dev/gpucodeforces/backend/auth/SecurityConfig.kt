@@ -47,7 +47,6 @@ class SecurityConfig(
             }
             .authorizeHttpRequests { authorize ->
                 authorize
-                    .requestMatchers(HttpMethod.GET, "/api/duels/topics").permitAll()
                     .requestMatchers("/api/duels", "/api/duels/**", "/api/notifications", "/api/notifications/**").authenticated()
                     .requestMatchers(HttpMethod.GET, "/api/session").authenticated()
                     .requestMatchers(HttpMethod.DELETE, "/api/session").authenticated()
@@ -62,6 +61,7 @@ class SecurityConfig(
                     .requestMatchers(HttpMethod.POST, "/api/contests").authenticated()
                     .requestMatchers(HttpMethod.PUT, "/api/contests/*").authenticated()
                     .requestMatchers(HttpMethod.PUT, "/api/contests/*/registration").authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/contests/*/surrender").authenticated()
                     .anyRequest().permitAll()
             }
             .addFilterBefore(originCheckFilter, UsernamePasswordAuthenticationFilter::class.java)

@@ -51,10 +51,13 @@ class ProblemService(
         if (context.startsWith(VirtualParticipation.CONTEXT_PREFIX)) {
             val id = context.removePrefix(VirtualParticipation.CONTEXT_PREFIX).toUuidOrBadRequest("Неверная попытка")
             val participation = virtuals.get(id, viewer)
-            return ProblemContext.InContest(contestService.get(participation.contestId.toString()), virtual = participation)
+            val contest = contestService.get(participation.contestId.toString())
+            if (contest.format == "duel") throw BadRequestException("Дуэль нельзя пройти виртуально")
+            return ProblemContext.InContest(contest, virtual = participation)
         }
         if (context.startsWith(ProblemContext.UPSOLVE_PREFIX)) {
             val contest = contestService.get(context.removePrefix(ProblemContext.UPSOLVE_PREFIX))
+            if (contest.format == "duel") throw BadRequestException("После дуэли решайте задачу в практике")
             if (contest.finalizedAt == null) throw BadRequestException("Дождитесь окончательных результатов контеста")
             return ProblemContext.InContest(contest, upsolving = true)
         }

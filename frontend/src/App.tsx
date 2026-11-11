@@ -1,5 +1,7 @@
 import { Component, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router';
+import { useQuery } from '@tanstack/react-query';
+import { api } from './api/client';
 import { useSession } from './auth';
 import { ErrorMessage, PageHeader } from './ui';
 import { userPath } from './utils';
@@ -14,13 +16,14 @@ const Contests = lazy(() => import('./pages/Contests'));
 const Contest = lazy(() => import('./pages/Contest'));
 const ContestEditor = lazy(() => import('./pages/ContestEditor'));
 const Duels = lazy(() => import('./pages/Duels'));
+const NewDuel = lazy(() => import('./pages/NewDuel'));
 const Auth = lazy(() => import('./pages/Auth'));
 const Profile = lazy(() => import('./pages/Profile'));
 const Rating = lazy(() => import('./pages/Rating'));
 const Virtual = lazy(() => import('./pages/Virtual'));
 
 const navigation = [
-  ['/problems', 'Задачи'], ['/contests', 'Соревнования'],
+  ['/problems', 'Задачи'], ['/contests', 'Соревнования'], ['/duels', 'Дуэли'],
   ['/submissions', 'Посылки'], ['/rating', 'Рейтинг'],
 ];
 
@@ -37,6 +40,10 @@ export default function App() {
   const session = useSession();
   const location = useLocation();
   const navigate = useNavigate();
+  const context = location.pathname.startsWith('/problem/') ? new URLSearchParams(location.search).get('contest') : null;
+  const contestId = /^\/contest\/([^/]+)/.exec(location.pathname)?.[1] ?? (context?.startsWith('upsolve:') ? context.slice(8) : context && context !== 'practice' && !context.startsWith('virtual:') ? context : undefined);
+  const room = useQuery({ queryKey: ['contest', contestId, session.user?.id], queryFn: ({ signal }) => api.getContest(contestId ?? '', signal), enabled: Boolean(contestId) && !session.isLoading });
+  const duelRoom = room.data?.format === 'duel';
   const menu = useRef<HTMLDetailsElement>(null);
   const main = useRef<HTMLElement>(null);
   const previousPath = useRef(location.pathname);
@@ -59,7 +66,7 @@ export default function App() {
     finally { setLoggingOut(false); }
   }
   function links() {
-    return navigation.map(([to, title]) => <NavLink key={to} to={to} className={({ isActive }) => isActive || (to === '/contests' && (location.pathname.startsWith('/contest/') || location.pathname.startsWith('/duels'))) || (to === '/problems' && location.pathname.startsWith('/problem/')) || (to === '/submissions' && location.pathname.startsWith('/submission/')) ? 'active' : undefined}>{title}</NavLink>);
+    return navigation.map(([to, title]) => <NavLink key={to} to={to} className={({ isActive }) => isActive || (to === '/contests' && location.pathname.startsWith('/contest/') && !duelRoom) || (to === '/duels' && duelRoom) || (to === '/problems' && location.pathname.startsWith('/problem/') && !duelRoom) || (to === '/submissions' && location.pathname.startsWith('/submission/')) ? 'active' : undefined}>{title}</NavLink>);
   }
   function account() {
     if (session.isLoading) return <span className="muted" role="status">Загрузка...</span>;
@@ -92,7 +99,7 @@ export default function App() {
           <Route path="/contests" element={<Contests />} />
           <Route path="/contests/new" element={new URLSearchParams(location.search).get('format') === 'duel' ? <Navigate to="/duels/new" replace /> : <ContestEditor />} />
           <Route path="/duels" element={<Duels />} />
-          <Route path="/duels/new" element={<Duels />} />
+          <Route path="/duels/new" element={<NewDuel />} />
           <Route path="/contest/:id" element={<Contest />} />
           <Route path="/contest/:id/edit" element={<ContestEditor />} />
           <Route path="/login" element={<Auth key="login" mode="login" />} />

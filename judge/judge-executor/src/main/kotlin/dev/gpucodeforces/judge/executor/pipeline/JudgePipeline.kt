@@ -136,7 +136,7 @@ class JudgePipeline(
     /** [backend] is null when the job never reached a processor. */
     private fun finish(reporter: JobReporter, started: Long, backend: ProcessorBackend?, result: JudgeResult): Disposition {
         val judgeMs = (System.nanoTime() - started) / 1_000_000
-        val run = backend?.let { ProcessorRun(it.info.id, version = it.version, model = it.model, executorId = props.id) }
+        val run = backend?.let { ProcessorRun(it.info.id, version = it.version, model = it.model, executorId = props.id, executorVersion = javaClass.`package`?.implementationVersion ?: "dev") }
         reporter.finish(result.copy(judgeTimeMs = judgeMs, processor = run))
         meters.counter("judge.executor.verdicts", "verdict", result.verdict.name, "processor", backend?.info?.id ?: "none").increment()
         log.info(

@@ -64,6 +64,14 @@ class QueryPlanIntegrationTest {
     @Test
     fun `contest and problem lookups have index paths`() {
         plans.check { contests.findById(id) }
+        plans.check {
+            @Language("SQL") val standardContests = "SELECT id FROM gpucodeforces.contests WHERE format = ? ORDER BY start_at, id"
+            jdbc.queryForList(standardContests, "standard")
+        }
+        plans.check {
+            @Language("SQL") val duelRoom = "SELECT id FROM gpucodeforces.duel_requests WHERE contest_id = ?"
+            jdbc.queryForList(duelRoom, id)
+        }
         plans.check { registrations.existsByIdContestIdAndIdUserId(id, id) }
         plans.check { registrations.findByIdContestId(id) }
         plans.check { contestProblems.findByIdContestIdOrderByPosition(id) }

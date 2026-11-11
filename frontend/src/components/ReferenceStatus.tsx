@@ -7,6 +7,5 @@ export default function ReferenceStatus({ format, measurement }: { format?: stri
   return <section className={`reference-status${failed ? ' failed' : ''}`} aria-label="Эталонный замер" role="status">
     <strong>{failed ? format === 'optimization' ? 'Не удалось измерить исходное решение' : 'Не удалось измерить варианты кода' : format === 'optimization' ? 'Исходное решение измеряется' : 'Варианты кода измеряются'}</strong>
     {failed && measurement.diagnostic && <p>{measurement.diagnostic}</p>}
-    {format === 'guess' && <p>Ответить можно после готовности измерений.</p>}
   </section>;
 }

@@ -13,6 +13,7 @@ fun Contest.toApiModel(
     registered: Boolean,
     now: Instant,
     rulesMarkdown: String? = null,
+    resultsPending: Boolean = false,
 ): ContestApiModel {
     val isAuthor = viewer != null && authors.any { it.id == viewer.id }
     val visibleProblemIds = if (phaseAt(now) == ContestPhase.UPCOMING && !isAuthor) {
@@ -34,6 +35,8 @@ fun Contest.toApiModel(
         .format(ContestApiModel.FormatEnum.fromValue(format))
         .challengerId(challengerId?.toString())
         .opponentId(opponentId?.toString())
+        .surrenderedUserId(surrenderedUserId?.toString())
+        .resultsPending(resultsPending)
         .hackEndAt(hackEndAt?.toOffsetDateTime())
         .finalized(finalizedAt != null)
         .serverNow(now.toOffsetDateTime())

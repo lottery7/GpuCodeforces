@@ -27,6 +27,7 @@ class DuelRequest(
     @Column(name = "created_at") val createdAt: Instant,
     @Column(name = "expires_at") var expiresAt: Instant,
     @Column(name = "contest_id") var contestId: UUID? = null,
+    @Column(name = "problem_version_id") var problemVersionId: UUID? = null,
 ) {
     override fun equals(other: Any?) = this === other || other is DuelRequest && id == other.id
 
@@ -49,6 +50,14 @@ interface DuelRequestRepository : JpaRepository<DuelRequest, UUID> {
 
     fun findByStatusInAndExpiresAtLessThanEqual(statuses: Collection<String>, now: Instant): List<DuelRequest>
 
+    fun findByCreatorIdAndModeAndStatus(creatorId: UUID, mode: String, status: String): DuelRequest?
+
+    fun findByCreatorIdAndStatusInOrderByCreatedAtDesc(creatorId: UUID, statuses: Collection<String>): List<DuelRequest>
+
+    fun findByContestId(contestId: UUID): List<DuelRequest>
+
+    @Query("SELECT r FROM DuelRequest r WHERE r.creatorId = :userId OR r.opponentId = :userId ORDER BY r.createdAt DESC, r.id")
+    fun visibleTo(userId: UUID): List<DuelRequest>
 }
 
 interface ActiveDuelRepository : JpaRepository<ActiveDuel, UUID> {
