@@ -55,13 +55,19 @@ jobs:
             "https://github.com/YosysHQ/oss-cad-suite-build/releases/download/$OSS_CAD_SUITE_DATE/oss-cad-suite-linux-x64-$OSS_CAD_SUITE_STAMP.tgz"
           echo "$OSS_CAD_SUITE_SHA256  $RUNNER_TEMP/oss.tgz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/oss.tgz" -C "$RUNNER_TEMP"
-      # The runner's apt goes to Azure's mirror of Ubuntu first; when its name does not resolve, apt-get retries for
-      # half an hour and fails. The archive itself is slower and there.
-      - name: Ubuntu's own package archive
+      # The names of Ubuntu's archive and of its Azure mirror, which the runner uses, at times do not resolve on the
+      # runners, and apt-get then retries for half an hour and fails. apt takes the first mirror of this list that
+      # answers.
+      - name: More mirrors of Ubuntu's packages
         run: |
-          echo 'http://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt
-          printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' \
+          printf '%b\n' \
+            'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1' \
+            'http://archive.ubuntu.com/ubuntu/\tpriority:2' \
+            'https://mirrors.edge.kernel.org/ubuntu/\tpriority:3' \
+            'https://mirrors.ocf.berkeley.edu/ubuntu/\tpriority:4' | sudo tee /etc/apt/apt-mirrors.txt
+          printf 'Acquire::Retries "2";\nAcquire::http::Timeout "15";\nAcquire::https::Timeout "15";\n' \
             | sudo tee /etc/apt/apt.conf.d/80-judge-ci
+          cat /etc/apt/sources.list.d/ubuntu.sources
       - name: RISC-V cross compilers, QEMU with plugins, the judge plugin
         run: |
           sudo apt-get update
