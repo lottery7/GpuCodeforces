@@ -542,7 +542,9 @@ classDiagram
 реализации: настоящий конвейер и mock (Spring-профиль `mock`). Конвейер выбирает `ProcessorBackend` по процессору
 задания; `GpuCudaBackend` — путь на реальной GPU, `RtlBackend` — схема в Verilator, `RiscvBackend` — RISC-V в QEMU с плагином судьи, `CudaSimBackend` — CUDA в GPGPU-Sim. Эмулируемые процессоры
 наследуют `EmulatorBackend`: в нём общий порядок проверки (сборка, тесты задачи, работник из пула) и цикл по тестам
-`EmulatorRun`, а процессор задаёт только сборку посылки и запуск одного теста. Конфигурация и
+`EmulatorRun`, а процессор задаёт только сборку посылки и запуск одного теста. Сборки эмуляторов хранит общий
+`BuildCache` (каталог на ключ, ошибки сборки тоже кэшируются). `HarnessRunner` разбирает статус-строки обвязки
+`gpu-cuda` в `HarnessLine` и сам решает, могла ли обвязка написать строку в этот момент. Конфигурация и
 утилиты опущены.
 
 ```mermaid
@@ -609,10 +611,15 @@ classDiagram
       launch(TestRun, artifact) SimulatorLaunch
     }
     class EmulatorRun
+    class BuildCache
     class SlotPool
     class Builder
     class ProblemStore
     class HarnessRunner
+    class HarnessLine {
+      <<sealed>>
+      parse(String) HarnessLine
+    }
     class OutputChecker
     class GpuManager
     class Sandbox {
@@ -650,6 +657,7 @@ classDiagram
   GpuCudaBackend ..> Builder
   GpuCudaBackend ..> ProblemStore
   GpuCudaBackend ..> HarnessRunner
+  HarnessRunner ..> HarnessLine
   GpuCudaBackend ..> GpuManager
   GpuManager ..> SlotPool
   EmulatorBackend ..|> ProcessorBackend
@@ -659,10 +667,12 @@ classDiagram
   RtlBackend --|> EmulatorBackend
   RtlBackend ..> RtlBuilder
   RtlBuilder ..> RtlTestbench
+  RtlBuilder ..> BuildCache
   RtlBuilder ..> Sandbox
   RiscvBackend --|> EmulatorBackend
   RiscvBackend ..> RiscvBuilder
   RiscvBuilder ..> RiscvHarness
+  RiscvBuilder ..> BuildCache
   RiscvBuilder ..> Sandbox
   CudaSimBackend --|> EmulatorBackend
   EmulatorRun ..> Sandbox
