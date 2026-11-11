@@ -83,10 +83,10 @@ describe('Список соревнований', () => {
   });
 
   it('группирует соревнования автора сверху', async () => {
-    const mine = { ...contest('live'), id: 'mine', title: 'Мой контест' };
+    const mine = { ...contest('live'), id: 'mine', title: 'Мой контест', authors: [{ ...author, id: 'myself' }] };
     const other = { ...contest('live'), id: 'other', title: 'Чужой контест' };
     vi.spyOn(api, 'listContests').mockResolvedValue([other, mine]);
-    session.user = { ...author, id: 'mine' };
+    session.user = { ...author, id: 'myself' };
     open('/contests');
     const rows = await screen.findAllByRole('row');
     const labels = rows.map(row => row.textContent);

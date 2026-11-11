@@ -172,6 +172,10 @@ hr { margin: 20px 0; border: 0; border-top: 1px solid var(--border); }
 h1, .task-link { overflow-wrap: anywhere; }
 .page-head p { max-width: 800px; margin-top: 6px; color: var(--muted); font-size: var(--font-base); }
 .page-head > .inline, .page-head > .actions { flex-shrink: 0; }
+.hero { display: flex; align-items: center; gap: 18px; margin-bottom: 20px; padding: 26px 28px; }
+.hero-logo { flex-shrink: 0; width: 62px; height: 62px; filter: drop-shadow(0 6px 16px rgba(53, 116, 240, .35)); }
+.hero-title { margin: 0; color: var(--text-strong); font-size: var(--font-2xl); font-weight: 700; letter-spacing: -.4px; }
+.hero-sub { max-width: 760px; margin: 8px 0 0; color: var(--muted); font-size: var(--font-base); }
 .breadcrumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; color: var(--muted); font-size: var(--font-sm); }
 .breadcrumbs a { color: var(--muted); }
 .breadcrumbs a:hover { color: var(--text-strong); }

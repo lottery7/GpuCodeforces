@@ -49,6 +49,10 @@
     return `<div class="page-head"><div><h1>${escape(title)}</h1>${description ? `<p class="muted">${escape(description)}</p>` : ''}</div>${actions ? `<div class="inline">${actions}</div>` : ''}</div>`;
   }
 
+  function hero() {
+    return `<section class="hero"><svg class="hero-logo" viewBox="0 0 40 40" role="img" aria-hidden="true"><rect width="40" height="40" rx="10" fill="#3574f0"/><path d="m14 12 12 8-12 8" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg><div><h1 class="hero-title">GPU Forces</h1><p class="hero-sub">Соревновательная платформа для программистов, где задачи требуют максимально ускорить вычисления на GPU, TPU и других массово-параллельных архитектурах.</p></div></section>`;
+  }
+
   function date(value) {
     return new Date(value).toLocaleString('ru-RU', {timeZone: 'Europe/Moscow', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'});
   }
@@ -232,7 +236,7 @@
     }
     const ratingRows = ratingUsers.map(user => `<tr${user.id === current?.id ? ' class="own-row"' : ''}><td>${rankOf(user.rating)}</td><td>${link('/profile?user=' + encodeURIComponent(user.id), user.handle)}${user.id === current?.id ? ' <span class="small muted">вы</span>' : ''}</td><td class="mono">${user.rating}</td></tr>`);
     const ratingsBlock = top.length ? `<div class="panel"><h2>${ratingTitle}</h2><div class="table-wrap"><table class="data-table"><thead><tr><th scope="col">Место</th><th scope="col">Участник</th><th scope="col">Рейтинг</th></tr></thead><tbody>${ratingRows.join('')}</tbody></table></div></div>` : '<div class="panel"><h2>Ваш рейтинг</h2><p class="muted">Рейтингов пока нет.</p></div>';
-    return `${header('Главная')}<div class="dashboard"><section class="dashboard-main"><div class="dashboard-head"><h2>Последние посылки</h2>${link('/submissions', 'Все посылки')}</div>${submissionsList}</section><aside class="dashboard-side">${contestBlock}${ratingsBlock}</aside></div>`;
+    return `${hero()}<div class="dashboard"><section class="dashboard-main"><div class="dashboard-head"><h2>Последние посылки</h2>${link('/submissions', 'Все посылки')}</div>${submissionsList}</section><aside class="dashboard-side">${contestBlock}${ratingsBlock}</aside></div>`;
   }
 
   function submissions(params, problem = null, context = 'practice') {

@@ -5,7 +5,7 @@ import { api } from '../api/client';
 import type { Contest, User } from '../api/types';
 import { useSession } from '../auth';
 import { useAuthDialog } from '../auth-dialog';
-import { Empty, ErrorMessage, PageHeader, QueryState, UserLink } from '../ui';
+import { Empty, ErrorMessage, QueryState, UserLink } from '../ui';
 import { dateTime, pendingStatuses } from '../utils';
 import { SubmissionTable } from './Submissions';
 
@@ -36,6 +36,7 @@ export default function Home() {
   const queryClient = useQueryClient();
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
+    document.title = 'GPU Forces - Главная';
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
@@ -72,7 +73,10 @@ export default function Home() {
   const contest = upcoming.data?.[0];
 
   return <>
-    <PageHeader title="Главная" />
+    <section className="hero">
+      <svg className="hero-logo" viewBox="0 0 40 40" role="img" aria-hidden="true"><rect width="40" height="40" rx="10" fill="#3574f0" /><path d="m14 12 12 8-12 8" fill="none" stroke="#ffffff" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      <div><h1 className="hero-title">GPU Forces</h1><p className="hero-sub">Соревновательная платформа для программистов, где задачи требуют максимально ускорить вычисления на GPU, TPU и других массово-параллельных архитектурах.</p></div>
+    </section>
     <div className="dashboard">
       <section className="dashboard-main">
         <div className="dashboard-head"><h2>Последние посылки</h2><Link className="text-link" to="/submissions">Все посылки</Link></div>
