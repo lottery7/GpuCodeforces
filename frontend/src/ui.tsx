@@ -7,6 +7,7 @@ import { useAuthDialog } from './auth-dialog';
 import type { Score } from './api/types';
 import { formatScore, scoreUnits } from './processors';
 import { difficultyLabels, pendingStatuses, statusLabels, userPath } from './utils';
+import { serverText, t } from './i18n';
 
 export function PageHeader({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
   useEffect(() => { document.title = 'GPU Forces - ' + title; }, [title]);
@@ -33,21 +34,22 @@ export function ErrorMessage({ error, reveal = false }: { error: unknown; reveal
   const openAuth = useAuthDialog();
   const ref = useFeedbackVisibility(error, reveal);
   if (!error) return null;
-  return <div ref={ref} className="notice error feedback-anchor" role="alert"><div className="error-copy" tabIndex={0}>{error instanceof Error ? error.message : 'Не удалось выполнить запрос.'}</div>{error instanceof ApiError && error.status === 401 && !['/login', '/register'].includes(location.pathname) && <button className="text-link" onClick={() => openAuth('login', location.pathname + location.search)}>Войти</button>}</div>;
+  return <div ref={ref} className="notice error feedback-anchor" role="alert"><div className="error-copy" tabIndex={0}>{error instanceof Error ? serverText(error.message) : t('Не удалось выполнить запрос.')}</div>{error instanceof ApiError && error.status === 401 && !['/login', '/register'].includes(location.pathname) && <button className="text-link" onClick={() => openAuth('login', location.pathname + location.search)}>{t('Войти')}</button>}</div>;
 }
 
 /** The tab of a page that was not found says so instead of keeping the title of the previous page. */
 function MissingTitle() {
-  useEffect(() => { document.title = 'GPU Forces - Не найдено'; }, []);
+  const title = t('GPU Forces - Не найдено');
+  useEffect(() => { document.title = title; }, [title]);
   return null;
 }
 
 export function QueryState({ query, children }: { query: { isPending?: boolean; isLoading?: boolean; error: unknown; data?: unknown; refetch: () => unknown }; children?: ReactNode }) {
-  if (query.isPending || query.isLoading) return <div className="empty" role="status">Загрузка...</div>;
+  if (query.isPending || query.isLoading) return <div className="empty" role="status">{t('Загрузка...')}</div>;
   if (query.error && query.data === undefined) {
     // what is not there will not appear on a second try
     const missing = query.error instanceof ApiError && query.error.status === 404;
-    return <div className="stack">{missing && <MissingTitle />}<ErrorMessage error={query.error} />{!missing && <div><button className="btn secondary" onClick={() => void query.refetch()}>Повторить</button></div>}</div>;
+    return <div className="stack">{missing && <MissingTitle />}<ErrorMessage error={query.error} />{!missing && <div><button className="btn secondary" onClick={() => void query.refetch()}>{t('Повторить')}</button></div>}</div>;
   }
   return <>{query.error && <ErrorMessage error={query.error} />}{children}</>;
 }
@@ -73,7 +75,7 @@ export function RatingDelta({ value }: { value: number | null | undefined }) {
   return <span className={`rating-delta ${cls}`}>{value === null || value === undefined ? '-' : `${value > 0 ? '+' : ''}${value}`}</span>;
 }
 export function Tabs({ items, selected }: { items: { id: string; label: string; to: string }[]; selected: string }) {
-  return <nav className="tabs" aria-label="Разделы страницы">{items.map(item => <Link key={item.id} className={`tab${item.id === selected ? ' active' : ''}`} aria-current={item.id === selected ? 'page' : undefined} to={item.to}>{item.label}</Link>)}</nav>;
+  return <nav className="tabs" aria-label={t('Разделы страницы')}>{items.map(item => <Link key={item.id} className={`tab${item.id === selected ? ' active' : ''}`} aria-current={item.id === selected ? 'page' : undefined} to={item.to}>{item.label}</Link>)}</nav>;
 }
 export function SearchInput({ value, onChange, placeholder, label }: { value: string; onChange: (value: string) => void; placeholder: string; label: string }) {
   const [draft, setDraft] = useState(value);
@@ -93,10 +95,10 @@ export function Pagination({ total, offset, limit, onChange }: { total: number; 
   const pages = Math.max(1, Math.ceil(total / limit));
   const current = Math.floor(offset / limit);
   const indices = [...new Set([0, ...Array.from({ length: 5 }, (_, index) => current - 2 + index).filter(index => index >= 0 && index < pages), pages - 1])].sort((a, b) => a - b);
-  return <nav className="pagination" aria-label="Страницы списка">{indices.map((page, index) => <span key={page} className="page-item">{index > 0 && page - indices[index - 1] > 1 && <span className="muted">...</span>}<button type="button" aria-current={page === current ? 'page' : undefined} className={page === current ? 'active' : undefined} onClick={() => onChange(page * limit)}>{page + 1}</button></span>)}</nav>;
+  return <nav className="pagination" aria-label={t('Страницы списка')}>{indices.map((page, index) => <span key={page} className="page-item">{index > 0 && page - indices[index - 1] > 1 && <span className="muted">...</span>}<button type="button" aria-current={page === current ? 'page' : undefined} className={page === current ? 'active' : undefined} onClick={() => onChange(page * limit)}>{page + 1}</button></span>)}</nav>;
 }
 export function LoginRequired({ returnTo, children }: { returnTo?: string; children?: ReactNode }) {
   const location = useLocation();
   const openAuth = useAuthDialog();
-  return <div className="empty"><p>{children || 'Войдите, чтобы продолжить.'}</p><button className="btn primary" onClick={() => openAuth('login', returnTo || location.pathname + location.search)}>Войти</button></div>;
+  return <div className="empty"><p>{children || t('Войдите, чтобы продолжить.')}</p><button className="btn primary" onClick={() => openAuth('login', returnTo || location.pathname + location.search)}>{t('Войти')}</button></div>;
 }

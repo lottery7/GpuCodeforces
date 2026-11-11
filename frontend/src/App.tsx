@@ -9,6 +9,7 @@ import { userPath } from './utils';
 import Notifications from './components/Notifications';
 import RuntimeNotice from './components/RuntimeNotice';
 import './duels.css';
+import { languages, setLanguage, t, useLanguage } from './i18n';
 const Problems = lazy(() => import('./pages/Problems'));
 const Problem = lazy(() => import('./pages/Problem'));
 const Submissions = lazy(() => import('./pages/Submissions'));
@@ -43,7 +44,7 @@ class PageBoundary extends Component<{ children: ReactNode }, { failed: boolean 
   state = { failed: false };
   static getDerivedStateFromError() { return { failed: true }; }
   render() {
-    if (this.state.failed) return <><PageHeader title="Не удалось открыть страницу" /><p>Обновите страницу и попробуйте снова.</p><button className="btn secondary" onClick={() => window.location.reload()}>Обновить</button></>;
+    if (this.state.failed) return <><PageHeader title={t('Не удалось открыть страницу')} /><p>{t('Обновите страницу и попробуйте снова.')}</p><button className="btn secondary" onClick={() => window.location.reload()}>{t('Обновить')}</button></>;
     return this.props.children;
   }
 }
@@ -52,6 +53,7 @@ function Shell() {
   const session = useSession();
   const location = useLocation();
   const openAuth = useAuthDialog();
+  const language = useLanguage();
   const context = location.pathname.startsWith('/problem/') ? new URLSearchParams(location.search).get('contest') : null;
   const contestId = /^\/contest\/([^/]+)/.exec(location.pathname)?.[1] ?? (context?.startsWith('upsolve:') ? context.slice(8) : context && context !== 'practice' && !context.startsWith('virtual:') ? context : undefined);
   const room = useQuery({ queryKey: ['contest', contestId, session.user?.id], queryFn: ({ signal }) => api.getContest(contestId ?? '', signal), enabled: Boolean(contestId) && !session.isLoading });
@@ -69,28 +71,29 @@ function Shell() {
   }, [location.pathname, location.key]);
   const returnTo = () => location.pathname + location.search;
   function links() {
-    return navigation.map(({ to, title, icon }) => <NavLink key={to} to={to} className={({ isActive }) => isActive || (to === '/contests' && location.pathname.startsWith('/contest/') && !duelRoom) || (to === '/duels' && duelRoom) || (to === '/problems' && location.pathname.startsWith('/problem/') && !duelRoom) || (to === '/submissions' && location.pathname.startsWith('/submission/')) ? 'active' : undefined}><span className="nav-icon" aria-hidden="true">{icon}</span><span>{title}</span></NavLink>);
+    return navigation.map(({ to, title, icon }) => <NavLink key={to} to={to} className={({ isActive }) => isActive || (to === '/contests' && location.pathname.startsWith('/contest/') && !duelRoom) || (to === '/duels' && duelRoom) || (to === '/problems' && location.pathname.startsWith('/problem/') && !duelRoom) || (to === '/submissions' && location.pathname.startsWith('/submission/')) ? 'active' : undefined}><span className="nav-icon" aria-hidden="true">{icon}</span><span>{t(title)}</span></NavLink>);
   }
   function account() {
-    if (session.isLoading) return <span className="muted" role="status">Загрузка...</span>;
-    return session.user ? <Link to={userPath(session.user.id)}>{session.user.handle}</Link> : <button className="text-link" onClick={() => openAuth('login', returnTo())}>Войти</button>;
+    if (session.isLoading) return <span className="muted" role="status">{t('Загрузка...')}</span>;
+    return session.user ? <Link to={userPath(session.user.id)}>{session.user.handle}</Link> : <button className="text-link" onClick={() => openAuth('login', returnTo())}>{t('Войти')}</button>;
   }
   return <>
-    <a className="skip-link" href="#content">К содержимому</a>
+    <a className="skip-link" href="#content">{t('К содержимому')}</a>
     <header className="site-header"><div className="header-inner">
       <Link className="brand" to="/">GPU Forces</Link>
-      <nav className="main-nav" aria-label="Основная навигация">{links()}</nav>
+      <nav className="main-nav" aria-label={t('Основная навигация')}>{links()}</nav>
+      <div className="language-switch" role="group" aria-label={t('Язык интерфейса')}>{languages.map(item => <button key={item.id} type="button" lang={item.id} title={item.title} aria-pressed={language === item.id} onClick={() => setLanguage(item.id)}>{item.short}</button>)}</div>
       <div className="header-notifications"><Notifications /></div>
       <div className="account">{account()}</div>
-      <details ref={menu} className="mobile-nav"><summary>Меню</summary><nav aria-label="Мобильная навигация">{links()}{account()}</nav></details>
+      <details ref={menu} className="mobile-nav"><summary>{t('Меню')}</summary><nav aria-label={t('Мобильная навигация')}>{links()}{account()}</nav></details>
     </div></header>
     <main id="content" ref={main} tabIndex={-1} className="container">
       <div className="global-feedback">
       <RuntimeNotice />
-      {Boolean(session.error) && <div className="session-error"><ErrorMessage error={session.error} /><button className="text-link" onClick={session.refresh}>Проверить соединение</button></div>}
+      {Boolean(session.error) && <div className="session-error"><ErrorMessage error={session.error} /><button className="text-link" onClick={session.refresh}>{t('Проверить соединение')}</button></div>}
       </div>
       <PageBoundary key={location.pathname}>
-        <Suspense fallback={<div className="empty" role="status">Загрузка...</div>}>
+        <Suspense fallback={<div className="empty" role="status">{t('Загрузка...')}</div>}>
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/problems" element={<Problems />} />
@@ -109,7 +112,7 @@ function Shell() {
           <Route path="/virtual" element={<Virtual />} />
           <Route path="/virtual/:id" element={<Virtual />} />
           <Route path="/profile" element={<Profile />} />
-          <Route path="*" element={<><PageHeader title="Страница не найдена" /><Link to="/problems">Перейти к задачам</Link></>} />
+          <Route path="*" element={<><PageHeader title={t('Страница не найдена')} /><Link to="/problems">{t('Перейти к задачам')}</Link></>} />
         </Routes>
         </Suspense>
       </PageBoundary>
@@ -118,5 +121,7 @@ function Shell() {
 }
 
 export default function App() {
+  // every page under App is rendered again when the language is switched, the sign-in dialog included
+  useLanguage();
   return <AuthDialogProvider><Shell /></AuthDialogProvider>;
 }

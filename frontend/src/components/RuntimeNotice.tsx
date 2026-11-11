@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
+import { t } from '../i18n';
 
 function useRuntime(enabled = true) {
   return useQuery({ queryKey: ['runtime'], queryFn: ({ signal }) => api.getRuntime(signal), staleTime: 300000, enabled });
@@ -7,10 +8,10 @@ function useRuntime(enabled = true) {
 
 export function SyntheticResultsNotice({ synthetic }: { synthetic?: boolean }) {
   const runtime = useRuntime(synthetic === true);
-  return synthetic && runtime.data?.executionMode !== 'mock' ? <span className="small muted">Тестовые результаты</span> : null;
+  return synthetic && runtime.data?.executionMode !== 'mock' ? <span className="small muted">{t('Тестовые результаты')}</span> : null;
 }
 
 export default function RuntimeNotice() {
   const runtime = useRuntime();
-  return runtime.data?.executionMode === 'mock' ? <div className="notice runtime-notice" role="status">Локальный стенд: код не выполняется, результаты тестовые.</div> : null;
+  return runtime.data?.executionMode === 'mock' ? <div className="notice runtime-notice" role="status">{t('Локальный стенд: код не выполняется, результаты тестовые.')}</div> : null;
 }

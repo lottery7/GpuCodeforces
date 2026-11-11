@@ -7,9 +7,10 @@ import { useSession } from '../auth';
 import { GPU_CUDA, useProcessors } from '../processors';
 import { Empty, ErrorMessage, LoginRequired, PageHeader, Pagination, SearchInput, UserLink } from '../ui';
 import { difficultyLabels } from '../utils';
+import { t } from '../i18n';
 
 function duration(difficulty: DuelRequest['difficulty']) {
-  return difficulty === 'easy' ? '1 час' : difficulty === 'medium' ? '2 часа' : difficulty === 'hard' ? '3 часа' : 'от 1 до 3 часов';
+  return difficulty === 'easy' ? t('1 час') : difficulty === 'medium' ? t('2 часа') : difficulty === 'hard' ? t('3 часа') : t('от 1 до 3 часов');
 }
 
 type RequestOrigin = { generation: number; userId: string | undefined; requestId: string | null };
@@ -37,9 +38,9 @@ function OpponentInput({ value, onChange, disabled }: { value: string; onChange:
     if (event.key === 'Enter' && opened && options.length) { event.preventDefault(); const person = options[active < 0 ? 0 : active]; if (person) select(person); }
   }
   return <div className="duel-opponent-picker" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setOpened(false); }}>
-    <label className="field"><span>Ник соперника</span><input role="combobox" aria-autocomplete="list" aria-expanded={opened && Boolean(value.trim())} aria-controls={id} aria-activedescendant={opened && active >= 0 && options[active] ? `${id}-${active}` : undefined} required autoComplete="off" placeholder="Начните вводить ник" value={value} disabled={disabled} onChange={event => { onChange(event.target.value); setOpened(true); setActive(-1); }} onFocus={() => setOpened(true)} onKeyDown={key} /></label>
+    <label className="field"><span>{t('Ник соперника')}</span><input role="combobox" aria-autocomplete="list" aria-expanded={opened && Boolean(value.trim())} aria-controls={id} aria-activedescendant={opened && active >= 0 && options[active] ? `${id}-${active}` : undefined} required autoComplete="off" placeholder={t('Начните вводить ник')} value={value} disabled={disabled} onChange={event => { onChange(event.target.value); setOpened(true); setActive(-1); }} onFocus={() => setOpened(true)} onKeyDown={key} /></label>
     {opened && value.trim() && <div className="duel-opponent-results">
-      {!ready || users.isFetching ? <p role="status">Поиск...</p> : users.error ? <ErrorMessage error={users.error} /> : options.length ? <ul ref={list} id={id} role="listbox" aria-label="Участники">{options.map((person, index) => <li role="option" aria-selected={active === index} id={`${id}-${index}`} key={person.id} onMouseDown={event => event.preventDefault()} onClick={() => select(person)}>{person.handle}</li>)}</ul> : <p className="small muted">Участник не найден.</p>}
+      {!ready || users.isFetching ? <p role="status">{t('Поиск...')}</p> : users.error ? <ErrorMessage error={users.error} /> : options.length ? <ul ref={list} id={id} role="listbox" aria-label={t('Участники')}>{options.map((person, index) => <li role="option" aria-selected={active === index} id={`${id}-${index}`} key={person.id} onMouseDown={event => event.preventDefault()} onClick={() => select(person)}>{person.handle}</li>)}</ul> : <p className="small muted">{t('Участник не найден.')}</p>}
     </div>}
   </div>;
 }
@@ -58,28 +59,28 @@ function ProblemPicker({ processor, value, onChange, disabled }: { processor: st
   useEffect(() => { if (editing) search.current?.querySelector('input')?.focus(); else edit.current?.focus(); }, [editing]);
   function select(problem: DuelProblem) { onChange(problem); setEditing(false); }
   return <div className="duel-problem-picker">
-    {value && <div className="duel-selected-problem" aria-label="Выбранная задача">
+    {value && <div className="duel-selected-problem" aria-label={t('Выбранная задача')}>
       <div><strong>{value.code}. {value.title}</strong><span className="small muted">{difficultyLabels[value.difficulty]}</span></div>
-      <button type="button" className="text-link" ref={edit} disabled={disabled} onClick={() => setEditing(current => !current)}>{editing ? 'Оставить выбранную задачу' : 'Изменить задачу'}</button>
+      <button type="button" className="text-link" ref={edit} disabled={disabled} onClick={() => setEditing(current => !current)}>{editing ? t('Оставить выбранную задачу') : t('Изменить задачу')}</button>
     </div>}
     {editing && <div className="duel-problem-search">
       <div className="toolbar" ref={search}>
-        <SearchInput value={q} onChange={value => { setQuery(value); setOffset(0); }} label="Найти задачу" placeholder="Название или номер задачи" />
-        <select aria-label="Сложность задачи" value={difficulty} disabled={disabled} onChange={event => { const value = event.target.value; setDifficulty(value === 'easy' || value === 'medium' || value === 'hard' ? value : ''); setOffset(0); }}>
-          <option value="">Любая сложность</option>{Object.entries(difficultyLabels).map(([value, title]) => <option key={value} value={value}>{title}</option>)}
+        <SearchInput value={q} onChange={value => { setQuery(value); setOffset(0); }} label={t('Найти задачу')} placeholder={t('Название или номер задачи')} />
+        <select aria-label={t('Сложность задачи')} value={difficulty} disabled={disabled} onChange={event => { const value = event.target.value; setDifficulty(value === 'easy' || value === 'medium' || value === 'hard' ? value : ''); setOffset(0); }}>
+          <option value="">{t('Любая сложность')}</option>{Object.entries(difficultyLabels).map(([value, title]) => <option key={value} value={value}>{title}</option>)}
         </select>
-        {(q || difficulty) && <button type="button" className="text-link" disabled={disabled} onClick={() => { setQuery(''); setDifficulty(''); setOffset(0); }}>Сбросить фильтры</button>}
+        {(q || difficulty) && <button type="button" className="text-link" disabled={disabled} onClick={() => { setQuery(''); setDifficulty(''); setOffset(0); }}>{t('Сбросить фильтры')}</button>}
       </div>
-      {problems.isPending ? <p role="status">Ищем задачи...</p> : <>
+      {problems.isPending ? <p role="status">{t('Ищем задачи...')}</p> : <>
         <ErrorMessage error={problems.error} />
-        {problems.data && (problems.data.items.length ? <ul className="duel-problem-results" aria-label="Найденные задачи">{problems.data.items.map(problem => <li key={problem.id}>
+        {problems.data && (problems.data.items.length ? <ul className="duel-problem-results" aria-label={t('Найденные задачи')}>{problems.data.items.map(problem => <li key={problem.id}>
           <button type="button" className={`duel-problem-option${problem.id === value?.id ? ' selected' : ''}`} aria-label={`${problem.code}. ${problem.title}`} disabled={disabled} onClick={() => select(problem)}>
             <span>{problem.code}. {problem.title}</span><span className="small muted">{difficultyLabels[problem.difficulty]}</span>
           </button>
-        </li>)}</ul> : <Empty>{q || difficulty ? 'Задачи не найдены. Измените запрос или сбросьте фильтры.' : 'Пока нет задач для дуэли.'}</Empty>)}
+        </li>)}</ul> : <Empty>{q || difficulty ? t('Задачи не найдены. Измените запрос или сбросьте фильтры.') : t('Пока нет задач для дуэли.')}</Empty>)}
         {problems.data && <Pagination total={problems.data.total} offset={offset} limit={limit} onChange={setOffset} />}
       </>}
-      {problems.error && <button type="button" className="text-link" onClick={() => void problems.refetch()}>Повторить поиск</button>}
+      {problems.error && <button type="button" className="text-link" onClick={() => void problems.refetch()}>{t('Повторить поиск')}</button>}
     </div>}
   </div>;
 }
@@ -103,25 +104,25 @@ function DuelForm({ onCreated, origin }: { onCreated: (request: DuelRequest, ori
     create.mutate({ body: { mode, processor, ...(mode === 'invite' ? { opponentHandle: handle.trim(), ...(needsProblem && selected ? { problemId: selected.id } : {}) } : {}) }, origin: origin() });
   }
   return <form className="panel duel-search-form" onSubmit={submit}>
-    <fieldset disabled={create.isPending} className="duel-mode"><legend>Соперник</legend>
-      <label className="duel-mode-option"><input type="radio" name="duel-mode" checked={mode === 'random'} onChange={() => setMode('random')} /><span>Случайный соперник</span></label>
-      <label className="duel-mode-option"><input type="radio" name="duel-mode" checked={mode === 'invite'} onChange={() => setMode('invite')} /><span>Выбрать соперника</span></label>
+    <fieldset disabled={create.isPending} className="duel-mode"><legend>{t('Соперник')}</legend>
+      <label className="duel-mode-option"><input type="radio" name="duel-mode" checked={mode === 'random'} onChange={() => setMode('random')} /><span>{t('Случайный соперник')}</span></label>
+      <label className="duel-mode-option"><input type="radio" name="duel-mode" checked={mode === 'invite'} onChange={() => setMode('invite')} /><span>{t('Выбрать соперника')}</span></label>
     </fieldset>
-    {catalog.processors.length > 1 && <label className="field"><span>Процессор</span><select aria-label="Процессор дуэли" value={processor} disabled={create.isPending} onChange={event => { setProcessorId(event.target.value); setSelection(null); }}>
+    {catalog.processors.length > 1 && <label className="field"><span>{t('Процессор')}</span><select aria-label={t('Процессор дуэли')} value={processor} disabled={create.isPending} onChange={event => { setProcessorId(event.target.value); setSelection(null); }}>
       {catalog.processors.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
     </select></label>}
-    {catalog.isPending ? <p role="status">Загрузка процессоров...</p> : catalog.error ? <><ErrorMessage error={catalog.error} /><button type="button" className="text-link" onClick={() => void catalog.refetch()}>Повторить загрузку процессоров</button></> : !processor && <Empty>Нет доступных процессоров.</Empty>}
+    {catalog.isPending ? <p role="status">{t('Загрузка процессоров...')}</p> : catalog.error ? <><ErrorMessage error={catalog.error} /><button type="button" className="text-link" onClick={() => void catalog.refetch()}>{t('Повторить загрузку процессоров')}</button></> : !processor && <Empty>{t('Нет доступных процессоров.')}</Empty>}
     {mode === 'invite' ? <>
       <OpponentInput value={handle} onChange={setHandle} disabled={create.isPending} />
-      <fieldset disabled={create.isPending} className="duel-mode"><legend>Задача</legend>
-        <label className="duel-mode-option"><input type="radio" name="duel-task-mode" checked={taskMode === 'random'} onChange={() => setTaskMode('random')} /><span>Случайная задача</span></label>
-        <label className="duel-mode-option"><input type="radio" name="duel-task-mode" checked={taskMode === 'specific'} onChange={() => setTaskMode('specific')} /><span>Выбрать задачу</span></label>
+      <fieldset disabled={create.isPending} className="duel-mode"><legend>{t('Задача')}</legend>
+        <label className="duel-mode-option"><input type="radio" name="duel-task-mode" checked={taskMode === 'random'} onChange={() => setTaskMode('random')} /><span>{t('Случайная задача')}</span></label>
+        <label className="duel-mode-option"><input type="radio" name="duel-task-mode" checked={taskMode === 'specific'} onChange={() => setTaskMode('specific')} /><span>{t('Выбрать задачу')}</span></label>
       </fieldset>
       {needsProblem && !catalogUnavailable && <ProblemPicker key={processor} processor={processor} value={selected} onChange={problem => setSelection({ processor, problem })} disabled={create.isPending} />}
-    </> : <p className="muted">Задача выбирается случайно.</p>}
-    <p className="small muted">Длительность: {duration(needsProblem ? selected?.difficulty : undefined)}.</p>
+    </> : <p className="muted">{t('Задача выбирается случайно.')}</p>}
+    <p className="small muted">{t('Длительность:')} {duration(needsProblem ? selected?.difficulty : undefined)}.</p>
     <ErrorMessage error={create.error} reveal />
-    <button className="btn primary" disabled={blocked}>{create.isPending ? mode === 'random' ? 'Начинаем поиск...' : 'Отправляем приглашение...' : mode === 'random' ? 'Найти соперника' : 'Пригласить на дуэль'}</button>
+    <button className="btn primary" disabled={blocked}>{create.isPending ? mode === 'random' ? t('Начинаем поиск...') : t('Отправляем приглашение...') : mode === 'random' ? t('Найти соперника') : t('Пригласить на дуэль')}</button>
   </form>;
 }
 
@@ -163,23 +164,23 @@ export default function NewDuel() {
       navigate(`/contest/${encodeURIComponent(request.contestId)}`, { replace: true });
     }
   }, [request, navigate, cache]);
-  if (isLoading) return <p role="status">Загрузка аккаунта...</p>;
-  if (!user) return <><PageHeader title="Новая дуэль" /><LoginRequired returnTo={location.pathname + location.search}>Войдите, чтобы найти соперника или пригласить друга.</LoginRequired></>;
+  if (isLoading) return <p role="status">{t('Загрузка аккаунта...')}</p>;
+  if (!user) return <><PageHeader title={t('Новая дуэль')} /><LoginRequired returnTo={location.pathname + location.search}>{t('Войдите, чтобы найти соперника или пригласить друга.')}</LoginRequired></>;
   const pending = request && ['queued', 'invited'].includes(request.status);
   const recipient = request?.opponent?.id === user.id;
   const ended = request?.status === 'matched' && Date.parse(request.expiresAt) <= Date.now();
   return <div className="duels-page">
-    <PageHeader title={request ? 'Дуэль' : 'Новая дуэль'} actions={<Link className="text-link" to="/duels">Мои дуэли</Link>} />
-    {id && query.isPending && !request ? <p role="status">Загрузка дуэли...</p> : id && query.error && !request ? <><ErrorMessage error={query.error} /><button className="btn secondary" onClick={() => void query.refetch()}>Повторить</button></> : request ? <section className="panel duel-waiting" aria-label="Состояние дуэли">
-      <h2 aria-live="polite">{ended ? 'Дуэль завершена' : ({ queued: 'Поиск соперника', invited: recipient ? 'Приглашение на дуэль' : 'Приглашение отправлено', matched: 'Соперник найден', declined: 'Приглашение отклонено', cancelled: request.mode === 'random' ? 'Поиск отменен' : 'Приглашение отменено', expired: 'Время ожидания истекло' })[request.status]}</h2>
-      {request.mode === 'invite' && <p>{recipient ? <><UserLink user={request.creator} /> приглашает вас на дуэль.</> : request.opponent && <>Соперник: <UserLink user={request.opponent} />.</>}</p>}
-      {request.problemTitle && <p>Задача: {request.problemTitle}.</p>}
-      <p className="small muted">Процессор: {catalog.title(request.processor)}.</p>
-      <p className="small muted">Длительность: {duration(request.difficulty)}.</p>
+    <PageHeader title={request ? t('Дуэль') : t('Новая дуэль')} actions={<Link className="text-link" to="/duels">{t('Мои дуэли')}</Link>} />
+    {id && query.isPending && !request ? <p role="status">{t('Загрузка дуэли...')}</p> : id && query.error && !request ? <><ErrorMessage error={query.error} /><button className="btn secondary" onClick={() => void query.refetch()}>{t('Повторить')}</button></> : request ? <section className="panel duel-waiting" aria-label={t('Состояние дуэли')}>
+      <h2 aria-live="polite">{ended ? t('Дуэль завершена') : ({ queued: t('Поиск соперника'), invited: recipient ? t('Приглашение на дуэль') : t('Приглашение отправлено'), matched: t('Соперник найден'), declined: t('Приглашение отклонено'), cancelled: request.mode === 'random' ? t('Поиск отменен') : t('Приглашение отменено'), expired: t('Время ожидания истекло') })[request.status]}</h2>
+      {request.mode === 'invite' && <p>{recipient ? <><UserLink user={request.creator} /> {t('приглашает вас на дуэль.')}</> : request.opponent && <>{t('Соперник:')} <UserLink user={request.opponent} />.</>}</p>}
+      {request.problemTitle && <p>{t('Задача:')} {request.problemTitle}.</p>}
+      <p className="small muted">{t('Процессор:')} {catalog.title(request.processor)}.</p>
+      <p className="small muted">{t('Длительность:')} {duration(request.difficulty)}.</p>
       <ErrorMessage error={query.error || action.error} reveal />
-      <div className="duel-request-actions">{request.status === 'invited' && recipient ? <><button className="btn primary" disabled={action.isPending} onClick={() => actOnRequest('accept')}>Принять дуэль</button><button className="btn secondary" disabled={action.isPending} onClick={() => actOnRequest('decline')}>Отклонить</button></> : pending && request.creator.id === user.id ? <button className="btn secondary" disabled={action.isPending} onClick={() => actOnRequest('cancel')}>{action.isPending ? 'Отменяем...' : request.status === 'queued' ? 'Отменить поиск' : 'Отменить приглашение'}</button> : null}
-        <Link className="btn secondary" to="/duels/new" onClick={() => action.reset()}>Новая дуэль</Link>
-        {request.contestId && <Link className="btn primary" to={`/contest/${encodeURIComponent(request.contestId)}`}>Открыть дуэль</Link>}
+      <div className="duel-request-actions">{request.status === 'invited' && recipient ? <><button className="btn primary" disabled={action.isPending} onClick={() => actOnRequest('accept')}>{t('Принять дуэль')}</button><button className="btn secondary" disabled={action.isPending} onClick={() => actOnRequest('decline')}>{t('Отклонить')}</button></> : pending && request.creator.id === user.id ? <button className="btn secondary" disabled={action.isPending} onClick={() => actOnRequest('cancel')}>{action.isPending ? t('Отменяем...') : request.status === 'queued' ? t('Отменить поиск') : t('Отменить приглашение')}</button> : null}
+        <Link className="btn secondary" to="/duels/new" onClick={() => action.reset()}>{t('Новая дуэль')}</Link>
+        {request.contestId && <Link className="btn primary" to={`/contest/${encodeURIComponent(request.contestId)}`}>{t('Открыть дуэль')}</Link>}
       </div>
     </section> : <DuelForm key={user.id} onCreated={keepRequest} origin={origin} />}
   </div>;

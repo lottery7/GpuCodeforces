@@ -187,6 +187,7 @@ h1, .task-link { overflow-wrap: anywhere; }
 .dashboard-main, .dashboard-side { min-width: 0; }
 .dashboard-main .data-table td:nth-child(2) { white-space: normal; }
 .dashboard-main .data-table th:last-child, .dashboard-main .data-table td:last-child { display: none; }
+.dashboard-main .data-table .score-unit { display: block; }
 .dashboard-side { display: flex; flex-direction: column; gap: 19.2px; }
 .dashboard-head { display: flex; align-items: baseline; justify-content: space-between; gap: 14.4px; margin-bottom: 14.4px; }
 .dashboard-head h2 { margin: 0; }

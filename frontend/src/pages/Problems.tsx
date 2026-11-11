@@ -6,6 +6,7 @@ import { useSession } from '../auth';
 import { useProcessors } from '../processors';
 import { Difficulty, Empty, PageHeader, Pagination, QueryState, ScoreValue, SearchInput } from '../ui';
 import { difficultyLabels, formatLabels, problemPath } from '../utils';
+import { t } from '../i18n';
 
 const limit = 20;
 
@@ -54,57 +55,57 @@ export default function Problems() {
   const percent = totalCount ? Math.round(solvedCount / totalCount * 100) : 0;
   const cards = problems.data && <aside className="progress-stack">
     <section className="panel progress-card">
-      <span className="progress-card-label">Решено задач</span>
-      <span className="progress-card-value"><strong>{solvedCount}</strong><span className="muted"> из {totalCount}</span></span>
-      <div className="progress-track" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100} aria-label="Прогресс решения задач"><div className="progress-fill" style={{ width: `${percent}%` }} /></div>
-      <span className="progress-card-caption small muted">{percent}% задач из пула</span>
+      <span className="progress-card-label">{t('Решено задач')}</span>
+      <span className="progress-card-value"><strong>{solvedCount}</strong><span className="muted"> {t('из')} {totalCount}</span></span>
+      <div className="progress-track" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100} aria-label={t('Прогресс решения задач')}><div className="progress-fill" style={{ width: `${percent}%` }} /></div>
+      <span className="progress-card-caption small muted">{percent}{t('% задач из пула')}</span>
     </section>
     <section className="panel progress-card streak-card">
-      <span className="progress-card-label"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3 1.072-2.143 2.5-3.5 3.5-3.5S15 7 16 8s.5 1.5.5 2.5c0 1.38-.5 2.5-.5 2.5s1-1 1.5-2.5c.5 1.5 1 3 1 4.5A6 6 0 1 1 9 11c.5.5 1 1.5 1 2.5 0 .64-.042 1.073-.5 1z" /></svg>Серия</span>
-      <span className="progress-card-value"><strong>{streak}</strong><span className="muted"> дн.</span></span>
-      <span className="progress-card-caption small muted">дней подряд с принятым решением{personal ? '' : ' (войдите, чтобы считать)'}</span>
+      <span className="progress-card-label"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3 1.072-2.143 2.5-3.5 3.5-3.5S15 7 16 8s.5 1.5.5 2.5c0 1.38-.5 2.5-.5 2.5s1-1 1.5-2.5c.5 1.5 1 3 1 4.5A6 6 0 1 1 9 11c.5.5 1 1.5 1 2.5 0 .64-.042 1.073-.5 1z" /></svg>{t('Серия')}</span>
+      <span className="progress-card-value"><strong>{streak}</strong><span className="muted"> {t('дн.')}</span></span>
+      <span className="progress-card-caption small muted">{t('дней подряд с принятым решением')}{personal ? '' : t(' (войдите, чтобы считать)')}</span>
     </section>
   </aside>;
   return <>
-    <PageHeader title={target ? 'Задачи участника' : 'Задачи'} />
+    <PageHeader title={target ? t('Задачи участника') : t('Задачи')} />
     <div className="problems-layout">
       <div className="problems-main">
     <div className="toolbar">
-      <SearchInput value={params.get('q') || ''} onChange={value => patch({ q: value })} placeholder="Название или номер задачи" label="Найти задачу" />
-      <select aria-label="Процессор" value={processor} onChange={event => {
+      <SearchInput value={params.get('q') || ''} onChange={value => patch({ q: value })} placeholder={t('Название или номер задачи')} label={t('Найти задачу')} />
+      <select aria-label={t('Процессор')} value={processor} onChange={event => {
         const value = event.target.value;
         // the best score needs a processor: without one the list goes back to the default order
         patch({ processor: value, sort: !value && sort === 'bestScore' ? undefined : params.get('sort') || undefined });
       }}>
-        <option value="">Все процессоры</option>
+        <option value="">{t('Все процессоры')}</option>
         {catalog.processors.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
       </select>
-      <select aria-label="Формат задачи" value={format} onChange={event => patch({ format: event.target.value })}>
-        <option value="">Все форматы</option>{Object.entries(formatLabels).map(([value, title]) => <option key={value} value={value}>{title}</option>)}
+      <select aria-label={t('Формат задачи')} value={format} onChange={event => patch({ format: event.target.value })}>
+        <option value="">{t('Все форматы')}</option>{Object.entries(formatLabels).map(([value, title]) => <option key={value} value={value}>{title}</option>)}
       </select>
-      <select aria-label="Сложность" value={difficulty} onChange={event => patch({ difficulty: event.target.value })}>
-        <option value="">Сложность</option>
+      <select aria-label={t('Сложность')} value={difficulty} onChange={event => patch({ difficulty: event.target.value })}>
+        <option value="">{t('Сложность')}</option>
         {Object.entries(difficultyLabels).map(([value, title]) => <option key={value} value={value}>{title}</option>)}
       </select>
-      {personal && <select aria-label="Статус решения" value={status} onChange={event => patch({ status: event.target.value })}>
-        <option value="">Статус</option><option value="solved">Решена</option><option value="unsolved">Не решена</option>
+      {personal && <select aria-label={t('Статус решения')} value={status} onChange={event => patch({ status: event.target.value })}>
+        <option value="">{t('Статус')}</option><option value="solved">{t('Решена')}</option><option value="unsolved">{t('Не решена')}</option>
       </select>}
-      <select aria-label="Тема" value={params.get('tag') || ''} onChange={event => patch({ tag: event.target.value })}>
-        <option value="">Тема</option>
+      <select aria-label={t('Тема')} value={params.get('tag') || ''} onChange={event => patch({ tag: event.target.value })}>
+        <option value="">{t('Тема')}</option>
         {problems.data?.tags.map(tag => <option key={tag}>{tag}</option>)}
       </select>
-      {hasFilters && <button className="text-link filter-reset" onClick={() => setParams(target ? { user: target } : {})}>Сбросить</button>}
+      {hasFilters && <button className="text-link filter-reset" onClick={() => setParams(target ? { user: target } : {})}>{t('Сбросить')}</button>}
     </div>
     <QueryState query={problems}>
       {problems.data && <>{problems.data.items.length ?
         <div className="panel table-wrap">
-          <table className={`data-table problem-table${personal ? '' : ' guest'}`} aria-label="Банк задач">
-            <thead><tr><th aria-label="Решена" /><th><button className="text-link" onClick={() => patch({ sort: 'code' })}>Задача</button></th><th><button className="text-link" onClick={() => patch({ sort: 'difficulty' })}>Сложность</button></th><th className="num">Решили</th>{scores && <th className="num">Рекорд</th>}{scores && personal && <th className="num"><button className="text-link" onClick={() => patch({ sort: 'bestScore' })}>Личный рекорд</button></th>}</tr></thead>
+          <table className={`data-table problem-table${personal ? '' : ' guest'}`} aria-label={t('Банк задач')}>
+            <thead><tr><th aria-label={t('Решена')} /><th><button className="text-link" onClick={() => patch({ sort: 'code' })}>{t('Задача')}</button></th><th><button className="text-link" onClick={() => patch({ sort: 'difficulty' })}>{t('Сложность')}</button></th><th className="num">{t('Решили')}</th>{scores && <th className="num">{t('Рекорд')}</th>}{scores && personal && <th className="num"><button className="text-link" onClick={() => patch({ sort: 'bestScore' })}>{t('Личный рекорд')}</button></th>}</tr></thead>
             <tbody>{problems.data.items.map(problem => {
               const onProcessor = problem.processors.find(item => item.id === processor);
               const guess = problem.format === 'guess';
               return <tr key={problem.id}>
-                <td>{problem.solved && <span className="accepted" aria-label="Решена">✓</span>}</td>
+                <td>{problem.solved && <span className="accepted" aria-label={t('Решена')}>✓</span>}</td>
                 <td><Link className="task-link" to={problemPath(problem.id, 'practice', undefined, onProcessor ? { processor: onProcessor.id, language: onProcessor.languages[0] ?? '' } : undefined)}>{problem.code}. {problem.title}</Link><div className="subline">{problem.tags.map((tag, index) => <span key={tag}>{index > 0 && ' / '}<button className="text-link tag" onClick={() => patch({ tag })}>{tag}</button></span>)}{!processor && problem.processors.length > 0 && <span className="muted"> · {problem.processors.map(item => catalog.title(item.id)).join(', ')}</span>}</div></td>
                 <td><Difficulty difficulty={problem.difficulty} /><div className="subline">{formatLabels[problem.format ?? 'standard']}</div></td><td className="num">{problem.solvedCount}</td>
                 {scores && <td className="num">{guess ? '-' : <ScoreValue score={onProcessor?.recordScore} />}</td>}
@@ -112,7 +113,7 @@ export default function Problems() {
               </tr>;
             })}</tbody>
           </table>
-        </div> : <Empty>{hasFilters ? 'Задачи не найдены. Измените запрос или сбросьте фильтры.' : 'В банке пока нет задач.'}</Empty>}
+        </div> : <Empty>{hasFilters ? t('Задачи не найдены. Измените запрос или сбросьте фильтры.') : t('В банке пока нет задач.')}</Empty>}
         <Pagination total={problems.data.total} offset={offset} limit={limit} onChange={value => { const next = new URLSearchParams(params); value ? next.set('offset', String(value)) : next.delete('offset'); setParams(next); }} />
       </>}
     </QueryState>

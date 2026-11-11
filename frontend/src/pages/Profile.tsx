@@ -7,8 +7,9 @@ import { useProcessors } from '../processors';
 import { Empty, ErrorMessage, LoginRequired, PageHeader, QueryState, RatingDelta } from '../ui';
 import { pendingStatuses } from '../utils';
 import { SubmissionTable } from './Submissions';
+import { t, translated } from '../i18n';
 
-const phases = { upcoming: 'До начала', live: 'Идет', finished: 'Завершен' };
+const phases = translated({ upcoming: 'До начала', live: 'Идет', finished: 'Завершен' });
 
 export default function Profile() {
   const [params] = useSearchParams();
@@ -49,34 +50,34 @@ export default function Profile() {
     previous.current = new Map(items.map(item => [item.id, item.status]));
   }, [id, recent.data, queryClient]);
 
-  if (isLoading) return <p className="loading" role="status">Загрузка профиля...</p>;
-  if (!id) return <><PageHeader title="Профиль" /><LoginRequired>Войдите, чтобы посмотреть свои результаты.</LoginRequired></>;
+  if (isLoading) return <p className="loading" role="status">{t('Загрузка профиля...')}</p>;
+  if (!id) return <><PageHeader title={t('Профиль')} /><LoginRequired>{t('Войдите, чтобы посмотреть свои результаты.')}</LoginRequired></>;
   const data = profile.data;
   const own = data?.user.id === user?.id;
   const encoded = encodeURIComponent(id);
 
   return <>
-    <PageHeader title={data?.user.handle || 'Профиль'} actions={data && <div className="inline"><Link className="btn secondary" to={`/submissions?user=${encoded}`}>{own ? 'Мои посылки' : 'Посылки участника'}</Link>{own && <button className="btn secondary" onClick={() => void signOut()} disabled={busy}>{busy ? 'Выход...' : 'Выйти'}</button>}</div>} />
+    <PageHeader title={data?.user.handle || t('Профиль')} actions={data && <div className="inline"><Link className="btn secondary" to={`/submissions?user=${encoded}`}>{own ? t('Мои посылки') : t('Посылки участника')}</Link>{own && <button className="btn secondary" onClick={() => void signOut()} disabled={busy}>{busy ? t('Выход...') : t('Выйти')}</button>}</div>} />
     {logoutError && <ErrorMessage error={logoutError} />}
     <QueryState query={profile}>
       {data && <>
         <div className="metrics">
-          {Object.keys(data.user.ratings).length ? Object.entries(data.user.ratings).map(([processor, rating]) => <span key={processor}>Рейтинг ({catalog.title(processor)}): <Link to={`/rating?processor=${encodeURIComponent(processor)}`}><strong>{rating.rating}</strong></Link>{rating.ratingDelta !== null && rating.ratingContestId && <> <Link className="small" to={`/contest/${encodeURIComponent(rating.ratingContestId)}?tab=standings`}><RatingDelta value={rating.ratingDelta} /> после последнего контеста</Link></>}</span>)
-            : <span>Рейтинг: <strong>Нет рейтинга</strong></span>}
-          <span>Решено: <Link to={`/problems?user=${encoded}&status=solved`}>{data.solvedCount}</Link></span>
-          <span>Контесты: <strong>{data.contests.length}</strong></span>
+          {Object.keys(data.user.ratings).length ? Object.entries(data.user.ratings).map(([processor, rating]) => <span key={processor}>{t('Рейтинг (')}{catalog.title(processor)}): <Link to={`/rating?processor=${encodeURIComponent(processor)}`}><strong>{rating.rating}</strong></Link>{rating.ratingDelta !== null && rating.ratingContestId && <> <Link className="small" to={`/contest/${encodeURIComponent(rating.ratingContestId)}?tab=standings`}><RatingDelta value={rating.ratingDelta} /> {t('после последнего контеста')}</Link></>}</span>)
+            : <span>{t('Рейтинг:')} <strong>{t('Нет рейтинга')}</strong></span>}
+          <span>{t('Решено:')} <Link to={`/problems?user=${encoded}&status=solved`}>{data.solvedCount}</Link></span>
+          <span>{t('Контесты:')} <strong>{data.contests.length}</strong></span>
         </div>
         <section className="stack">
-          {data.user.id === user?.id && <p><Link to="/virtual">Мои виртуальные контесты</Link></p>}
-          <h2>Последние посылки</h2>
+          {data.user.id === user?.id && <p><Link to="/virtual">{t('Мои виртуальные контесты')}</Link></p>}
+          <h2>{t('Последние посылки')}</h2>
           <QueryState query={recent}>
-            {recent.data && (recent.data.items.length ? <SubmissionTable items={recent.data.items} /> : <Empty><p>Посылок пока нет.</p>{own && <Link className="btn secondary" to="/problems">Выбрать задачу</Link>}</Empty>)}
+            {recent.data && (recent.data.items.length ? <SubmissionTable items={recent.data.items} /> : <Empty><p>{t('Посылок пока нет.')}</p>{own && <Link className="btn secondary" to="/problems">{t('Выбрать задачу')}</Link>}</Empty>)}
           </QueryState>
-          <h2>Соревнования</h2>
-          {data.contests.length ? <div className="table-wrap"><table className="data-table" aria-label="История соревнований участника"><thead><tr><th>Соревнование</th><th>Процессор</th><th>Статус</th><th className="num">Место</th><th className="num">Изменение рейтинга</th><th className="num">Рейтинг после контеста</th></tr></thead><tbody>{data.contests.map(contest => <tr key={contest.id}>
+          <h2>{t('Соревнования')}</h2>
+          {data.contests.length ? <div className="table-wrap"><table className="data-table" aria-label={t('История соревнований участника')}><thead><tr><th>{t('Соревнование')}</th><th>{t('Процессор')}</th><th>{t('Статус')}</th><th className="num">{t('Место')}</th><th className="num">{t('Изменение рейтинга')}</th><th className="num">{t('Рейтинг после контеста')}</th></tr></thead><tbody>{data.contests.map(contest => <tr key={contest.id}>
             <td><Link to={`/contest/${encodeURIComponent(contest.id)}${contest.phase === 'upcoming' ? '' : '?tab=standings'}`}>{contest.title}</Link></td>
             <td>{catalog.title(contest.processor)}</td><td>{phases[contest.phase]}</td><td className="num">{contest.rank ?? '-'}</td><td className="num"><RatingDelta value={contest.ratingDelta} /></td><td className="num">{contest.ratingAfter ?? '-'}</td>
-          </tr>)}</tbody></table></div> : <Empty>Еще не участвовал в соревнованиях.</Empty>}
+          </tr>)}</tbody></table></div> : <Empty>{t('Еще не участвовал в соревнованиях.')}</Empty>}
         </section>
       </>}
     </QueryState>
