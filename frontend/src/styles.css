@@ -186,6 +186,9 @@ h1, .task-link { overflow-wrap: anywhere; }
 .dashboard-side { display: flex; flex-direction: column; gap: 19.2px; }
 .dashboard-head { display: flex; align-items: baseline; justify-content: space-between; gap: 14.4px; margin-bottom: 14.4px; }
 .dashboard-head h2 { margin: 0; }
+.dashboard-head:has(select) { align-items: center; }
+.dashboard-head:has(select) h2 { white-space: nowrap; }
+.dashboard-head select { flex: 0 1 auto; width: auto; min-width: 0; }
 .dashboard-contest h2 { margin-bottom: 14.4px; }
 .dashboard-contest-title { font-size: var(--font-base); font-weight: 500; }
 .dashboard .contest-meta { display: grid; gap: 7.2px; margin: 14.4px 0 0; padding: 0; list-style: none; font-size: var(--font-base); }
