@@ -1,5 +1,31 @@
 # GpuCodeforces
 
+GPU Forces is a competitive programming platform where a correct answer is only half of the task: the solution has
+to be fast on a given processor. The same problem is solved on different hardware, and every processor scores it in
+its own currency:
+
+| Processor | What a participant writes | Score, smaller is better |
+|---|---|---|
+| `gpu-cuda` | CUDA for a real NVIDIA GPU | milliseconds |
+| `cuda-sim` | the same CUDA, run in GPGPU-Sim on a model of the Tesla V100 | simulated GPU cycles |
+| `riscv-rvv` | C, C++ or assembly for a vector RISC-V CPU in QEMU | instructions plus cache misses |
+| `coral-npu` | C or C++ for the Coral NPU core in Renode: 8 KB of code, 32 KB of data | instructions |
+| `rtl` | a SystemVerilog circuit, synthesized by Yosys and simulated by Verilator | cycles × logic depth × transistors |
+
+- **Problem bank**: twenty problems in the repository
+  [lottery7/GpuCodeforcesProblems](https://github.com/lottery7/GpuCodeforcesProblems), each on several processors
+  with a leaderboard per processor. A problem is a package in git; the platform imports the repository by itself.
+- **Three formats**: write a solution from scratch, speed up a supplied one, or guess which of two codes is faster.
+- **Contests** on one processor with a rating per processor, virtual participation and upsolving, hacks with tests
+  written by participants, and one-on-one duels.
+- **A judge of its own**: submissions are compiled and run in an nsjail sandbox, and the judge measures the score
+  itself. The emulators are pinned, so everything except `gpu-cuda` runs and gives the same scores without a GPU.
+- **Interface** in Russian and English.
+
+The whole system starts with one command, see [Running the whole system](#running-the-whole-system).
+
+## Repository
+
 Multi-module Kotlin/Gradle project with a React frontend:
 
 | Part | Description |
@@ -42,8 +68,8 @@ into `PROBLEMS_DIRECTORY`, pulls it every minute and imports `PROBLEMS_PATH`; wi
 is empty. The package format is described (in Russian) in
 [docs/backend/problem-package.md](docs/backend/problem-package.md).
 
-Supported formats are ordinary CUDA tasks, optimization of a supplied solution and guessing which of two
-solutions is faster. Duels match a random opponent or start after accepting an invitation. An invitation
+Supported formats are ordinary tasks solved from scratch, optimization of a supplied solution and guessing which
+of two solutions is faster. Duels match a random opponent or start after accepting an invitation. An invitation
 can select a task or use a random one. Duels last one, two or three hours by difficulty and rank the fastest
 accepted code; participants can surrender or play several duels at once. Package metadata, participation
 and scoring are described in [docs/backend/formats.md](docs/backend/formats.md).
@@ -75,7 +101,7 @@ of Docker Compose. Docker must be available; these tests fail rather than silent
 skip when it is unavailable. The executable jar is under `backend/build/libs/`.
 
 CI runs both backend test tasks ([backend.yml](.github/workflows/backend.yml)). `master` is protected:
-a pull request merges only after the `backend`, `frontend`, `tests` (judge) and `generated-java`
+a pull request merges only after the `backend`, `frontend`, `tests` (judge), `emulators` and `generated-java`
 (OpenAPI) checks pass. The required checks are listed by job name in the branch protection of the
 repository, so add a new CI job there too.
 
