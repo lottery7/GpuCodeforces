@@ -31,14 +31,34 @@ class UserService(
         return userRepository.findById(uuid).orElseThrow { NotFoundApiException("Пользователь не найден") }
     }
 
-    fun search(query: String?, sortByRating: Boolean, offset: Int, limit: Int): UserPage {
+    /** By handle, or, with [ratingProcessor], the users rated on that processor by their place there. */
+    fun search(query: String?, ratingProcessor: String?, offset: Int, limit: Int): UserPage {
         val trimmed = query?.trim() ?: ""
-        val items = if (sortByRating) {
-            userRepository.searchRated(trimmed, limit, offset)
-        } else {
-            userRepository.searchByHandle(trimmed, limit, offset)
+        if (trimmed.isEmpty()) {
+            return if (ratingProcessor != null) {
+                UserPage(userRepository.pageRated(ratingProcessor, limit, offset), userRepository.countRated(ratingProcessor).toInt())
+            } else {
+                UserPage(userRepository.pageByHandle(limit, offset), userRepository.count().toInt())
+            }
         }
-        val total = if (sortByRating) userRepository.countRated(trimmed) else userRepository.countByHandle(trimmed)
+        // a trigram index cannot serve a pattern shorter than three characters
+        if (trimmed.length < 3) {
+            return if (ratingProcessor != null) {
+                UserPage(
+                    userRepository.searchShortRated(ratingProcessor, trimmed, limit, offset),
+                    userRepository.countShortRated(ratingProcessor, trimmed).toInt(),
+                )
+            } else {
+                UserPage(userRepository.searchShortByHandle(trimmed, limit, offset), userRepository.countShortByHandle(trimmed).toInt())
+            }
+        }
+        val pattern = "%${trimmed.lowercase().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")}%"
+        val items = if (ratingProcessor != null) {
+            userRepository.searchRated(ratingProcessor, pattern, limit, offset)
+        } else {
+            userRepository.searchByHandle(pattern, limit, offset)
+        }
+        val total = if (ratingProcessor != null) userRepository.countRated(ratingProcessor, pattern) else userRepository.countByHandle(pattern)
         return UserPage(items, total.toInt())
     }
 }

@@ -11,11 +11,11 @@ const session = vi.hoisted(() => ({ user: null as User | null }));
 vi.mock('../src/auth', () => ({ useSession: () => ({ user: session.user, isLoading: false, error: null }) }));
 
 function user(id: string, handle: string): User {
-  return { id, handle, rating: null, rank: null, ratingDelta: null, ratingContestId: null };
+  return { id, handle, ratings: {} };
 }
 
 function problem(id: string, code: string, title: string): Problem {
-  return { id, code, title, difficulty: 'easy', tags: ['Массивы'], solved: false, solvedCount: 0, lastSubmissionId: null, lastStatus: null, bestSubmissionId: null, bestTimeMs: null, recordTimeMs: null };
+  return { id, code, title, difficulty: 'easy', format: 'standard', tags: ['Массивы'], solved: false, solvedCount: 0, lastSubmissionId: null, lastStatus: null, processors: [{ id: 'gpu-cuda', languages: ['cuda'], bestSubmissionId: null, bestScore: null, recordScore: null }] };
 }
 
 const creator = user('creator', 'creator_cuda');
@@ -31,7 +31,7 @@ function futureStart(days = 1) {
 
 function contest(): Contest {
   const startAt = futureStart();
-  return { id: 'round', title: 'Исходный контест', startAt, endAt: new Date(Date.parse(startAt) + 120 * 60000).toISOString(), authors: [creator, zeta], problemIds: ['add', 'reduce'], problemCount: 2, registered: false, gpu: 'NVIDIA A100' };
+  return { id: 'round', title: 'Исходный контест', format: 'standard', startAt, endAt: new Date(Date.parse(startAt) + 120 * 60000).toISOString(), authors: [creator, zeta], problemIds: ['add', 'reduce'], problemCount: 2, registered: false, processor: 'gpu-cuda' };
 }
 
 function open(path = '/contests/new') {
@@ -105,8 +105,8 @@ describe('Создание контеста', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Создать контест' }));
 
     await waitFor(() => expect(create).toHaveBeenCalledWith({
-      title: 'GPU Round', startAt, endAt: new Date(Date.parse(startAt) + 90 * 60000).toISOString(),
-      authorIds: [zeta.id, alpha.id], problemIds: ['transpose', 'reduce', 'add'],
+      title: 'GPU Round', format: 'standard', startAt, endAt: new Date(Date.parse(startAt) + 90 * 60000).toISOString(),
+      authorIds: [zeta.id, alpha.id], problemIds: ['transpose', 'reduce', 'add'], processor: 'gpu-cuda', hackDurationMinutes: 0,
     }));
     expect(await screen.findByText('Контест сохранен')).toBeVisible();
   });
@@ -136,9 +136,26 @@ describe('Создание контеста', () => {
     expect(duration).toHaveValue(75);
     await userEvent.click(screen.getByRole('button', { name: 'Сохранить' }));
     await waitFor(() => expect(update).toHaveBeenCalledWith(original.id, {
-      title: 'Мои изменения', startAt: original.startAt, endAt: new Date(Date.parse(original.startAt) + 75 * 60000).toISOString(),
-      authorIds: [creator.id, alpha.id], problemIds: ['reduce', 'transpose'],
+      title: 'Мои изменения', format: 'standard', startAt: original.startAt, endAt: new Date(Date.parse(original.startAt) + 75 * 60000).toISOString(),
+      authorIds: [creator.id, alpha.id], problemIds: ['reduce', 'transpose'], processor: 'gpu-cuda', hackDurationMinutes: 0,
     }));
+  });
+
+  it('берет в контест на процессоре только задачи, которые на нем сдаются', async () => {
+    const onRtl = { ...problem('chip', '400', 'Сумматор'), processors: [{ id: 'rtl', languages: ['systemverilog'], bestSubmissionId: null, bestScore: null, recordScore: null }] };
+    vi.spyOn(api, 'allProblems').mockResolvedValue([...tasks, onRtl]);
+    const create = vi.spyOn(api, 'createContest').mockResolvedValue(contest());
+    open();
+    await userEvent.type(await screen.findByRole('textbox', { name: 'Название' }), 'Схемы');
+    await userEvent.click(screen.getByRole('checkbox', { name: /100\. Сложение векторов/ }));
+    expect(screen.queryByRole('checkbox', { name: /400\. Сумматор/ })).not.toBeInTheDocument();
+
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Процессор' }), 'rtl');
+
+    expect(screen.queryByRole('checkbox', { name: /100\. Сложение векторов/ })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('checkbox', { name: /400\. Сумматор/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Создать контест' }));
+    await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({ processor: 'rtl', problemIds: ['chip'] })));
   });
 
   it.each(['contest', 'pool', 'snapshots'] as const)('сохраняет форму и правки при фоновой ошибке %s и повторяет загрузку рядом с действиями', async source => {

@@ -3,9 +3,8 @@ package dev.gpucodeforces.judge.executor.problem
 import dev.gpucodeforces.judge.api.ParamRole
 import dev.gpucodeforces.judge.api.ProblemSpec
 import dev.gpucodeforces.judge.api.SpecValidator
-import dev.gpucodeforces.judge.executor.compile.Toolchain
 import dev.gpucodeforces.judge.executor.config.ExecutorProperties
-import dev.gpucodeforces.judge.executor.gpu.GpuManager
+import dev.gpucodeforces.judge.executor.processor.gpucuda.GpuPool
 import dev.gpucodeforces.judge.executor.sandbox.Sandbox
 import dev.gpucodeforces.judge.executor.sandbox.SandboxSpec
 import dev.gpucodeforces.judge.executor.util.FileTrees
@@ -51,19 +50,21 @@ data class PreparedProblem(val hash: String, val dir: Path, val inputsDir: Path,
  * @param problemFault true if the problem's generator/reference is broken (retrying will not help),
  * false for infrastructure failures.
  */
-class ProblemPreparationException(msg: String, val problemFault: Boolean) : RuntimeException(msg)
+class ProblemPreparationException(msg: String, val problemFault: Boolean, val invalidInput: Boolean = false) : RuntimeException(msg)
 
 /**
- * Generates the tests a problem's generator declares, their inputs and reference answers once per problem version
- * (Python + PyTorch, on a GPU slot) and caches them on disk keyed by a content hash of signature + generator source.
+ * Generates the tests a problem's generator declares for one processor, their inputs and reference answers, once per
+ * problem version (Python + PyTorch) and caches them on disk keyed by a content hash of signature + generator source
+ * + processor. On an executor with GPUs ([gpus]) generation takes a GPU slot, so it never runs next to a timed
+ * solution; without them it runs on the CPU.
  *
  * The generator comes from a problem repository that accepts pull requests, so it runs in the same sandbox as
  * solutions: no network, and only its own scratch directory is writable.
  */
 class ProblemStore(
     private val props: ExecutorProperties,
-    private val gpus: GpuManager,
-    private val toolchain: Toolchain,
+    private val gpus: GpuPool?,
+    private val runtime: PrepareRuntime,
     private val sandbox: Sandbox,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -78,15 +79,29 @@ class ProblemStore(
         .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
         .build()
 
+    /** The device references are computed on: the configured one, but never a GPU this executor does not have. */
+    val device: String by lazy {
+        when {
+            gpus == null -> "cpu"
+            props.prepare.device == "auto" -> if (runtime.cudaAvailable) "cuda" else "cpu"
+            else -> props.prepare.device
+        }
+    }
+
     /**
-     * Everything the generated data depends on: the problem's own content, and what produces the data from it -
-     * the preparation scripts, the torch build and the device. An upgrade of any of them must not keep serving
-     * reference answers computed by the old one.
+     * Everything the generated data depends on: the problem's own content and the processor whose tests are
+     * generated, and what produces the data from it - the preparation scripts, the torch build and the device. An
+     * upgrade of any of them must not keep serving reference answers computed by the old one.
      */
-    fun hash(spec: ProblemSpec): String = Hashing.sha256(
-        canonical.writeValueAsString(mapOf("signature" to spec.signature, "generator" to spec.generator)),
-        pytoolsHash, toolchain.torchVersion ?: "", props.prepare.device, PREP_FORMAT,
+    fun hash(spec: ProblemSpec, processor: String): String = Hashing.sha256(
+        canonical.writeValueAsString(
+            mapOf("signature" to spec.signature, "generator" to spec.generator, "customTests" to spec.customTests, "customOnly" to spec.customOnly),
+        ),
+        declaredIds(spec).joinToString(","), processor,
+        pytoolsHash, runtime.torchVersion ?: "", device, PREP_FORMAT,
     )
+
+    private fun declaredIds(spec: ProblemSpec) = spec.declaredProcessors().map { it.id }
 
     private val pytoolsHash: String by lazy {
         val dir = props.paths.pytools
@@ -95,14 +110,14 @@ class ProblemStore(
         Hashing.sha256(*sources.flatMap { listOf(dir.relativize(it).toString(), it.readText()) }.toTypedArray())
     }
 
-    fun isReady(spec: ProblemSpec): Boolean = root.resolve(hash(spec)).resolve(READY).exists()
+    fun isReady(spec: ProblemSpec, processor: String): Boolean = root.resolve(hash(spec, processor)).resolve(READY).exists()
 
     /**
      * Returns prepared data, generating it if needed ([onPreparing] is called first in that case). The caller must
      * [release] the problem when done so eviction never removes data of a running job.
      */
-    fun acquire(spec: ProblemSpec, onPreparing: () -> Unit, cancelled: () -> Boolean): PreparedProblem {
-        val hash = hash(spec)
+    fun acquire(spec: ProblemSpec, processor: String, onPreparing: () -> Unit, cancelled: () -> Boolean): PreparedProblem {
+        val hash = hash(spec, processor)
         inUse.computeIfAbsent(hash) { AtomicInteger() }.incrementAndGet()
         var acquired = false
         try {
@@ -110,12 +125,12 @@ class ProblemStore(
             locks.computeIfAbsent(hash) { ReentrantLock() }.withLock {
                 if (!dir.resolve(READY).exists()) {
                     onPreparing()
-                    prepare(spec, hash, dir, cancelled)
+                    prepare(spec, processor, hash, dir, cancelled)
                     evictIfNeeded()
                 }
             }
             Files.setLastModifiedTime(dir.resolve(READY), FileTime.fromMillis(System.currentTimeMillis()))
-            return layout(spec, hash, dir, readTests(spec, dir)).also { acquired = true }
+            return layout(spec, hash, dir, readTests(spec, processor, dir)).also { acquired = true }
         } finally {
             if (!acquired) release(hash)
         }
@@ -146,7 +161,7 @@ class ProblemStore(
      * The tests the generator declared, from `tests.json` in [dir]. The file is its output: it is read only if it
      * is a regular file of a sane size, and every test is checked like the rest of the problem.
      */
-    private fun readTests(spec: ProblemSpec, dir: Path): List<GeneratedTest> {
+    private fun readTests(spec: ProblemSpec, processor: String, dir: Path): List<GeneratedTest> {
         val file = dir.resolve(TESTS)
         if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) broken("the generator produced no $TESTS")
         if (file.fileSize() > MAX_TESTS_FILE_BYTES) broken("$TESTS is larger than $MAX_TESTS_FILE_BYTES bytes")
@@ -155,12 +170,21 @@ class ProblemStore(
         } catch (e: JacksonException) {
             broken("$TESTS is not a list of tests: ${e.originalMessage}")
         }
-        val errors = GeneratedTest.validate(spec.signature, tests, limits)
+        val errors = GeneratedTest.validate(
+            spec.signature, tests, limits.copy(maxTests = limits.maxTests + spec.customTests.size), declaredIds(spec), processor,
+            requireMeasured = !spec.customOnly,
+        )
         if (errors.isNotEmpty()) broken("invalid tests: ${errors.take(20).joinToString("; ")}")
+        // custom tests come last, for every processor and unmeasured: the generator's own tests keep their numbers
+        val custom = tests.takeLast(spec.customTests.size)
+        if (custom.size != spec.customTests.size || custom.any { it.measure || it.processors != null }) {
+            broken("the custom tests are not the last ${spec.customTests.size} tests, unmeasured")
+        }
+        if (spec.customOnly && tests.size != 1) broken("customOnly: ${tests.size} tests were generated instead of one")
         return tests
     }
 
-    private fun prepare(spec: ProblemSpec, hash: String, dir: Path, cancelled: () -> Boolean) {
+    private fun prepare(spec: ProblemSpec, processor: String, hash: String, dir: Path, cancelled: () -> Boolean) {
         val started = System.nanoTime()
         Files.createDirectories(root)
         val tmp = Files.createTempDirectory(root, ".tmp-${hash.take(12)}-")
@@ -168,15 +192,22 @@ class ProblemStore(
             FileTrees.makeWritableByAll(tmp)
             val specFile = tmp.resolve("spec.json")
             val prepareLimits = mapOf("maxTests" to limits.maxTests, "maxTestBytes" to limits.maxTestBytes)
-            specFile.writeText(canonical.writeValueAsString(mapOf("signature" to spec.signature, "limits" to prepareLimits)))
+            specFile.writeText(
+                canonical.writeValueAsString(
+                    mapOf(
+                        "signature" to spec.signature, "processors" to declaredIds(spec), "limits" to prepareLimits,
+                        "customTests" to spec.customTests, "customOnly" to spec.customOnly,
+                    ),
+                ),
+            )
             val source = tmp.resolve("problem.py")
             source.writeText(spec.generator.source)
             val out = tmp.resolve("data")
             val pytools = props.paths.pytools.toAbsolutePath().normalize()
 
-            val slot = gpus.pool.acquire("prepare:${spec.id}", Duration.ofMinutes(2), cancelled)
+            val slot = gpus?.acquire("prepare:${spec.id}", Duration.ofMinutes(2), cancelled)
             val res = try {
-                log.info("Preparing problem {} v{} on {}", spec.id, spec.version, slot)
+                log.info("Preparing problem {} v{} for {} on {} ({})", spec.id, spec.version, processor, slot ?: "this executor", device)
                 val box = SandboxSpec(
                     command = emptyList(),
                     workDir = tmp,
@@ -184,7 +215,7 @@ class ProblemStore(
                         put(pytools, "/pytools")
                         pythonMount()?.let { put(it, it.toString()) }
                     },
-                    gpu = slot.access(),
+                    gpu = slot?.access()?.takeIf { device == "cuda" },
                     wallTimeLimit = props.prepare.timeLimit.plusSeconds(5),
                     // one file per array, and no array is larger than a whole test may be
                     maxFileBytes = limits.maxTestBytes,
@@ -192,14 +223,16 @@ class ProblemStore(
                 )
                 val command = listOf(
                     props.toolchain.python, "-m", "judge_problem.prepare", "--spec", sandbox.inside(box, specFile),
-                    "--source", sandbox.inside(box, source), "--out", sandbox.inside(box, out), "--device", props.prepare.device,
+                    "--source", sandbox.inside(box, source), "--out", sandbox.inside(box, out), "--device", device,
+                    "--processor", processor,
                 )
                 val env = mapOf("PYTHONPATH" to sandbox.inside(box, pytools), "PYTHONDONTWRITEBYTECODE" to "1")
                 sandbox.runToCompletion(box.copy(command = command, env = env), props.prepare.timeLimit, 64 * 1024)
             } finally {
-                gpus.pool.release(slot)
+                if (slot != null) gpus.release(slot)
             }
             if (!res.ok) {
+                if (res.exitCode == 3) throw ProblemPreparationException("Invalid custom test", true, true)
                 val problemFault = res.exitCode == 2 && !res.timedOut
                 log.error("Problem {} preparation failed: {}; sandbox log: {}", spec.id, res.describe(), Sandbox.logTail(tmp) ?: "-")
                 throw ProblemPreparationException(
@@ -208,7 +241,7 @@ class ProblemStore(
                     problemFault,
                 )
             }
-            val (tests, bytes) = verifyOutput(spec, out)
+            val (tests, bytes) = verifyOutput(spec, processor, out)
             out.resolve("size").writeText(bytes.toString())
             out.resolve(READY).writeText(hash)
             FileTrees.delete(dir)
@@ -226,7 +259,7 @@ class ProblemStore(
     /** A Python with torch installed outside the system directories (a venv) has to be mounted explicitly. */
     private fun pythonMount(): Path? {
         val system = (props.sandbox.readOnlyMounts + props.sandbox.extraReadOnlyMounts).map { Path.of(it) }
-        return toolchain.pythonPrefix?.takeUnless { prefix -> system.any { prefix.startsWith(it) } }
+        return runtime.pythonPrefix?.takeUnless { prefix -> system.any { prefix.startsWith(it) } }
     }
 
     /**
@@ -236,9 +269,9 @@ class ProblemStore(
      * so a symbolic link or a stray copy of the answers must not survive. Returns the number of tests and the size
      * of the test data.
      */
-    private fun verifyOutput(spec: ProblemSpec, out: Path): Pair<Int, Long> {
+    private fun verifyOutput(spec: ProblemSpec, processor: String, out: Path): Pair<Int, Long> {
         if (!Files.isDirectory(out, LinkOption.NOFOLLOW_LINKS)) broken("the generator produced no output directory")
-        val tests = readTests(spec, out)
+        val tests = readTests(spec, processor, out)
         val wanted = buildMap {
             for (t in layout(spec, "", out, tests).tests) {
                 for (p in spec.signature.arrays) {
@@ -324,6 +357,6 @@ class ProblemStore(
         private const val POISON = 0xFF.toByte()
 
         /** Bump when the on-disk format of prepared data changes. */
-        private const val PREP_FORMAT = "v2"
+        private const val PREP_FORMAT = "v3"
     }
 }

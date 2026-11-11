@@ -4,10 +4,11 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import { api } from '../api/client';
 import type { ContestInput, User } from '../api/types';
 import { useSession } from '../auth';
+import { GPU_CUDA, useProcessors } from '../processors';
 import { Difficulty, Empty, ErrorMessage, LoginRequired, PageHeader, UserLink, useFeedbackVisibility } from '../ui';
 import { difficultyLabels, phaseOf } from '../utils';
 
-type Values = { title: string; startAt: string; duration: string; authors: User[]; problemIds: string[] };
+type Values = { title: string; startAt: string; duration: string; hackDuration: string; processor: string; authors: User[]; problemIds: string[] };
 
 function moscowInput(date: string) {
   return new Date(Date.parse(date) + 3 * 3600000).toISOString().slice(0, 16);
@@ -19,6 +20,7 @@ export default function ContestEditor() {
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const catalog = useProcessors();
   const [values, setValues] = useState<Values | null>(null);
   const initialized = useRef('');
   const [authorQuery, setAuthorQuery] = useState('');
@@ -68,6 +70,8 @@ export default function ContestEditor() {
       title: item?.title ?? '',
       startAt: moscowInput(item?.startAt ?? new Date(Date.now() + 3600000).toISOString()),
       duration: String(item ? Math.round((Date.parse(item.endAt) - Date.parse(item.startAt)) / 60000) : 120),
+      hackDuration: String(item?.hackEndAt ? Math.round((Date.parse(item.hackEndAt) - Date.parse(item.endAt)) / 60000) : 0),
+      processor: item?.processor ?? GPU_CUDA,
       authors: item?.authors ?? [user],
       problemIds: [...(item?.problemIds ?? [])],
     });
@@ -97,17 +101,28 @@ export default function ContestEditor() {
   if (!user) return <><PageHeader title={id ? 'Настройки контеста' : 'Новый контест'} /><LoginRequired returnTo={location.pathname + location.search}>Войдите, чтобы создать или изменить контест.</LoginRequired></>;
   if (id && contest.isPending) return <p className="loading" role="status">Загрузка контеста...</p>;
   if (contest.error && id && contest.data === undefined) return <><PageHeader title="Настройки контеста" /><ErrorMessage error={contest.error} /><button className="text-link" onClick={() => void contest.refetch()}>Повторить</button></>;
+  if (contest.data?.format === 'duel') return <><PageHeader title="Дуэль" /><p>Участники и общая задача назначаются при подборе.</p><Link className="btn secondary" to={`/contest/${encodeURIComponent(id ?? '')}`}>Открыть дуэль</Link></>;
   if (id && contest.data && (phaseOf(contest.data) !== 'upcoming' || !contest.data.authors.some(author => author.id === user.id))) return <><PageHeader title="Настройки недоступны" /><Empty>Изменять контест могут его авторы до начала соревнования.</Empty><Link className="btn secondary" to={`/contest/${encodeURIComponent(id)}`}>К контесту</Link></>;
   if (pool.error && pool.data === undefined || id && snapshots.error && snapshots.data === undefined) return <><PageHeader title={id ? 'Настройки контеста' : 'Новый контест'} /><ErrorMessage error={pool.error && pool.data === undefined ? pool.error : snapshots.error} /><button className="text-link" onClick={() => { void pool.refetch(); if (id) void snapshots.refetch(); }}>Повторить</button></>;
   if (!values || initialized.current !== formKey || pool.isPending || id && snapshots.isPending) return <p className="loading" role="status">Загрузка задач...</p>;
 
-  const problems = [...new Map([...(pool.data ?? []), ...(snapshots.data ?? [])].map(problem => [problem.id, problem])).values()];
+  // A contest's own versions show only its current processor, so whether a problem supports another one is read
+  // from the bank where it is there.
+  const bankProcessors = new Map((pool.data ?? []).map(problem => [problem.id, problem.processors.map(item => item.id)]));
+  const supports = (problem: { id: string; processors: { id: string }[] }) =>
+    (bankProcessors.get(problem.id) ?? problem.processors.map(item => item.id)).includes(values.processor);
+  const problems = [...new Map([...(pool.data ?? []), ...(snapshots.data ?? [])].map(problem => [problem.id, problem])).values()].filter(supports);
   const problemMap = new Map(problems.map(problem => [problem.id, problem]));
   const selectedIds = new Set(values.problemIds);
   const tags = [...new Set(problems.flatMap(problem => problem.tags))].sort((a, b) => a.localeCompare(b));
   const ordered = selectedOnly ? values.problemIds.map(problemId => problemMap.get(problemId)).filter(problem => problem !== undefined) : problems;
   const visible = ordered.filter(problem => (`${problem.code} ${problem.title}`).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()) && (difficulty === 'all' || problem.difficulty === difficulty) && (tag === 'all' || problem.tags.includes(tag)));
   const missing = values.problemIds.filter(problemId => !problemMap.has(problemId));
+  const changeProcessor = (processor: string) => {
+    const allowed = new Set([...(pool.data ?? []), ...(snapshots.data ?? [])].filter(problem => (bankProcessors.get(problem.id) ?? problem.processors.map(item => item.id)).includes(processor)).map(problem => problem.id));
+    // problems the new processor cannot judge leave the contest
+    update({ processor, problemIds: values.problemIds.filter(problemId => allowed.has(problemId)) });
+  };
   const authorSearchReady = authorSearch === authorQuery.trim();
   const matches = authorSearchReady ? users.data?.items.filter(person => !values.authors.some(author => author.id === person.id)) ?? [] : [];
   const filtersActive = Boolean(query || difficulty !== 'all' || tag !== 'all' || selectedOnly);
@@ -148,6 +163,9 @@ export default function ContestEditor() {
       endAt: end.toISOString(),
       authorIds: values.authors.map(author => author.id),
       problemIds: values.problemIds,
+      hackDurationMinutes: Number(values.hackDuration),
+      processor: values.processor,
+      format: 'standard',
     });
   };
 
@@ -160,7 +178,11 @@ export default function ContestEditor() {
           <label className="field"><span>Начало (МСК)</span><input name="startAt" type="datetime-local" required value={values.startAt} disabled={save.isPending} onChange={event => update({ startAt: event.target.value })} /></label>
           <label className="field"><span>Длительность, минут</span><input name="duration" type="number" min={1} step={1} required value={values.duration} disabled={save.isPending} onChange={event => update({ duration: event.target.value })} /></label>
         </div>
+        <label className="field"><span>Процессор</span><select name="processor" aria-label="Процессор" value={values.processor} disabled={save.isPending} onChange={event => changeProcessor(event.target.value)}>
+          {(catalog.processors.some(item => item.id === values.processor) ? catalog.processors : [...catalog.processors, { id: values.processor, title: values.processor, model: '' }]).map(item => <option key={item.id} value={item.id}>{item.title}{item.model && ` (${item.model})`}</option>)}
+        </select><span className="small muted">Все посылки контеста проверяются на нём; в списке задач остаются только задачи, которые можно сдавать на этом процессоре.</span></label>
         <fieldset className="contest-authors" disabled={save.isPending}>
+          <label className="field"><span>Период взломов, минут (0 — отключён)</span><input type="number" min={0} max={10080} step={1} required value={values.hackDuration} onChange={event => update({ hackDuration: event.target.value })} /></label>
           <legend>Авторы</legend>
           <p className="small muted">{values.authors.some(author => author.id === user.id) ? 'Авторы могут изменять контест до начала.' : 'После сохранения вы потеряете право редактирования.'}</p>
           <div className="contest-selected-authors">{values.authors.map(author => <div className="contest-selected-author" key={author.id}><UserLink user={author} /><button type="button" className="text-link" aria-label={`Убрать ${author.handle}`} disabled={values.authors.length === 1} title={values.authors.length === 1 ? 'Нужен хотя бы один автор' : undefined} onClick={() => update({ authors: values.authors.filter(person => person.id !== author.id) })}>Убрать</button></div>)}</div>

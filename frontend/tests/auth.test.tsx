@@ -6,7 +6,7 @@ import { api, ApiError } from '../src/api/client';
 import type { User } from '../src/api/types';
 import { SessionProvider, useSession } from '../src/auth';
 
-const user: User = { id: 'cuda-user', handle: 'cuda_user', rating: null, rank: null, ratingDelta: null, ratingContestId: null };
+const user: User = { id: 'cuda-user', handle: 'cuda_user', ratings: {} };
 const loginInput = { identifier: user.handle, password: 'password123' };
 const registerInput = { handle: user.handle, email: 'cuda@example.com', password: 'password123' };
 const privateKey = ['submission', '42', 'previous-user'];

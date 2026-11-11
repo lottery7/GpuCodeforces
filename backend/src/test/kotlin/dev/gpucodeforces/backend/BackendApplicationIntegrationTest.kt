@@ -19,6 +19,7 @@ class BackendApplicationIntegrationTest {
     lateinit var jdbc: JdbcTemplate
 
     @Test
+    @AllowFullScan("flyway_schema_history", "FROM flyway_schema_history", "Migration verification counts all applied and failed migrations")
     fun `application starts against PostgreSQL and applies Flyway migrations`() {
         val schema = jdbc.queryForObject(
             "SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'gpucodeforces'",

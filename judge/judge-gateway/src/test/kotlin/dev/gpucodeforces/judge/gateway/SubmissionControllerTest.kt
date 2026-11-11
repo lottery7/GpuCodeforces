@@ -29,7 +29,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders
 class SubmissionControllerTest {
     private val messaging = mock<JudgeMessaging>()
     private val clock = Clock.fixed(Instant.parse("2026-11-09T12:00:00Z"), ZoneOffset.UTC)
-    private val properties = GatewayProperties(gpuProfiles = listOf("rtx3060", "rtx4090"))
+    private val properties = GatewayProperties(processors = listOf("gpu-cuda", "rtl"))
     private val service = SubmissionService(properties, messaging, mock<ExecutorRegistry>(), SimpleMeterRegistry(), clock)
     private val mvc: MockMvc = MockMvcBuilders.standaloneSetup(SubmissionController(service))
         .setControllerAdvice(ErrorHandler())
@@ -40,6 +40,8 @@ class SubmissionControllerTest {
         {
           "submissionId": "s-1",
           "source": "__global__ void k(){}\nvoid solve(const float* A, float* C, int N) {}",
+          "processor": "gpu-cuda",
+          "language": "cuda",
           "problem": {
             "id": "copy",
             "signature": {"params": [
@@ -47,7 +49,11 @@ class SubmissionControllerTest {
               {"name": "C", "type": "FLOAT32", "role": "OUTPUT", "memory": "DEVICE", "size": "N"},
               {"name": "N", "type": "INT32", "role": "SCALAR"}
             ]},
-            "generator": {"source": "def tests(): ..."}
+            "generator": {"source": "def tests(): ..."},
+            "processors": [
+              {"id": "gpu-cuda", "languages": ["cuda"]},
+              {"id": "rtl", "languages": ["systemverilog"], "limit": 100000}
+            ]
           }
         }
     """.trimIndent()
@@ -55,7 +61,7 @@ class SubmissionControllerTest {
     @Test
     fun `accepts valid submission, publishes job and QUEUED event, dedups repeats`() {
         mvc.post("/api/v1/submissions") { contentType = MediaType.APPLICATION_JSON; content = body }
-            .andExpect { status { isAccepted() }; jsonPath("$.gpuProfile") { value("rtx3060") } }
+            .andExpect { status { isAccepted() }; jsonPath("$.processor") { value("gpu-cuda") } }
 
         val job = argumentCaptor<JudgeJob>()
         verify(messaging).publishJob(job.capture(), any())
@@ -70,14 +76,15 @@ class SubmissionControllerTest {
     }
 
     @Test
-    fun `a job goes to the queue of the requested GPU type only`() {
-        mvc.post("/api/v1/submissions") { contentType = MediaType.APPLICATION_JSON; content = body.replace("\"s-1\"", "\"s-1\", \"gpuProfile\": \"rtx4090\"") }
-            .andExpect { status { isAccepted() }; jsonPath("$.gpuProfile") { value("rtx4090") } }
+    fun `a job goes to the queue of the requested processor only`() {
+        mvc.post("/api/v1/submissions") { contentType = MediaType.APPLICATION_JSON; content = rtl }
+            .andExpect { status { isAccepted() }; jsonPath("$.processor") { value("rtl") }; jsonPath("$.language") { value("systemverilog") } }
         val job = argumentCaptor<JudgeJob>()
         verify(messaging).publishJob(job.capture(), any())
-        assertEquals("rtx4090", job.firstValue.gpuProfile)
+        assertEquals("rtl", job.firstValue.processor)
+        assertEquals("systemverilog", job.firstValue.language)
 
-        // the same id for another GPU is not a duplicate of that job, and must not be reported as queued there
+        // the same id for another processor is not a duplicate of that job, and must not be reported as queued there
         mvc.post("/api/v1/submissions") { contentType = MediaType.APPLICATION_JSON; content = body }
             .andExpect { status { isBadRequest() } }
         verify(messaging).publishJob(any(), any())
@@ -86,12 +93,28 @@ class SubmissionControllerTest {
     @Test
     fun `rejects invalid submission with details`() {
         val bad = body.replace("\"FLOAT32\", \"role\": \"OUTPUT\"", "\"FLOAT32\", \"role\": \"INPUT\"")
-        mvc.post("/api/v1/submissions") { contentType = MediaType.APPLICATION_JSON; content = bad.replace("\"s-1\"", "\"s-2\", \"gpuProfile\": \"h100\"") }
+            .replace("\"processor\": \"gpu-cuda\"", "\"processor\": \"coral-npu\"")
+        mvc.post("/api/v1/submissions") { contentType = MediaType.APPLICATION_JSON; content = bad }
             .andExpect {
                 status { isBadRequest() }
                 jsonPath("$.error") { value("validation_failed") }
-                jsonPath("$.details.length()") { value(2) }
+                // not accepted by this gateway, not declared by the problem, no output param
+                jsonPath("$.details.length()") { value(3) }
             }
         verify(messaging, never()).publishJob(any(), any())
     }
+
+    @Test
+    fun `a language the problem does not allow on the processor is rejected`() {
+        mvc.post("/api/v1/submissions") { contentType = MediaType.APPLICATION_JSON; content = rtl.replace("\"systemverilog\",", "\"cuda\",") }
+            .andExpect { status { isBadRequest() }; jsonPath("$.details[0]") { value("language 'cuda' is not allowed on rtl, allowed: systemverilog") } }
+    }
+
+    @Test
+    fun `a submission must name its processor`() {
+        mvc.post("/api/v1/submissions") { contentType = MediaType.APPLICATION_JSON; content = body.replace("\"processor\": \"gpu-cuda\",", "") }
+            .andExpect { status { isBadRequest() }; jsonPath("$.error") { value("malformed_request") } }
+    }
+
+    private val rtl = body.replace("\"processor\": \"gpu-cuda\",\n  \"language\": \"cuda\",", "\"processor\": \"rtl\",\n  \"language\": \"systemverilog\",")
 }

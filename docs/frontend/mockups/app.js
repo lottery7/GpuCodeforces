@@ -50,7 +50,7 @@
   }
 
   function hero() {
-    return `<section class="hero"><svg class="hero-logo" viewBox="0 0 40 40" role="img" aria-hidden="true"><rect width="40" height="40" rx="10" fill="#3574f0"/><path d="m14 12 12 8-12 8" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg><div><h1 class="hero-title">GPU Forces</h1><p class="hero-sub">Соревновательная платформа для программистов, где задачи требуют максимально ускорить вычисления на GPU, TPU и других массово-параллельных архитектурах.</p></div></section>`;
+    return `<section class="hero"><svg class="hero-logo" viewBox="0 0 40 40" role="img" aria-hidden="true"><rect width="40" height="40" rx="10" fill="#3574f0"/><path d="m14 12 12 8-12 8" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg><div><h1 class="hero-title">GPU Forces</h1><p class="hero-sub">Соревновательная платформа для программистов, где задачи требуют максимально ускорить вычисления на GPU, векторном RISC-V, NPU и собственных схемах на Verilog.</p></div></section>`;
   }
 
   function date(value) {

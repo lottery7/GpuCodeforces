@@ -47,15 +47,21 @@ class SecurityConfig(
             }
             .authorizeHttpRequests { authorize ->
                 authorize
+                    .requestMatchers("/api/duels", "/api/duels/**", "/api/notifications", "/api/notifications/**").authenticated()
                     .requestMatchers(HttpMethod.GET, "/api/session").authenticated()
                     .requestMatchers(HttpMethod.DELETE, "/api/session").authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/submissions/*/recheck").authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/submissions").authenticated()
+                    .requestMatchers("/api/virtual", "/api/virtual/*").authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/contests/*/virtual", "/api/hacks", "/api/hacks/*/retry").authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/problems/*/example").authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/problems/*/guess").authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/problems/*/comparisons").authenticated()
                     .requestMatchers("/api/admin/**").authenticated()
                     .requestMatchers(HttpMethod.POST, "/api/contests").authenticated()
                     .requestMatchers(HttpMethod.PUT, "/api/contests/*").authenticated()
                     .requestMatchers(HttpMethod.PUT, "/api/contests/*/registration").authenticated()
+                    .requestMatchers(HttpMethod.POST, "/api/contests/*/surrender").authenticated()
                     .anyRequest().permitAll()
             }
             .addFilterBefore(originCheckFilter, UsernamePasswordAuthenticationFilter::class.java)

@@ -5,6 +5,12 @@
   const copy = value => value == null ? value : JSON.parse(JSON.stringify(value));
   const nowIso = () => new Date().toISOString();
   const codeFor = signature => `#include <cuda_runtime.h>\n\n${signature} {\n    \n}\n`;
+  // Processors of the judge offered on the demo platform; vector-addition can also be solved as a circuit.
+  const processors = [
+    {id:'gpu-cuda',title:'NVIDIA GPU',model:'NVIDIA A100 80 GB',languages:[{id:'cuda',title:'CUDA C++',extension:'.cu'}],scoreType:'TIME_MS',emulated:false},
+    {id:'rtl',title:'RTL (Verilator + Yosys)',model:'Verilator + Yosys',languages:[{id:'systemverilog',title:'SystemVerilog',extension:'.sv'}],scoreType:'CYCLES_X_DEPTH_X_TRANSISTORS',emulated:true}
+  ];
+  const rtlStarter = 'module solve (\n    input  logic clk,\n    input  logic start,\n    output logic done\n);\n\n    assign done = 1\'b0;\n\nendmodule\n';
   const gpuProfiles = [
     {id:'a100',label:'NVIDIA A100 80 GB',profileId:'gpu-a100-v1',referenceScale:1},
     {id:'h100',label:'NVIDIA H100 80 GB',profileId:'gpu-h100-v1',referenceScale:0.7}
@@ -22,6 +28,8 @@
     ...item,
     visibility:'public',
     starter:codeFor(item.signature),
+    processors:item.id==='vector-addition'?['gpu-cuda','rtl']:['gpu-cuda'],
+    rtlStarter,
     format:'gpu-function',
     contract:'Реализуйте solve. Указатели ссылаются на память GPU. Результат записывается в выходной массив. Используется поток CUDA по умолчанию.',
     limits:{timeSeconds:2,memoryMb:1024,input:item.id==='matrix-multiplication'?'1 <= M, N, K <= 4096':item.id==='matrix-transpose'?'1 <= M, N <= 4096':item.id==='histogram'?'1 <= N <= 2^24; 0 <= X[i] <= 255':'1 <= N <= 2^24'},
@@ -385,6 +393,7 @@
     contests:()=>copy(state.contests.map(item=>({...item,registrationOpen:item.registrationOpen&&phase(item.id)!=='finished'}))),
     contest:id=>{const item=findContest(id);return item?copy({...item,registrationOpen:item.registrationOpen&&phase(id)!=='finished'}):null;},
     gpuProfiles:()=>gpuProfiles.map(({id,label})=>({id,label})),
+    processors:()=>copy(processors),
     saveContest,
     canEditContest,
     isContestAuthor,

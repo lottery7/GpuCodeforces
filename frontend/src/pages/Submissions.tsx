@@ -4,20 +4,24 @@ import { Link, useLocation, useSearchParams } from 'react-router';
 import { api } from '../api/client';
 import type { Submission, SubmissionQuery } from '../api/types';
 import { useSession } from '../auth';
-import { Empty, ErrorMessage, LoginRequired, PageHeader, Pagination, QueryState, Status, TimeValue, UserLink } from '../ui';
-import { dateTime, pendingStatuses, problemPath, statusLabels } from '../utils';
+import { useProcessors } from '../processors';
+import { Empty, ErrorMessage, LoginRequired, PageHeader, Pagination, QueryState, ScoreValue, Status, UserLink } from '../ui';
+import { dateTime, pendingStatuses, problemPath, shortId, statusLabels } from '../utils';
 
 const limit = 20;
 
 export function SubmissionTable({ items, inProblem = false, showUser = false }: { items: Submission[]; inProblem?: boolean; showUser?: boolean }) {
+  const processors = useProcessors();
   return <div className="panel table-wrap"><table className="data-table" aria-label="История посылок">
-    <thead><tr><th className="num">Посылка</th>{!inProblem && <th>Задача</th>}{showUser && <th>Участник</th>}<th>Вердикт</th><th className="num">Время GPU, мс</th><th>Отправлено, МСК</th></tr></thead>
+    <thead><tr><th className="num">Посылка</th>{!inProblem && <th>Задача</th>}{showUser && <th>Участник</th>}<th>Процессор</th><th>Вердикт</th><th className="num">Результат</th><th>Отправлено, МСК</th></tr></thead>
     <tbody>{items.map(item => <tr key={item.id}>
-      <td className="num mono"><Link to={`/submission/${encodeURIComponent(item.id)}`}>#{item.id}</Link></td>
-      {!inProblem && <td><Link to={problemPath(item.problemId, item.contestId || 'practice')}>{item.problemTitle}</Link><div className="subline">{item.contestId ? <Link to={`/contest/${encodeURIComponent(item.contestId)}`}>{item.contestTitle || 'Контест'}</Link> : 'Практика'}</div></td>}
+      <td className="num mono"><Link to={`/submission/${encodeURIComponent(item.id)}`} title={item.id}>#{shortId(item.id)}</Link></td>
+      {!inProblem && <td><Link to={problemPath(item.problemId, item.context || item.contestId || 'practice', undefined, { processor: item.processor, language: item.language })}>{item.problemTitle}</Link><div className="subline">{item.contestId ? <Link to={`/contest/${encodeURIComponent(item.contestId)}`}>{item.contestTitle || 'Контест'}</Link> : 'Практика'}{item.context?.startsWith('virtual:') && ' · Виртуально'}{item.context?.startsWith('upsolve:') && ' · Дорешивание'}</div></td>}
+
       {showUser && <td><UserLink user={item.user} /></td>}
-      <td><Status status={item.status} />{item.status === 'accepted' && !item.comparable && <div className="subline">Старый профиль проверки</div>}</td>
-      <td className="num mono"><TimeValue value={item.status === 'accepted' ? item.timeMs : null} /></td>
+      <td>{processors.title(item.processor)}<div className="subline">{processors.language(item.processor, item.language)?.title ?? item.language}</div></td>
+      <td><Status status={item.status} />{item.status === 'accepted' && item.format !== 'guess' && !item.comparable && <div className="subline">Вне текущих рекордов</div>}</td>
+      <td className="num mono">{item.format === 'guess' ? item.status === 'accepted' ? '+' : '-' : <ScoreValue score={item.status === 'accepted' ? item.score : null} />}</td>
       <td><time dateTime={item.createdAt}>{dateTime(item.createdAt)}</time></td>
     </tr>)}</tbody>
   </table></div>;
@@ -75,7 +79,7 @@ export function SubmissionList({ problemId, context }: { problemId?: string; con
   submissions.data?.items.forEach(item => options.set(item.problemId, item.problemTitle));
   if (query.problemId && !options.has(query.problemId)) options.set(query.problemId, query.problemId);
   const contestOptions = new Map((contests.data || []).map(item => [item.id, item.title]));
-  submissions.data?.items.forEach(item => { if (item.contestId) contestOptions.set(item.contestId, item.contestTitle || item.contestId); });
+  submissions.data?.items.forEach(item => { if (item.contestId) contestOptions.set(item.context || item.contestId, `${item.contestTitle || item.contestId}${item.context?.startsWith('virtual:') ? ' · Виртуально' : item.context?.startsWith('upsolve:') ? ' · Дорешивание' : ''}`); });
   if (query.context && query.context !== 'all' && query.context !== 'practice' && !contestOptions.has(query.context)) contestOptions.set(query.context, query.context);
   const filtered = Boolean(query.status || !problemId && (query.problemId || query.context !== 'all'));
   return <>

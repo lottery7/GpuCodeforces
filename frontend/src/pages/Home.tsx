@@ -5,6 +5,7 @@ import { api } from '../api/client';
 import type { Contest, User } from '../api/types';
 import { useSession } from '../auth';
 import { useAuthDialog } from '../auth-dialog';
+import { GPU_CUDA, useProcessors } from '../processors';
 import { Empty, ErrorMessage, QueryState, UserLink } from '../ui';
 import { dateTime, pendingStatuses } from '../utils';
 import { SubmissionTable } from './Submissions';
@@ -35,6 +36,10 @@ export default function Home() {
   const location = useLocation();
   const queryClient = useQueryClient();
   const [now, setNow] = useState(Date.now());
+  const catalog = useProcessors();
+  const [pickedProcessor, setPickedProcessor] = useState('');
+  // every processor has a rating of its own
+  const ratingProcessor = pickedProcessor || catalog.processors[0]?.id || GPU_CUDA;
   useEffect(() => {
     document.title = 'GPU Forces - Главная';
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -53,8 +58,8 @@ export default function Home() {
     refetchInterval: 5000,
   });
   const rating = useQuery({
-    queryKey: ['rating', 'dashboard'],
-    queryFn: ({ signal }) => api.listUsers({ sort: 'rating', offset: 0, limit: 100 }, signal),
+    queryKey: ['rating', 'dashboard', ratingProcessor],
+    queryFn: ({ signal }) => api.listUsers({ sort: 'rating', processor: ratingProcessor, offset: 0, limit: 100 }, signal),
   });
   const join = useMutation({
     mutationFn: (id: string) => api.registerForContest(id),
@@ -75,7 +80,7 @@ export default function Home() {
   return <>
     <section className="hero">
       <svg className="hero-logo" viewBox="0 0 40 40" role="img" aria-hidden="true"><rect width="40" height="40" rx="10" fill="#3574f0" /><path d="m14 12 12 8-12 8" fill="none" stroke="#ffffff" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" /></svg>
-      <div><h1 className="hero-title">GPU Forces</h1><p className="hero-sub">Соревновательная платформа для программистов, где задачи требуют максимально ускорить вычисления на GPU, TPU и других массово-параллельных архитектурах.</p></div>
+      <div><h1 className="hero-title">GPU Forces</h1><p className="hero-sub">Соревновательная платформа для программистов, где задачи требуют максимально ускорить вычисления на GPU, векторном RISC-V, NPU и собственных схемах на Verilog.</p></div>
     </section>
     <div className="dashboard">
       <section className="dashboard-main">
@@ -93,6 +98,7 @@ export default function Home() {
               <ul className="contest-meta">
                 <li><span>Начало</span><span>{dateTime(contest.startAt)} МСК</span></li>
                 <li><span>Длительность</span><span>{duration(contest)}</span></li>
+                <li><span>Процессор</span><span>{catalog.title(contest.processor)}</span></li>
                 <li><span>Задачи</span><span>{contest.problemCount}</span></li>
               </ul>
               <div className="contest-countdown">До начала <time dateTime={contest.startAt}>{countdown(contest.startAt, now)}</time></div>
@@ -104,11 +110,11 @@ export default function Home() {
           </QueryState>
         </section>
         <section className="panel">
-          <h2>{ratingTitle}</h2>
+          <div className="dashboard-head"><h2>{ratingTitle}</h2>{catalog.processors.length > 1 && <select aria-label="Процессор рейтинга" value={ratingProcessor} onChange={event => setPickedProcessor(event.target.value)}>{catalog.processors.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}</select>}</div>
           <QueryState query={rating}>
             {ratingRows.length ? <div className="table-wrap"><table className="data-table" aria-label="Рейтинг участников"><thead><tr><th className="num">Место</th><th>Участник</th><th className="num">Рейтинг</th></tr></thead><tbody>{ratingRows.map(person => <tr key={person.id} className={person.id === user?.id ? 'own-row' : undefined}>
-              <td className="num">{person.rank ?? '-'}</td><td><UserLink user={person} />{person.id === user?.id && <span className="small muted"> вы</span>}</td><td className="num mono">{person.rating ?? '-'}</td>
-            </tr>)}</tbody></table></div> : <p className="muted">Рейтингов пока нет.</p>}
+              <td className="num">{person.ratings[ratingProcessor]?.rank ?? '-'}</td><td><UserLink user={person} />{person.id === user?.id && <span className="small muted"> вы</span>}</td><td className="num mono">{person.ratings[ratingProcessor]?.rating ?? '-'}</td>
+            </tr>)}</tbody></table></div> : <p className="muted">На процессоре {catalog.title(ratingProcessor)} рейтингов пока нет.</p>}
           </QueryState>
         </section>
       </aside>

@@ -247,6 +247,8 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
 .toolbar .search { flex: 1 1 288px; min-width: 216px; }
 .toolbar > .search-input { flex: 1 1 288px; width: auto; min-width: 216px; }
 .toolbar select { flex: 0 1 auto; width: auto; min-width: 150px; max-width: 264px; font-size: var(--font-base); }
+.field-inline { display: inline-flex; align-items: center; gap: 9.6px; }
+.target-picker select { max-width: 384px; }
 .toolbar input:not([type="checkbox"]) { min-height: 40.8px; }
 .toolbar .filter-reset { margin-left: auto; }
 .rating-search { flex-wrap: nowrap; }
@@ -337,6 +339,10 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
 .metrics { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px 31.2px; margin-bottom: 24px; }
 .metrics > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7.2px; }
 .metrics strong { font-family: var(--mono); font-size: var(--font-xl); font-weight: 500; }
+.metric-list { display: flex; flex-wrap: wrap; gap: 7.2px 31.2px; margin: 0 0 16.8px; }
+.metric-list > div { display: flex; align-items: baseline; gap: 9.6px; }
+.metric-list dt { color: var(--muted); }
+.metric-list dd { margin: 0; }
 .contest-form { max-width: 912px; }
 .contest-builder { max-width: none; }
 .contest-settings { display: flex; flex-direction: column; gap: 21.6px; min-width: 0; padding: 19.2px; border: 1.2px solid var(--border); border-radius: 4.8px; background: var(--surface); }
@@ -506,6 +512,7 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
 .loading { padding: 28.8px 0; color: var(--muted); }
 .session-error { display: flex; flex-wrap: wrap; align-items: center; gap: 9.6px; margin-bottom: 19.2px; }
 .global-feedback { position: sticky; z-index: 30; top: 0; background: var(--bg); }
+.global-feedback:has(.runtime-notice):not(:has(.error, .session-error)) { position: static; }
 .global-feedback:empty { display: none; }
 .pagination button { display: inline-flex; align-items: center; justify-content: center; min-width: 38.4px; min-height: 38.4px; padding: 4.8px 10.8px; border: 1.2px solid var(--border); border-radius: 3.6px; background: transparent; color: var(--text); }
 .pagination button:hover { background: var(--chrome); }
@@ -627,3 +634,12 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
 }
+.guess-workspace { display: grid; gap: 24px; }
+.guess-codes, .duel-players { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 19.2px; }
+.guess-pane { min-width: 0; }
+.guess-choices { display: flex; flex-wrap: wrap; gap: 24px; margin: 19.2px 0; }
+.guess-result, .duel-board, .comparison-builder { margin: 24px 0; }
+.duel-board { padding: 19.2px; }
+.duel-board h2 { margin-top: 0; font-size: 19.2px; }
+.duel-players > div { padding: 14.4px; background: var(--bg); border: 1.2px solid var(--border); }
+@media (max-width: 864px) { .guess-codes, .duel-players { grid-template-columns: 1fr; } }

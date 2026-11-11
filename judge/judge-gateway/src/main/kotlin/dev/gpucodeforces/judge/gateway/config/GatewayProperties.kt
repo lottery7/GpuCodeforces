@@ -1,16 +1,17 @@
 package dev.gpucodeforces.judge.gateway.config
 
+import dev.gpucodeforces.judge.api.Processors
 import dev.gpucodeforces.judge.api.SpecValidator
-import dev.gpucodeforces.judge.api.Topology
 import org.springframework.boot.context.properties.ConfigurationProperties
 import java.time.Duration
 
 @ConfigurationProperties("judge.gateway")
 data class GatewayProperties(
-    /** GPU profiles the gateway accepts submissions for; one jobs queue is declared per profile. */
-    val gpuProfiles: List<String> = listOf("rtx3060"),
-    /** Profile used when a submission does not specify one. */
-    val defaultGpuProfile: String = "rtx3060",
+    /**
+     * Processors the gateway accepts submissions for, ids from [Processors]; one jobs queue is declared per
+     * processor. A submission always names its processor: there is no default.
+     */
+    val processors: List<String> = listOf(Processors.GPU_CUDA),
     /** Executors without a heartbeat for this long are reported as dead. */
     val heartbeatTimeout: Duration = Duration.ofSeconds(15),
     /** Window in which a repeated submissionId is treated as a duplicate (per gateway instance). */
@@ -28,8 +29,10 @@ data class GatewayProperties(
     val maxTimeLimitMs: Long = CONTRACT_LIMITS.maxTimeLimitMs,
 ) {
     init {
-        require(defaultGpuProfile in gpuProfiles) { "judge.gateway.default-gpu-profile must be one of gpu-profiles" }
-        require(gpuProfiles.all(Topology::isProfileName)) { "gpu profile names must match ${Topology.PROFILE_NAME}" }
+        require(processors.isNotEmpty()) { "judge.gateway.processors is empty: set JUDGE_PROCESSORS" }
+        processors.filter { Processors.find(it) == null }.forEach {
+            throw IllegalArgumentException("judge.gateway.processors: unknown processor '$it', known: ${Processors.ids}")
+        }
         require(maxSourceBytes <= CONTRACT_LIMITS.maxSourceBytes && maxTimeLimitMs <= CONTRACT_LIMITS.maxTimeLimitMs) {
             "judge.gateway limits cannot exceed $CONTRACT_LIMITS: executors would reject the jobs"
         }

@@ -26,6 +26,7 @@ class AuthIntegrationTest {
     private val client by lazy { RestTestClient.bindToServer().baseUrl("http://localhost:$port/api").build() }
 
     @Test
+    @AllowFullScan("users", "SELECT count\\(\\*\\).*lower\\(handle\\) LIKE", "The one-user fixture is cheaper to scan than to probe GIN; selective search is tested separately with 10000 users", maxTableRows = 1)
     fun `register, duplicate rejection, login, current user, logout`() {
         val handle = "cuda_user"
         val registerRequest = RegisterUserRequest(handle, "cuda_user@example.com", "password123")
@@ -37,7 +38,7 @@ class AuthIntegrationTest {
             .expectBody(User::class.java)
             .returnResult()
         assertThat(registerResult.responseBody?.handle).isEqualTo(handle)
-        assertThat(registerResult.responseBody?.rating).isNull()
+        assertThat(registerResult.responseBody?.ratings).isEmpty()
         val registerSessionCookie = registerResult.responseCookies.getFirst("session")?.value
         assertThat(registerSessionCookie).isNotNull()
 

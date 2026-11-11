@@ -8,7 +8,7 @@ import java.util.UUID
 
 class ContestTest {
     private fun contest(startAt: Instant, endAt: Instant) =
-        Contest(id = UUID.randomUUID(), title = "Контест", startAt = startAt, endAt = endAt, gpu = "NVIDIA GeForce RTX 4090")
+        Contest(id = UUID.randomUUID(), title = "Контест", startAt = startAt, endAt = endAt, processor = "gpu-cuda")
 
     @Test
     fun `phase is upcoming strictly before start, live exactly at start, finished exactly at end`() {

@@ -2,16 +2,22 @@
 """Developer CLI for the judge: submit a solution and watch its events.
 
     python3 tools/judge_cli.py submit problems/examples/vector_add problems/examples/vector_add/solutions/accepted.cu --watch
+    python3 tools/judge_cli.py submit PROBLEM SOLUTION --processor rtl --language systemverilog
     python3 tools/judge_cli.py validate problems/examples/vector_add
     python3 tools/judge_cli.py watch            # print all events (needs `pip install pika`)
 
 A problem directory contains problem.json (ProblemSpec without generator.source) and problem.py (the generator).
-`--watch` binds a temporary queue to the `judge.events` exchange, so it does not steal events from the backend.
+`--processor` may be left out when the problem declares one processor, `--language` when the processor allows one
+language there or the solution's extension names it. `--watch` binds a temporary queue to the `judge.events`
+exchange, so it does not steal events from the backend; the verdict line shows the score to pick a problem's limit.
+`validate` also lists, per processor, how many tests run on it and how many of them are measured: that needs the
+generator to be importable here (torch installed).
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import sys
 import time
@@ -19,6 +25,35 @@ import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
+
+
+PYTOOLS = Path(__file__).resolve().parent.parent / "pytools"
+
+# Extensions of the languages in judge-api Processors.
+EXTENSIONS = {".cu": "cuda", ".sv": "systemverilog", ".c": "c", ".cpp": "cpp", ".S": "asm"}
+
+
+def declared_processors(problem: dict) -> list[dict]:
+    """What the gateway judges a problem on: its processors, or gpu-cuda alone."""
+    return problem.get("processors") or [{"id": "gpu-cuda", "languages": ["cuda"]}]
+
+
+def pick_target(problem: dict, solution: Path, processor: str | None, language: str | None) -> tuple[str, str]:
+    declared = declared_processors(problem)
+    if processor is None:
+        if len(declared) != 1:
+            sys.exit(f"--processor is needed: the problem declares {', '.join(p['id'] for p in declared)}")
+        processor = declared[0]["id"]
+    if language is None:
+        languages = next((p["languages"] for p in declared if p["id"] == processor), [])
+        by_extension = next((lang for ext, lang in EXTENSIONS.items() if solution.name.endswith(ext)), None)
+        if len(languages) == 1:
+            language = languages[0]
+        elif by_extension in languages:
+            language = by_extension
+        else:
+            sys.exit(f"--language is needed: {processor} allows {', '.join(languages) or 'nothing'} in this problem")
+    return processor, language
 
 
 def load_problem(path: Path) -> dict:
@@ -48,6 +83,13 @@ def open_events_channel(host: str):
     return conn, ch, q
 
 
+def fmt_score(score: dict | None) -> str:
+    if not score:
+        return "-"
+    unit = {"TIME_MS": "ms", "CYCLES": "cycles", "CYCLES_X_DEPTH_X_TRANSISTORS": "cycles x depth x transistors", "WEIGHTED_INSTRUCTIONS": "weighted instructions", "INSTRUCTIONS": "instructions"}
+    return f"{score['value']:.3f} {unit.get(score['type'], score['type'])}"
+
+
 def print_event(e: dict) -> None:
     status = e["status"]
     head = f"[{e['submissionId']} a{e['attempt']} #{e['seq']}] {status:<9} from {e['source']}"
@@ -57,29 +99,33 @@ def print_event(e: dict) -> None:
     elif e.get("result"):
         r = e["result"]
         print(f"{head}  {r['verdict']}" + (f" on test {r['failedTest']}" if r.get("failedTest") else "")
-              + (f", max time {r['maxTimeMs']:.3f} ms" if r.get("maxTimeMs") is not None else ""))
+              + (f", score {fmt_score(r['score'])}" if r.get("score") else ""))
+        if r.get("metrics"):
+            print("    metrics:", ", ".join(f"{k} {v:g}" for k, v in r["metrics"].items()))
         if r.get("message"):
             print("    message:", r["message"])
         for t in r.get("tests", []):
-            tm = f"{t['timeMs']:.3f} ms" if t.get("timeMs") is not None else "-"
-            print(f"    test {t['index']:>3} {t['name']:<16} {t['verdict']:<22} {tm:>12}  {t.get('message') or ''}")
+            measured = "" if t.get("measured", True) else " (not measured)"
+            print(f"    test {t['index']:>3} {t['name']:<16} {t['verdict']:<22} {fmt_score(t.get('score')):>20}{measured}  {t.get('message') or ''}")
         if r.get("compileLog"):
             print("    compile log:\n      " + r["compileLog"].replace("\n", "\n      "))
         if r.get("gpu"):
             g = r["gpu"]
             print(f"    gpu: {g['name']} #{g['index']} on {g['executorId']}, sm clock {g.get('minSmClockMhz')}-{g.get('maxSmClockMhz')} MHz, "
                   f"max temp {g.get('maxTemperatureC')} C, throttled={g.get('throttled')}")
-        print(f"    judge time {r['judgeTimeMs']} ms, toolchain: {r.get('toolchain')}")
+        p = r.get("processor") or {}
+        print(f"    judge time {r['judgeTimeMs']} ms on {p.get('id', '-')} ({p.get('model', '-')}) of {p.get('executorId', '-')}, "
+              f"versions: {p.get('version', '-')}")
     else:
         print(head)
 
 
 def cmd_submit(args) -> int:
     problem = load_problem(Path(args.problem))
+    solution = Path(args.solution)
+    processor, language = pick_target(problem, solution, args.processor, args.language)
     sid = args.id or f"dev-{uuid.uuid4().hex[:12]}"
-    body = {"submissionId": sid, "problem": problem, "source": Path(args.solution).read_text()}
-    if args.gpu:
-        body["gpuProfile"] = args.gpu
+    body = {"submissionId": sid, "problem": problem, "source": solution.read_text(), "processor": processor, "language": language}
     watch = open_events_channel(args.rabbit) if args.watch else None
     code, resp = post(f"{args.gateway}/api/v1/submissions", body)
     print(code, json.dumps(resp, indent=1))
@@ -112,10 +158,39 @@ def cmd_watch(args) -> int:
     return 0
 
 
+def count_tests(path: Path, problem: dict) -> bool:
+    """Runs the generator's tests() here and prints, per processor, its tests and measured tests."""
+    sys.path.insert(0, str(PYTOOLS))
+    from judge_problem.spec import check_coverage, coverage_table, parse_params, parse_test  # noqa: E402
+
+    try:
+        spec = importlib.util.spec_from_file_location("judge_problem_module", path / "problem.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except ImportError as e:
+        print(f"tests not counted: problem.py cannot be imported here ({e})")
+        return True
+    processors = [p["id"] for p in declared_processors(problem)]
+    params = parse_params(problem["signature"])
+    try:
+        tests = [parse_test(i, raw, params, 4 << 30, processors) for i, raw in enumerate(module.tests(), start=1)]
+        table = coverage_table(tests, processors)
+        for p, row in table.items():
+            print(f"{p}: {row['tests']} tests, {row['measured']} measured")
+        check_coverage(tests, processors)
+    except ValueError as e:
+        print("error:", e)
+        return False
+    return True
+
+
 def cmd_validate(args) -> int:
-    code, resp = post(f"{args.gateway}/api/v1/problems/validate", load_problem(Path(args.problem)))
+    path = Path(args.problem)
+    problem = load_problem(path)
+    code, resp = post(f"{args.gateway}/api/v1/problems/validate", problem)
     print(code, json.dumps(resp, indent=1))
-    return 0 if resp.get("valid") else 1
+    tests_ok = count_tests(path, problem)
+    return 0 if resp.get("valid") and tests_ok else 1
 
 
 def main() -> int:
@@ -127,7 +202,8 @@ def main() -> int:
     s.add_argument("problem")
     s.add_argument("solution")
     s.add_argument("--id")
-    s.add_argument("--gpu")
+    s.add_argument("--processor", help="processor id, e.g. gpu-cuda or rtl")
+    s.add_argument("--language", help="language id, e.g. cuda or systemverilog")
     s.add_argument("--watch", action="store_true")
     s.add_argument("--timeout", type=int, default=600)
     s.set_defaults(fn=cmd_submit)

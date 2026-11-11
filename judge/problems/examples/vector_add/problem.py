@@ -20,3 +20,10 @@ def generate(test, gen, device):
 
 def reference(test, inputs):
     return {"C": inputs["A"] + inputs["B"]}
+
+
+def validate_input(test, inputs):
+    return 1 <= test["N"] <= 100000000 and all(
+        bool(torch.isfinite(value).all() and (value.abs() <= 1000).all())
+        for value in inputs.values()
+    )

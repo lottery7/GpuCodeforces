@@ -5,9 +5,11 @@ import jakarta.persistence.Entity
 import jakarta.persistence.Id
 import jakarta.persistence.Table
 import org.hibernate.annotations.JdbcTypeCode
+import org.intellij.lang.annotations.Language
 import org.hibernate.type.SqlTypes
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Query
+import org.springframework.data.jpa.repository.Modifying
 import java.time.Instant
 import java.util.UUID
 
@@ -20,6 +22,8 @@ class Problem(
     var currentVersionId: UUID? = null,
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: Instant = Instant.now(),
+    @Column(nullable = false)
+    val source: String = "package",
 ) {
     override fun equals(other: Any?) = this === other || (other is Problem && id == other.id)
 
@@ -50,8 +54,14 @@ class ProblemVersion(
     val draft: Boolean,
     @Column(name = "statement_markdown", nullable = false)
     val statementMarkdown: String,
-    @Column(name = "starter_code", nullable = false)
-    val starterCode: String,
+    /** Processors the problem can be judged on, in the order of problem.json; duplicated from [judgeSpec] for filters. */
+    @JdbcTypeCode(SqlTypes.ARRAY)
+    @Column(nullable = false)
+    val processors: List<String>,
+    /** Processor -> language -> starter code. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(nullable = false)
+    val starters: Map<String, Map<String, String>>,
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "judge_spec", nullable = false)
     val judgeSpec: String,
@@ -60,6 +70,11 @@ class ProblemVersion(
     @Column(name = "judge_hash", nullable = false)
     val judgeHash: String,
     val revision: String?,
+    @Column(nullable = false)
+    val format: String = ProblemFormatData.STANDARD,
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "format_data", nullable = false)
+    val formatData: String = "{}",
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: Instant = Instant.now(),
 ) {
@@ -70,11 +85,27 @@ class ProblemVersion(
     override fun hashCode() = id.hashCode()
 }
 
-interface ProblemRepository : JpaRepository<Problem, String>
+interface ProblemRepository : JpaRepository<Problem, String> {
+    /** Published problems that come from the problem repository; comparisons are created on the platform. */
+    @Query("SELECT p.id FROM Problem p WHERE p.currentVersionId IS NOT NULL AND p.source = 'package'")
+    fun findActivePackageIds(): List<String>
+
+    @Modifying(flushAutomatically = true)
+    @Query("UPDATE Problem p SET p.currentVersionId = NULL WHERE p.id IN :ids")
+    fun unpublish(ids: Collection<String>): Int
+}
 
 interface ProblemVersionRepository : JpaRepository<ProblemVersion, UUID> {
     fun findByProblemIdAndContentHash(problemId: String, contentHash: String): ProblemVersion?
 
-    @Query("SELECT v FROM ProblemVersion v WHERE v.id IN (SELECT p.currentVersionId FROM Problem p)")
+    /** The lateral lookup reads each current version by its key: a join would go through the whole version history. */
+    @Query(value = CURRENT_VERSIONS, nativeQuery = true)
     fun findCurrent(): List<ProblemVersion>
 }
+
+@Language("SQL")
+private const val CURRENT_VERSIONS = """
+    SELECT v.* FROM gpucodeforces.problems p
+    JOIN LATERAL (SELECT * FROM gpucodeforces.problem_versions WHERE id = p.current_version_id LIMIT 1) v ON true
+    WHERE p.current_version_id IS NOT NULL
+"""

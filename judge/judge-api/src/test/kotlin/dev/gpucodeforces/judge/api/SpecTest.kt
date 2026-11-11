@@ -89,6 +89,146 @@ class SpecValidatorTest {
     }
 }
 
+class ProcessorsTest {
+    @Test
+    fun `catalog ids are unique queue names and every processor has a language`() {
+        assertEquals(Processors.ids.toSet().size, Processors.ids.size)
+        assertTrue(Processors.ids.all(Topology::isProfileName), Processors.ids.toString())
+        assertTrue(Processors.all.all { it.languages.isNotEmpty() })
+        assertEquals(listOf(Processors.GPU_CUDA), Processors.all.filter { !it.emulated }.map { it.id })
+        assertEquals(ScoreType.CYCLES_X_DEPTH_X_TRANSISTORS, Processors.get(Processors.RTL).scoreType)
+    }
+
+    @Test
+    fun `C++ includes the C header of the fixed-width types where there is no C++ standard library`() {
+        assertEquals(listOf("cstdint"), CSignature.includes(Processors.RISCV_RVV, cpp = true))
+        assertEquals(listOf("stdint.h"), CSignature.includes(Processors.RISCV_RVV, cpp = false))
+        assertEquals(listOf("stdint.h"), CSignature.includes(Processors.CORAL_NPU, cpp = true))
+    }
+}
+
+class ProcessorSpecTest {
+    private val rtl = ProcessorSpec(Processors.RTL, listOf("systemverilog"), limit = 1e6)
+
+    @Test
+    fun `a package without processors is a gpu-cuda problem with its time limit`() {
+        val spec = Fixtures.vectorAdd()
+        assertEquals(listOf(ProcessorSpec(Processors.GPU_CUDA, listOf("cuda"))), spec.declaredProcessors())
+        assertEquals(1000.0, spec.scoreLimit(spec.processorSpec(Processors.GPU_CUDA)!!))
+        assertEquals(emptyList(), SpecValidator.validateTarget(spec, Processors.GPU_CUDA, "cuda"))
+        assertTrue(SpecValidator.validateTarget(spec, Processors.RTL, "systemverilog").single().contains("declares: gpu-cuda"))
+    }
+
+    @Test
+    fun `gpu-cuda takes its own limit when it has one`() {
+        val spec = Fixtures.vectorAdd().copy(processors = listOf(ProcessorSpec(Processors.GPU_CUDA, listOf("cuda"), limit = 0.5), rtl))
+        assertEquals(emptyList(), SpecValidator.validateProblem(spec))
+        assertEquals(0.5, spec.scoreLimit(spec.processorSpec(Processors.GPU_CUDA)!!))
+        assertEquals(2001, spec.limits.wallTimeLimitMsFor(0.5))
+    }
+
+    @Test
+    fun `processors must be known, unique, with their own languages and limits`() {
+        val spec = Fixtures.vectorAdd().copy(
+            processors = listOf(
+                ProcessorSpec("gpu", listOf("cuda")),
+                rtl.copy(limit = null, languages = listOf("verilog")),
+                rtl,
+                ProcessorSpec(Processors.RISCV_RVV, listOf("c"), limit = -1.0, rtl = RtlSettings()),
+                ProcessorSpec(Processors.GPU_CUDA, emptyList(), limit = 1e9),
+            ),
+        )
+        val errors = SpecValidator.validateProblem(spec)
+        listOf(
+            "unknown processor 'gpu'", "processor rtl: limit is required", "language 'verilog' is not one of systemverilog",
+            "processor rtl: declared twice", "processor riscv-rvv: limit must be a positive number",
+            "rtl settings belong to processor rtl only", "processor gpu-cuda: languages is empty",
+            "processor gpu-cuda: limit must be at most 30000 ms",
+        ).forEach { expected -> assertTrue(errors.any { expected in it }, "$expected: $errors") }
+    }
+
+    @Test
+    fun `rtl checks its ports`() {
+        val sig = Fixtures.vectorAdd().signature
+        val bad = Fixtures.vectorAdd().copy(
+            signature = sig.copy(params = sig.params + ParamSpec("wire", DType.INT32, ParamRole.SCALAR) + ParamSpec("A_addr", DType.INT32, ParamRole.SCALAR)),
+            processors = listOf(rtl.copy(rtl = RtlSettings(readPorts = 9))),
+        )
+        val errors = SpecValidator.validateProblem(bad)
+        listOf("readPorts must be in 1..8", "'wire' is a SystemVerilog keyword", "two ports of the module would be named 'A_addr'")
+            .forEach { expected -> assertTrue(errors.any { expected in it }, "$expected: $errors") }
+        val inout = sig.copy(params = sig.params.map { if (it.name == "C") it.copy(role = ParamRole.INOUT) else it })
+        val stream = Fixtures.vectorAdd().copy(signature = inout, processors = listOf(rtl.copy(rtl = RtlSettings(dataMode = RtlDataMode.STREAM))))
+        assertTrue(SpecValidator.validateProblem(stream).any { "'C' is INOUT" in it })
+    }
+
+    @Test
+    fun `a submission names a declared processor, an allowed language`() {
+        val spec = Fixtures.vectorAdd().copy(processors = listOf(rtl))
+        assertEquals(emptyList(), SpecValidator.validateTarget(spec, Processors.RTL, "systemverilog"))
+        assertTrue(SpecValidator.validateTarget(spec, Processors.GPU_CUDA, "cuda").single().contains("declares: rtl"))
+        assertTrue(SpecValidator.validateTarget(spec, Processors.RTL, "cuda").single().contains("allowed: systemverilog"))
+    }
+}
+
+class RtlSignatureTest {
+    private val sig = Fixtures.vectorAdd().signature
+
+    @Test
+    fun `memory mode gives every array its ports`() {
+        assertEquals(
+            """
+            module solve (
+                input  logic clk,
+                input  logic start,
+                output logic done,
+                output logic [31:0] A_addr,
+                input  logic [31:0] A_data,
+                output logic [31:0] B_addr,
+                input  logic [31:0] B_data,
+                output logic [31:0] C_addr,
+                output logic [31:0] C_data,
+                output logic C_write,
+                input  logic signed [31:0] N
+            );
+            """.trimIndent(),
+            RtlSignature.declaration(sig),
+        )
+    }
+
+    @Test
+    fun `more read ports become port arrays, INOUT gets read and write ports`() {
+        val inout = sig.copy(params = sig.params.map { if (it.name == "C") it.copy(role = ParamRole.INOUT, type = DType.UINT8) else it })
+        val ports = RtlSignature.ports(inout, RtlSettings(readPorts = 2)).associateBy { it.name }
+        assertEquals("output logic [1:0] [31:0] A_addr", ports.getValue("A_addr").declaration())
+        assertEquals("input  logic [1:0] [7:0] C_rdata", ports.getValue("C_rdata").declaration())
+        assertEquals(64, ports.getValue("A_addr").width)
+        assertEquals("output logic [7:0] C_wdata", ports.getValue("C_wdata").declaration())
+        assertEquals(setOf("C_raddr", "C_rdata", "C_waddr", "C_wdata", "C_write"), ports.keys.filter { it.startsWith("C_") }.toSet())
+    }
+
+    @Test
+    fun `stream mode has data and valid per array`() {
+        val names = RtlSignature.ports(sig, RtlSettings(dataMode = RtlDataMode.STREAM)).map { it.name }
+        assertEquals(listOf("clk", "start", "done", "A_data", "A_valid", "B_data", "B_valid", "C_data", "C_valid", "N"), names)
+    }
+
+    @Test
+    fun `template is a module that keeps done low`() {
+        val template = RtlSignature.template(sig)
+        assertTrue(template.startsWith("module solve ("))
+        assertTrue("assign done = 1'b0;" in template && template.trimEnd().endsWith("endmodule"))
+    }
+}
+
+class CSignatureTest {
+    @Test
+    fun `renders a host declaration with fixed-width types`() {
+        val sig = Fixtures.vectorAdd().signature
+        assertEquals("void solve(const float* A, const float* B, float* C, int32_t N)", CSignature.declaration(sig))
+    }
+}
+
 class CudaSignatureTest {
     @Test
     fun `renders declaration`() {

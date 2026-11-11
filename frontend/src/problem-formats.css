@@ -1,0 +1,66 @@
+.solution-tabs { display: flex; align-self: stretch; min-width: 0; gap: 0; }
+.solution-tabs button { padding: 12px 16.8px; border: 0; border-bottom: 2.4px solid transparent; background: none; color: var(--muted); white-space: nowrap; }
+.solution-tabs button[aria-selected="true"] { color: var(--text-strong); border-bottom-color: var(--accent); background: var(--surface); }
+.editor-title:has(.solution-tabs) { padding-left: 0; }
+.optimization-editors { display: flex; flex: 1; min-height: 0; flex-direction: column; }
+.optimization-editors > [role="tabpanel"]:not([hidden]) { display: flex; flex: 1; min-height: 0; flex-direction: column; }
+.optimization-editors > [hidden] { display: none; }
+.optimization-summary { flex: none; margin-bottom: 9.6px; }
+.optimization-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9.6px; margin: 0; }
+.optimization-metrics > div { padding: 14.4px; background: var(--surface); border: 1.2px solid var(--border); border-radius: 7.2px; }
+.optimization-metrics dt { color: var(--muted); font-size: 13.2px; line-height: 1.4; }
+.optimization-metrics dd { margin: 6px 0 0; color: var(--text-strong); font: 21.6px/1.4 var(--mono); overflow-wrap: anywhere; }
+.optimization-metrics dd .score-unit { display: block; margin-top: 3.6px; color: var(--muted); font: 13.2px/1.4 var(--font); white-space: normal; }
+.optimization-metrics .metric-empty { font: 14.4px/1.5 var(--font); }
+.optimization-metrics .metric-improved dd { color: var(--success); }
+.benchmark-info { margin-top: 26.4px; padding-top: 21.6px; border-top: 1.2px solid var(--border); }
+.benchmark-info p { color: var(--muted); font-size: 14.4px; }
+.benchmark-info summary { display: list-item; width: fit-content; margin-bottom: 9.6px; color: var(--accent); }
+.guess-attempt-note { margin-top: 9.6px; }
+.guess-comparison { min-width: 0; margin: 0; padding: 0; border: 0; }
+.guess-comparison .visually-hidden { position: absolute; width: 1.2px; height: 1.2px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.guess-code-card { overflow: hidden; border-radius: 9.6px; transition: border-color .15s; }
+.guess-code-heading { display: flex; align-items: center; gap: 12px; min-height: 64.8px; padding: 12px 16.8px; background: var(--surface); border-bottom: 1.2px solid var(--border); }
+.guess-pick { position: relative; display: flex; align-items: center; gap: 12px; min-height: 62.4px; padding: 15.6px 19.2px; cursor: pointer; background: var(--surface); color: var(--text-strong); font-weight: 500; }
+.guess-pick input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; opacity: 0; cursor: inherit; }
+.guess-pick:hover { background: #30343d; }
+.guess-pick:has(input:checked) { background: #25385a; color: #d9e5ff; }
+.guess-pick:has(input:focus-visible) { outline: 2.4px solid var(--accent); outline-offset: -3px; }
+.guess-pick-mark { flex: 0 0 24px; display: grid; place-items: center; width: 24px; height: 24px; border: 1.2px solid #767d8d; border-radius: 50%; }
+.guess-pick:has(input:checked) .guess-pick-mark { background: var(--accent); border-color: var(--accent); }
+.guess-pick:has(input:checked) .guess-pick-mark::after { content: ''; width: 9.6px; height: 6px; border-left: 2.4px solid #17233b; border-bottom: 2.4px solid #17233b; transform: translateY(-1px) rotate(-45deg); }
+.guess-code-card:has(input:checked) { border-color: var(--accent); }
+.guess-code-card > .guess-pick { border-top: 1.2px solid var(--border); }
+.guess-equal { margin-top: 16.8px; min-height: 79.2px; border: 1.2px solid var(--border); border-radius: 9.6px; }
+.guess-equal-symbol { display: grid; place-items: center; width: 38.4px; height: 38.4px; border-radius: 7.2px; background: var(--chrome); color: var(--muted); font: 28.8px var(--mono); }
+.guess-equal strong { display: block; }
+.guess-equal .guess-pick-mark { margin-left: auto; }
+.guess-comparison:disabled .guess-pick { cursor: default; }
+.guess-comparison .answer-correct { border-color: var(--success); }
+.guess-comparison .answer-wrong { border-color: var(--error); }
+.guess-submit { min-width: 216px; margin-top: 21.6px; }
+.guess-result { padding: 24px; border: 1.2px solid var(--border); border-radius: 9.6px; background: var(--surface); }
+.guess-result-title { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 14.4px; }
+.guess-result-title h2 { margin: 0; font-size: 21.6px; }
+.guess-result-badge { padding: 3.6px 10.8px; border-radius: 4.8px; font-size: 14.4px; font-weight: 600; }
+.guess-result-badge.correct { background: #203b2a; color: #92c89a; }
+.guess-result-badge.incorrect { background: #482e2d; color: #f1a49d; }
+.guess-measurements { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin: 21.6px 0; }
+.guess-measurement > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 14.4px; margin-bottom: 9.6px; }
+.guess-measurement strong { font: 18px var(--mono); color: var(--text-strong); }
+.guess-time-track { height: 7.2px; overflow: hidden; background: var(--bg); border-radius: 3.6px; }
+.guess-time-track span { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
+@media (max-width: 720px) {
+  .optimization-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .optimization-metrics > div:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  .optimization-metrics > div { padding: 10.8px; }
+  .optimization-metrics dd { font-size: 19.2px; }
+  .solution-tabs button { padding: 12px; font-size: 14.4px; }
+  .guess-measurements { grid-template-columns: 1fr; gap: 16.8px; }
+  .guess-submit { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) { .guess-code-card { transition: none; } }
+.reference-status { margin: 19.2px 0; padding: 14.4px 16.8px; border: 1.2px solid var(--border); border-radius: 7.2px; color: var(--muted); background: var(--bg); }
+.reference-status strong { color: var(--text-strong); font-weight: 500; }
+.reference-status p { margin: 7.2px 0 0; overflow-wrap: anywhere; }
+.reference-status.failed { border-color: #75504a; }

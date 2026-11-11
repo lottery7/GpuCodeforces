@@ -7,18 +7,33 @@ import { api } from '../src/api/client';
 import type { Submission as SubmissionRecord, User } from '../src/api/types';
 import Submission from '../src/pages/Submission';
 
-const owner: User = { id: 'owner', handle: 'cuda_user', rating: null, rank: null, ratingDelta: null, ratingContestId: null };
+const owner: User = { id: 'owner', handle: 'cuda_user', ratings: {} };
 
 vi.mock('../src/auth', () => ({ useSession: () => ({ user: owner, isLoading: false, error: null }) }));
 vi.mock('../src/components/CodeEditor', () => ({ default: () => <div>Исходный код</div> }));
 
 const record: SubmissionRecord = {
-  id: '42', problemId: 'vector-add', problemTitle: 'Сложение векторов', user: owner,
+  id: '42', problemId: 'vector-add', problemTitle: 'Сложение векторов', format: 'standard', user: owner,
   contestId: null, contestTitle: null, createdAt: '2026-01-01T10:00:00Z', status: 'system_error',
-  timeMs: null, comparable: false, code: 'void solve() {}', diagnostic: 'GPU недоступна.\n'.repeat(100),
+  processor: 'gpu-cuda', language: 'cuda', score: null, comparable: false, code: 'void solve() {}', diagnostic: 'GPU недоступна.\n'.repeat(100),
 };
 
 describe('Результат повторной проверки', () => {
+  it.each([null, 'duel-room'])('ведет к результатам нужного контекста принятой посылки: %s', async contestId => {
+    vi.spyOn(api, 'getSubmission').mockResolvedValue({ ...record, status: 'accepted', contestId, processor: 'rtl', language: 'systemverilog', score: { value: 1, type: 'CYCLES_X_DEPTH_X_TRANSISTORS' }, comparable: true });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/submission/42']}><Routes><Route path="/submission/:id" element={<Submission />} /></Routes></MemoryRouter></QueryClientProvider>);
+
+    if (contestId) {
+      expect(await screen.findByRole('link', { name: 'Результаты соревнования' })).toHaveAttribute('href', '/contest/duel-room?tab=standings');
+      expect(screen.getByRole('link', { name: record.problemTitle })).toHaveAttribute('href', '/problem/vector-add?contest=duel-room&processor=rtl&language=systemverilog');
+      expect(screen.queryByRole('link', { name: 'Таблица лидеров' })).not.toBeInTheDocument();
+    } else {
+      expect(await screen.findByRole('link', { name: 'Таблица лидеров' })).toHaveAttribute('href', '/problem/vector-add?tab=leaders&processor=rtl&language=systemverilog');
+      expect(screen.getByRole('link', { name: record.problemTitle })).toHaveAttribute('href', '/problem/vector-add?processor=rtl&language=systemverilog');
+    }
+  });
+
   it('держит действие и его ошибку перед длинной диагностикой', async () => {
     vi.spyOn(api, 'getSubmission').mockResolvedValue(record);
     vi.spyOn(api, 'recheckSubmission').mockRejectedValue(new Error('Не удалось вернуть посылку в очередь.'));

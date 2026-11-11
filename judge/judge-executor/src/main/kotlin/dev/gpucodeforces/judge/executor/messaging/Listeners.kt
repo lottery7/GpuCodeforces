@@ -8,9 +8,9 @@ import dev.gpucodeforces.judge.api.JudgeJob
 import dev.gpucodeforces.judge.api.Topology
 import dev.gpucodeforces.judge.executor.config.ExecutorProperties
 import dev.gpucodeforces.judge.executor.config.REAL
-import dev.gpucodeforces.judge.executor.gpu.GpuManager
 import dev.gpucodeforces.judge.executor.pipeline.Disposition
 import dev.gpucodeforces.judge.executor.pipeline.JobProcessor
+import dev.gpucodeforces.judge.executor.processor.ProcessorBackends
 import java.net.InetAddress
 import java.time.Clock
 import org.slf4j.LoggerFactory
@@ -50,6 +50,7 @@ class JobListener(
         MDC.put("submissionId", job.submissionId)
         MDC.put("attempt", attempt.toString())
         MDC.put("problem", job.problem.id)
+        MDC.put("processor", job.processor)
         MDC.put("executor", props.id)
         try {
             when (pipeline.process(job, attempt)) {
@@ -93,7 +94,6 @@ class ControlListener(private val cancels: CancelRegistry, private val publisher
 @Component
 class HeartbeatPublisher(
     private val props: ExecutorProperties,
-    private val gpus: GpuManager,
     private val pipeline: JobProcessor,
     private val publisher: EventPublisher,
     private val clock: Clock,
@@ -111,11 +111,11 @@ class HeartbeatPublisher(
                 ExecutorHeartbeat(
                     executorId = props.id,
                     hostname = hostname,
-                    gpuProfile = props.gpuProfile,
+                    processors = pipeline.processors(),
                     version = version,
                     startedAt = startedAt,
                     timestamp = clock.instant(),
-                    gpus = gpus.pool.slots.map { it.status() },
+                    gpus = pipeline.gpus(),
                     inFlight = pipeline.inFlight.get(),
                     capacity = props.capacity,
                 ),
@@ -129,12 +129,12 @@ class HeartbeatPublisher(
     }
 }
 
-/** Probes the GPUs between jobs. Absent in the mock profile, where there is nothing to probe. */
+/** Health checks of the processors between jobs (GPU probes). Absent in the mock profile, where there is nothing to check. */
 @Component
 @Profile(REAL)
-class GpuHealthChecker(private val gpus: GpuManager) {
+class ProcessorHealthChecker(private val backends: ProcessorBackends) {
     @Scheduled(fixedDelayString = "\${judge.executor.health-check-interval:10s}")
     fun healthCheck() {
-        gpus.periodicCheck()
+        backends.all.forEach { it.maintenance() }
     }
 }

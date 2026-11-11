@@ -103,7 +103,7 @@ class NsjailSandbox(private val cfg: SandboxConfig, val wsl: Boolean = isWsl2())
     }
 
     private fun baseEnv(spec: SandboxSpec): Map<String, String> = buildMap {
-        put("PATH", "/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/bin")
+        put("PATH", spec.path.joinToString(":"))
         put("HOME", "/tmp")
         put("TMPDIR", "/tmp")
         put("LANG", "C.UTF-8")

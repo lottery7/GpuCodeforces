@@ -1,6 +1,6 @@
 import createClient from 'openapi-fetch';
 import type { paths } from './schema';
-import type { ContestInput, ContestQuery, LoginInput, ProblemQuery, RegisterInput, SubmissionQuery, SubmitInput, UserQuery } from './types';
+import type { ComparisonInput, ContestInput, ContestQuery, DuelInput, DuelProblemQuery, DuelQuery, DuelRequest, ExampleInput, GuessInput, LoginInput, NotificationQuery, ProblemQuery, RegisterInput, SubmissionQuery, SubmitInput, UserQuery } from './types';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -27,10 +27,22 @@ async function result<T>(request: Promise<{ data?: T; error?: unknown; response:
 export function createApi(baseUrl = '/api', fetcher?: typeof fetch) {
   const http = createClient<paths>({ baseUrl, credentials: 'include', ...(fetcher ? { fetch: fetcher } : {}) });
   return {
+    getRuntime: (signal?: AbortSignal) => result(http.GET('/runtime', { signal })),
+    listDuelProblems: (query: DuelProblemQuery = {}, signal?: AbortSignal) => result(http.GET('/duels/problems', { params: { query }, signal })),
+    listDuels: (query: DuelQuery = {}, signal?: AbortSignal) => result(http.GET('/duels', { params: { query }, signal })),
+    createDuel: (body: DuelInput) => result(http.POST('/duels', { body })),
+    getCurrentDuel: async (signal?: AbortSignal): Promise<DuelRequest | null> => await result(http.GET('/duels/current', { signal })) ?? null,
+    getDuel: (id: string, signal?: AbortSignal) => result(http.GET('/duels/{id}', { params: { path: { id } }, signal })),
+    acceptDuel: (id: string) => result(http.POST('/duels/{id}/accept', { params: { path: { id } } })),
+    declineDuel: (id: string) => result(http.POST('/duels/{id}/decline', { params: { path: { id } } })),
+    cancelDuel: (id: string) => result(http.POST('/duels/{id}/cancel', { params: { path: { id } } })),
+    listNotifications: (query: NotificationQuery = {}, signal?: AbortSignal) => result(http.GET('/notifications', { params: { query }, signal })),
+    readNotification: (id: string) => result(http.PUT('/notifications/{id}/read', { params: { path: { id } } })),
     session: (signal?: AbortSignal) => result(http.GET('/session', { signal })),
     login: (body: LoginInput) => result(http.POST('/session', { body })),
     register: (body: RegisterInput) => result(http.POST('/users', { body })),
     logout: () => result(http.DELETE('/session')),
+    listProcessors: (signal?: AbortSignal) => result(http.GET('/processors', { signal })),
     listUsers: (query: UserQuery = {}, signal?: AbortSignal) => result(http.GET('/users', { params: { query }, signal })),
     getProfile: (id: string, signal?: AbortSignal) => result(http.GET('/users/{id}', { params: { path: { id } }, signal })),
     listProblems: (query: ProblemQuery = {}, signal?: AbortSignal) => result(http.GET('/problems', { params: { query }, signal })),
@@ -40,8 +52,10 @@ export function createApi(baseUrl = '/api', fetcher?: typeof fetch) {
       return [...first.items, ...pages.flatMap(page => page.items)];
     },
     getProblem: (id: string, context = 'practice', signal?: AbortSignal) => result(http.GET('/problems/{id}', { params: { path: { id }, query: { context } }, signal })),
-    problemLeaders: (id: string, context = 'practice', signal?: AbortSignal) => result(http.GET('/problems/{id}/leaders', { params: { path: { id }, query: { context } }, signal })),
-    checkExample: (id: string, context: string, code: string) => result(http.POST('/problems/{id}/example', { params: { path: { id }, query: { context } }, body: { code } })),
+    problemLeaders: (id: string, processor: string, context = 'practice', signal?: AbortSignal) => result(http.GET('/problems/{id}/leaders', { params: { path: { id }, query: { processor, context } }, signal })),
+    checkExample: (id: string, context: string, body: ExampleInput) => result(http.POST('/problems/{id}/example', { params: { path: { id }, query: { context } }, body })),
+    submitGuess: (id: string, context: string, body: GuessInput) => result(http.POST('/problems/{id}/guess', { params: { path: { id }, query: { context } }, body })),
+    createComparison: (id: string, body: ComparisonInput) => result(http.POST('/problems/{id}/comparisons', { params: { path: { id } }, body })),
     listSubmissions: (query: SubmissionQuery = {}, signal?: AbortSignal) => result(http.GET('/submissions', { params: { query }, signal })),
     submitSolution: (body: SubmitInput) => result(http.POST('/submissions', { body })),
     getSubmission: (id: string, signal?: AbortSignal) => result(http.GET('/submissions/{id}', { params: { path: { id } }, signal })),
@@ -53,6 +67,14 @@ export function createApi(baseUrl = '/api', fetcher?: typeof fetch) {
     updateContest: (id: string, body: ContestInput) => result(http.PUT('/contests/{id}', { params: { path: { id } }, body })),
     registerForContest: (id: string) => result(http.PUT('/contests/{id}/registration', { params: { path: { id } } })),
     contestStandings: (id: string, signal?: AbortSignal) => result(http.GET('/contests/{id}/standings', { params: { path: { id } }, signal })),
+    surrenderContest: (id: string) => result(http.POST('/contests/{id}/surrender', { params: { path: { id } } })),
+    startVirtual: (id: string) => result(http.POST('/contests/{id}/virtual', { params: { path: { id } } })),
+    getVirtual: (id: string, signal?: AbortSignal) => result(http.GET('/virtual/{id}', { params: { path: { id } }, signal })),
+    listVirtual: (signal?: AbortSignal) => result(http.GET('/virtual', { signal })),
+    listHacks: (contestId: string, signal?: AbortSignal) => result(http.GET('/hacks', { params: { query: { contestId } }, signal })),
+    createHack: (submissionId: string, testJson: string) => result(http.POST('/hacks', { body: { submissionId, testJson } })),
+    retryHack: (id: string) => result(http.POST('/hacks/{id}/retry', { params: { path: { id } } })),
+
   };
 }
 

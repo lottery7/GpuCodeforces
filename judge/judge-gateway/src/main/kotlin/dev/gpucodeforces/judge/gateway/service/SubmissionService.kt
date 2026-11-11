@@ -39,9 +39,11 @@ class SubmissionService(
 
     fun submit(req: SubmissionRequest): SubmissionAccepted {
         MDC.putCloseable("submissionId", req.submissionId).use {
-            val profile = req.gpuProfile ?: props.defaultGpuProfile
+            val processor = req.processor
             val errors = buildList {
-                if (profile !in props.gpuProfiles) add("unknown gpuProfile '$profile', available: ${props.gpuProfiles}")
+                if (processor !in props.processors) {
+                    add("processor '${processor.take(SpecValidator.MAX_NAME_LENGTH)}' is not accepted here, accepted: ${props.processors.joinToString()}")
+                }
                 addAll(SpecValidator.validateSubmission(req, props.validatorLimits))
             }
             if (errors.isNotEmpty()) {
@@ -52,42 +54,44 @@ class SubmissionService(
 
             val now = clock.instant()
             val jobId = UUID.randomUUID().toString()
-            recent.firstAccepted(req.submissionId, Accepted(now, profile, jobId))?.let { first ->
+            recent.firstAccepted(req.submissionId, Accepted(now, processor, req.language, jobId))?.let { first ->
                 // Until the broker confirms the first request nobody knows whether its job exists: answering
                 // "queued" now would leave the submission waiting forever if that publish then fails.
                 if (first.pending) throw SubmissionInProgressException(req.submissionId)
-                if (first.gpuProfile != profile) {
-                    // answering "duplicate" would claim the job is queued for a GPU it will never run on
-                    throw ValidationException(listOf("submissionId was already accepted for gpuProfile '${first.gpuProfile}', not '$profile'"))
+                if (first.processor != processor || first.language != req.language) {
+                    // answering "duplicate" would claim the job is queued for a processor it will never run on
+                    throw ValidationException(
+                        listOf("submissionId was already accepted for ${first.processor}/${first.language}, not $processor/${req.language}"),
+                    )
                 }
                 log.info("Duplicate submission (first accepted at {}), not enqueued again", first.at)
                 meters.counter("judge.gateway.submissions", "result", "duplicate").increment()
-                return SubmissionAccepted(req.submissionId, profile, SubmissionStatus.QUEUED, queuedAt = first.at, duplicate = true, jobId = first.jobId)
+                return SubmissionAccepted(req.submissionId, processor, req.language, SubmissionStatus.QUEUED, queuedAt = first.at, duplicate = true, jobId = first.jobId)
             }
 
-            val job = JudgeJob(req.submissionId, req.problem, source = req.source, gpuProfile = profile, enqueuedAt = now, jobId = jobId)
+            val job = JudgeJob(req.submissionId, req.problem, source = req.source, processor = processor, language = req.language, enqueuedAt = now, jobId = jobId)
             try {
                 messaging.publishJob(job, props.publishConfirmTimeout)
             } catch (e: RuntimeException) {
                 recent.forget(req.submissionId)
-                log.error("Failed to publish job for problem {} to profile {}", req.problem.id, profile, e)
+                log.error("Failed to publish job for problem {} to processor {}", req.problem.id, processor, e)
                 meters.counter("judge.gateway.submissions", "result", "broker_error").increment()
                 throw e
             }
             recent.confirm(req.submissionId)
             publishQueuedEvent(job)
-            meters.counter("judge.gateway.submissions", "result", "accepted", "gpuProfile", profile).increment()
+            meters.counter("judge.gateway.submissions", "result", "accepted", "processor", processor).increment()
             log.info(
-                "Accepted submission: problem={} version={} profile={} sourceBytes={}",
-                req.problem.id, req.problem.version, profile, req.source.length,
+                "Accepted submission: problem={} version={} processor={} language={} sourceBytes={}",
+                req.problem.id, req.problem.version, processor, req.language, req.source.length,
             )
-            if (executors.alive(profile).isEmpty()) {
-                // The job is durable and will be judged once an executor of this GPU type connects, but nothing
+            if (executors.alive(processor).isEmpty()) {
+                // The job is durable and will be judged once an executor of this processor connects, but nothing
                 // else tells the caller that it may wait: executors also look absent right after a gateway restart.
-                log.warn("No live executor serves gpuProfile {}: the submission waits in {}", profile, Topology.jobsQueue(profile))
-                meters.counter("judge.gateway.submissions_without_executor", "gpuProfile", profile).increment()
+                log.warn("No live executor serves processor {}: the submission waits in {}", processor, Topology.jobsQueue(processor))
+                meters.counter("judge.gateway.submissions_without_executor", "processor", processor).increment()
             }
-            return SubmissionAccepted(req.submissionId, profile, SubmissionStatus.QUEUED, queuedAt = now, jobId = jobId)
+            return SubmissionAccepted(req.submissionId, processor, req.language, SubmissionStatus.QUEUED, queuedAt = now, jobId = jobId)
         }
     }
 
@@ -112,7 +116,7 @@ class SubmissionService(
 }
 
 /** [pending] until the broker has confirmed the job. */
-internal data class Accepted(val at: Instant, val gpuProfile: String, val jobId: String, val pending: Boolean = true)
+internal data class Accepted(val at: Instant, val processor: String, val language: String, val jobId: String, val pending: Boolean = true)
 
 /** Bounded, time-limited memory of recently accepted submission ids (per gateway instance). */
 internal class RecentIds(private val maxEntries: Int, private val ttl: Duration) {

@@ -5,6 +5,7 @@ import { api } from '../api/client';
 import type { Contest } from '../api/types';
 import { useSession } from '../auth';
 import { useAuthDialog } from '../auth-dialog';
+import { useProcessors } from '../processors';
 import { Empty, ErrorMessage, PageHeader, SearchInput } from '../ui';
 import { dateTime, phaseOf } from '../utils';
 
@@ -35,9 +36,11 @@ export default function Contests() {
   const queryClient = useQueryClient();
   const filter = phaseFilters.find(item => item.id === params.get('phase'))?.id ?? 'now';
   const query = params.get('q') ?? '';
+  const processor = params.get('processor') ?? '';
+  const catalog = useProcessors();
   const contests = useQuery({
-    queryKey: ['contests', user?.id, filter, query],
-    queryFn: ({ signal }) => api.listContests({ q: query || undefined }, signal),
+    queryKey: ['contests', user?.id, filter, query, processor],
+    queryFn: ({ signal }) => api.listContests({ q: query || undefined, processor: processor || undefined }, signal),
     enabled: !isLoading,
     refetchInterval: filter === 'now' || filter === 'live' ? 5000 : false,
   });
@@ -50,7 +53,7 @@ export default function Contests() {
     },
   });
   const resetJoin = join.reset;
-  useEffect(() => resetJoin(), [filter, query, user?.id, resetJoin]);
+  useEffect(() => resetJoin(), [filter, query, processor, user?.id, resetJoin]);
   const patch = (values: Record<string, string | undefined>) => {
     const next = new URLSearchParams(params);
     for (const [key, value] of Object.entries(values)) value ? next.set(key, value) : next.delete(key);
@@ -76,6 +79,7 @@ export default function Contests() {
 
   const rows = (group: Contest[]) => group.map(contest => <tr key={contest.id}>
     <td><Link to={`/contest/${encodeURIComponent(contest.id)}`}>{contest.title}</Link></td>
+    <td>{catalog.title(contest.processor)}</td>
     <td><time dateTime={contest.startAt}>{dateTime(contest.startAt)}</time></td>
     <td className="num">{duration(contest)}</td><td className="num">{contest.problemCount}</td>
     <td>{phaseStatus[phaseOf(contest)]}</td>
@@ -89,17 +93,21 @@ export default function Contests() {
       <select aria-label="Показать соревнования" value={filter} onChange={event => patch({ phase: event.target.value })}>
         {phaseFilters.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
       </select>
-      {query && <button className="text-link filter-reset" onClick={() => setParams({ phase: filter })}>Сбросить</button>}
+      <select aria-label="Процессор" value={processor} onChange={event => patch({ processor: event.target.value })}>
+        <option value="">Все процессоры</option>
+        {catalog.processors.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
+      </select>
+      {(query || processor) && <button className="text-link filter-reset" onClick={() => setParams({ phase: filter })}>Сбросить</button>}
     </div>
     {contests.isPending && <p className="loading" role="status">Загрузка соревнований...</p>}
     {contests.error && <div><ErrorMessage error={contests.error} /><button className="text-link" onClick={() => void contests.refetch()}>Повторить</button></div>}
     {contests.data && (sorted.length ? <div className="table-wrap"><table className="data-table contest-list" aria-label="Список соревнований">
-      <thead><tr><th>Название</th><th>Начало, МСК</th><th className="num">Длительность</th><th className="num">Задачи</th><th>Статус</th><th>Участие</th></tr></thead>
+      <thead><tr><th>Название</th><th>Процессор</th><th>Начало, МСК</th><th className="num">Длительность</th><th className="num">Задачи</th><th>Статус</th><th>Участие</th></tr></thead>
       <tbody>
-        {user && mine.length > 0 && <tr className="contest-group"><td colSpan={6}>Мои соревнования</td></tr>}
+        {user && mine.length > 0 && <tr className="contest-group"><td colSpan={7}>Мои соревнования</td></tr>}
         {user && mine.length > 0 && rows(mine)}
         {rows(rest)}
       </tbody>
-    </table></div> : <Empty>{query.trim() ? 'Соревнования не найдены. Измените запрос или выберите другой фильтр.' : 'Соревнований пока нет.'}</Empty>)}
+    </table></div> : <Empty>{query.trim() || processor ? 'Соревнования не найдены. Измените запрос или выберите другой фильтр.' : 'Соревнований пока нет.'}</Empty>)}
   </>;
 }

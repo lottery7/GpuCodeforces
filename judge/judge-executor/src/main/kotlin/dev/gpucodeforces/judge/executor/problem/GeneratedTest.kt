@@ -16,7 +16,13 @@ data class GeneratedTest(
     val sample: Boolean = false,
     /** Values of all SCALAR params. Integers for integer types, decimals for float types. */
     val scalars: Map<String, Number> = emptyMap(),
+    /** False: only the answer is checked; the score of the test neither counts nor is limited. */
+    val measure: Boolean = true,
+    /** Processors the test runs on; null = every processor of the problem. */
+    val processors: List<String>? = null,
 ) {
+    fun runsOn(processor: String): Boolean = processors == null || processor in processors
+
     companion object {
         /** Values the harness can pass for an integer scalar; UINT64 is capped at what a Long holds. */
         private val INTEGER_RANGES: Map<DType, ClosedRange<BigInteger>> = mapOf(
@@ -26,9 +32,19 @@ data class GeneratedTest(
             DType.UINT64 to BigInteger.ZERO..BigInteger.valueOf(Long.MAX_VALUE),
         )
 
-        /** Checks the tests a generator declared; they are its output, so as untrusted as the rest of it. */
-        fun validate(sig: Signature, tests: List<GeneratedTest>, limits: SpecValidator.Limits): List<String> = buildList {
-            if (tests.isEmpty()) add("the generator declares no tests")
+        /**
+         * Checks the tests a generator declared for [processor]; they are its output, so as untrusted as the rest of
+         * it. [declared] are the processors of the problem. [requireMeasured] is false for a lone custom test, which
+         * gives no score.
+         */
+        fun validate(
+            sig: Signature, tests: List<GeneratedTest>, limits: SpecValidator.Limits, declared: List<String>, processor: String,
+            requireMeasured: Boolean = true,
+        ): List<String> = buildList {
+            if (tests.isEmpty()) add("the generator declares no tests for processor $processor")
+            if (requireMeasured && tests.isNotEmpty() && tests.none { it.measure }) {
+                add("processor $processor has no measured test: add a test with \"processors\": [\"$processor\"] that does not set \"measure\": False")
+            }
             if (tests.size > limits.maxTests) add("too many tests: ${tests.size} > ${limits.maxTests}")
             val names = mutableSetOf<String>()
             tests.take(limits.maxTests).forEachIndexed { i, t ->
@@ -36,6 +52,10 @@ data class GeneratedTest(
                 if (t.name.isBlank()) add("test ${i + 1}: name is empty")
                 if (t.name.length > SpecValidator.MAX_NAME_LENGTH) add("test ${i + 1}: name is longer than ${SpecValidator.MAX_NAME_LENGTH} characters")
                 if (!names.add(t.name)) add("$where: duplicate test name")
+                t.processors?.filter { it !in declared }?.forEach {
+                    add("$where: unknown processor \"${it.take(SpecValidator.MAX_NAME_LENGTH)}\"; the problem declares ${declared.joinToString()}")
+                }
+                if (!t.runsOn(processor)) add("$where: does not run on processor $processor, yet it was generated for it")
                 addAll(validateSizes(sig, t, limits).map { "$where: $it" })
             }
         }

@@ -108,8 +108,8 @@ class ProblemSyncService(
             }
         }
         val present = packages.map { it.id }.toSet() + failedIds
-        val removed = problemRepository.findAll().filter { it.id !in present && it.currentVersionId != null }
-        removed.forEach { it.currentVersionId = null }
+        val removed = problemRepository.findActivePackageIds().filter { it !in present }
+        if (removed.isNotEmpty()) problemRepository.unpublish(removed)
         return SyncResult(revision, imported, unchanged, removed.size, emptyMap())
     }
 
@@ -123,11 +123,14 @@ class ProblemSyncService(
         authors = frontMatter.authors,
         draft = frontMatter.draft,
         statementMarkdown = statementMarkdown,
-        starterCode = starterCode,
+        processors = spec.declaredProcessors().map { it.id },
+        starters = starters,
         judgeSpec = jsonMapper.writeValueAsString(spec),
         contentHash = contentHash,
         judgeHash = judgeHash,
         revision = revision,
+        format = format.format,
+        formatData = jsonMapper.writeValueAsString(format),
     )
 
     /** Clones or fast-forwards [root] to the configured branch and returns the commit id. */

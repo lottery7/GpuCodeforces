@@ -30,6 +30,7 @@ class ProfileService(
                     contest.id.toString(),
                     contest.title,
                     GetUserProfile200ResponseContestsInner.PhaseEnum.fromValue(contest.phaseAt(now).value),
+                    history.processor,
                     history.rank,
                     history.ratingDelta,
                     history.ratingAfter,
@@ -38,11 +39,15 @@ class ProfileService(
         return GetUserProfile200Response(user.toApiModel(), submissionStats.solvedProblemCount(user.id), contests)
     }
 
-    /** Rating change of every finished contest within [after, before], ordered by contest start ascending. */
-    fun ratingHistory(userId: UUID, after: Instant?, before: Instant?): List<RatingHistoryPoint> =
+    /**
+     * Rating change of every finished contest within [after, before], ordered by contest start ascending. Every
+     * processor has a rating of its own, so a chart is drawn from the points of one [processor].
+     */
+    fun ratingHistory(userId: UUID, processor: String?, after: Instant?, before: Instant?): List<RatingHistoryPoint> =
         ratingHistoryRepository.findByIdUserId(userId)
+            .filter { processor == null || it.processor == processor }
             .mapNotNull { history -> contestRepository.findById(history.id.contestId).orElse(null)?.let { history to it } }
-            .filter { (history, contest) ->
+            .filter { (_, contest) ->
                 (after == null || !contest.startAt.isBefore(after)) && (before == null || !contest.startAt.isAfter(before))
             }
             .sortedBy { (_, contest) -> contest.startAt }
@@ -52,6 +57,7 @@ class ProfileService(
 private fun RatingHistory.toApiModel(title: String, startAt: Instant): RatingHistoryPoint = RatingHistoryPoint(
     id.contestId.toString(),
     title,
+    processor,
     startAt.atOffset(ZoneOffset.UTC),
     rank,
     ratingDelta,

@@ -25,3 +25,79 @@ jobs:
       - run: ./gradlew --no-daemon :judge-api:test :judge-gateway:test :judge-executor:test
       - run: python3 -m unittest discover -s tests -v
         working-directory: judge/pytools
+
+  # Processors on emulators, against the real toolchains: the tests tagged `emulator` (judge/README.md). The
+  # versions are those of judge/deploy/executor-emu.Dockerfile.
+  emulators:
+    runs-on: ubuntu-24.04
+    env:
+      OSS_CAD_SUITE_DATE: 2026-11-01
+      OSS_CAD_SUITE_STAMP: '20261101'
+      OSS_CAD_SUITE_SHA256: c61fb5b91c72ecb1f2a61b166d65fd387d5ad51b12476078e96ef8db1c6f37a3
+      # not QEMU_*: qemu-user reads QEMU_<option> from its environment, and the tests below run it with this one
+      # (QEMU_VERSION alone makes it print its version and exit 0 instead of running the guest)
+      RISCV_QEMU_VERSION: 11.1.3
+      RISCV_QEMU_SHA256: 5a8289c7940dc77d3873c81a6c29ba3afe1446fc9d36e77fa1658cdbecb84b22
+      RENODE_VERSION: 1.17.0
+      RENODE_SHA256: 4ba7c68b59e2447f188ef4b4b112fcccd2802582c460beedceb63b84e5605a5f
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad
+        with:
+          distribution: temurin
+          java-version: '26'
+          cache: gradle
+      - name: OSS CAD Suite
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/oss.tgz" \
+            "https://github.com/YosysHQ/oss-cad-suite-build/releases/download/$OSS_CAD_SUITE_DATE/oss-cad-suite-linux-x64-$OSS_CAD_SUITE_STAMP.tgz"
+          echo "$OSS_CAD_SUITE_SHA256  $RUNNER_TEMP/oss.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/oss.tgz" -C "$RUNNER_TEMP"
+      # The names of Ubuntu's archive and of its Azure mirror, which the runner uses, at times do not resolve on the
+      # runners, and apt-get then retries for half an hour and fails. apt takes the first mirror of this list that
+      # answers.
+      - name: More mirrors of Ubuntu's packages
+        run: |
+          printf '%b\n' \
+            'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1' \
+            'http://archive.ubuntu.com/ubuntu/\tpriority:2' \
+            'https://mirrors.edge.kernel.org/ubuntu/\tpriority:3' \
+            'https://mirrors.ocf.berkeley.edu/ubuntu/\tpriority:4' | sudo tee /etc/apt/apt-mirrors.txt
+          printf 'Acquire::Retries "2";\nAcquire::http::Timeout "15";\nAcquire::https::Timeout "15";\n' \
+            | sudo tee /etc/apt/apt.conf.d/80-judge-ci
+          cat /etc/apt/sources.list.d/ubuntu.sources
+      - name: RISC-V cross compilers, QEMU with plugins, the judge plugin
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-riscv64-linux-gnu g++-riscv64-linux-gnu libglib2.0-dev \
+            meson ninja-build
+          curl -fsSL -o "$RUNNER_TEMP/qemu.tar.xz" "https://download.qemu.org/qemu-$RISCV_QEMU_VERSION.tar.xz"
+          echo "$RISCV_QEMU_SHA256  $RUNNER_TEMP/qemu.tar.xz" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/qemu.tar.xz" -C "$RUNNER_TEMP"
+          mkdir "$RUNNER_TEMP/qemu-$RISCV_QEMU_VERSION/build" && cd "$RUNNER_TEMP/qemu-$RISCV_QEMU_VERSION/build"
+          ../configure --target-list=riscv64-linux-user --enable-plugins --disable-system --disable-docs \
+            --disable-werror --disable-tools --prefix="$RUNNER_TEMP/qemu"
+          make -j"$(nproc)" && make install
+          gcc -O2 -shared -fPIC -I"$RUNNER_TEMP/qemu/include" $(pkg-config --cflags glib-2.0) \
+            -o "$RUNNER_TEMP/judge_plugin.so" "$GITHUB_WORKSPACE/judge/riscv/judge_plugin.c" $(pkg-config --libs glib-2.0)
+      - name: Bare-metal RISC-V cross compilers with picolibc, Renode
+        run: |
+          sudo apt-get install -y --no-install-recommends gcc-riscv64-unknown-elf picolibc-riscv64-unknown-elf
+          curl -fsSL -o "$RUNNER_TEMP/renode.tgz" \
+            "https://github.com/renode/renode/releases/download/v$RENODE_VERSION/renode-$RENODE_VERSION.linux-portable.tar.gz"
+          echo "$RENODE_SHA256  $RUNNER_TEMP/renode.tgz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/renode" && tar -xzf "$RUNNER_TEMP/renode.tgz" -C "$RUNNER_TEMP/renode" --strip-components=1
+      - name: PyTorch for the CPU, for the generators
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
+            --extra-index-url https://pypi.org/simple -r judge/deploy/executor-emu-requirements.txt
+      - run: ./gradlew --no-daemon :judge-executor:emulatorTest
+        env:
+          RTL_HOME: ${{ runner.temp }}/oss-cad-suite
+          RISCV_QEMU: ${{ runner.temp }}/qemu/bin/qemu-riscv64
+          RISCV_PLUGIN: ${{ runner.temp }}/judge_plugin.so
+          CORAL_RENODE: ${{ runner.temp }}/renode/renode
+          JUDGE_PYTHON: ${{ runner.temp }}/venv/bin/python

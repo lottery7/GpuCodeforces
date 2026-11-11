@@ -49,7 +49,7 @@ class DeadJobListener(
         }
         MDC.putCloseable("submissionId", job.submissionId).use {
             log.error("Job dead-lettered after repeated failures, reporting INTERNAL_ERROR. problem={} x-death={}", job.problem.id, message.messageProperties.xDeathHeader)
-            meters.counter("judge.gateway.dead_jobs", "gpuProfile", job.gpuProfile).increment()
+            meters.counter("judge.gateway.dead_jobs", "processor", job.processor).increment()
             report(job.submissionId, job.jobId)
         }
     }

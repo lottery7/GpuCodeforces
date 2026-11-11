@@ -25,9 +25,12 @@ class RatingHistory(
     val ratingDelta: Int,
     @Column(name = "rating_after", nullable = false)
     val ratingAfter: Int,
+    /** The contest's processor: the rating this entry changed. */
+    @Column(nullable = false)
+    val processor: String,
 ) {
-    constructor(contestId: UUID, userId: UUID, rank: Int, ratingDelta: Int, ratingAfter: Int) :
-        this(RatingHistoryId(contestId, userId), rank, ratingDelta, ratingAfter)
+    constructor(contestId: UUID, userId: UUID, rank: Int, ratingDelta: Int, ratingAfter: Int, processor: String) :
+        this(RatingHistoryId(contestId, userId), rank, ratingDelta, ratingAfter, processor)
 
     override fun equals(other: Any?) = this === other || (other is RatingHistory && id == other.id)
 
