@@ -10,19 +10,20 @@ import { GPU_CUDA, useProcessors } from '../processors';
 import { Difficulty, Empty, ErrorMessage, Markdown, PageHeader, Status, Tabs, UserLink } from '../ui';
 import { canJoinContest, dateTime, difficultyLabels, formatLabels, phaseOf, problemPath, solveTime, statusLabels } from '../utils';
 import { HackList } from '../components/Hacks';
+import { t } from '../i18n';
 
 function countdown(value: string, now: number) {
   const seconds = Math.max(0, Math.ceil((Date.parse(value) - now) / 1000));
   const days = Math.floor(seconds / 86400);
   const time = [Math.floor(seconds % 86400 / 3600), Math.floor(seconds % 3600 / 60), seconds % 60].map(part => String(part).padStart(2, '0')).join(':');
-  return days ? `${days} д ${time}` : time;
+  return days ? t('{0} д {1}', [days, time]) : time;
 }
 
 /** Which problems of a contest take hacks: without it a hack period looks open where nothing can be hacked. */
 function hackNote(problems: Problem[]) {
   if (!problems.length) return '';
   const hackable = problems.flatMap((problem, index) => problem.hacksAllowed ? [taskLabel(index)] : []);
-  return hackable.length ? ` Взламывать можно принятые решения задач: ${hackable.join(', ')}.` : ' Задачи этого контеста взломы не допускают.';
+  return hackable.length ? t(' Взламывать можно принятые решения задач: {0}.', [hackable.join(', ')]) : t(' Задачи этого контеста взломы не допускают.');
 }
 
 function taskLabel(index: number) {
@@ -42,11 +43,11 @@ function PersonalStatus({ problem }: { problem: Problem }) {
   // an answer to a guess has no score: solved is enough
   const accepted = problem.format === 'guess' ? problem.solved : best !== null;
   const mainId = accepted && problem.format !== 'guess' ? best : problem.lastSubmissionId;
-  if (!mainId) return <span className="muted">Не решена</span>;
+  if (!mainId) return <span className="muted">{t('Не решена')}</span>;
   const old = !accepted && problem.lastStatus === 'accepted';
   return <>
-    <Link to={`/submission/${encodeURIComponent(mainId)}`} className={old ? 'muted' : undefined}>{old ? 'Принято, старая версия задачи' : <Status status={accepted ? 'accepted' : problem.lastStatus ?? ''} />}</Link>
-    {accepted && problem.lastSubmissionId && problem.lastSubmissionId !== best && problem.lastStatus !== 'accepted' && <div className="small"><Link to={`/submission/${encodeURIComponent(problem.lastSubmissionId)}`}>Последняя: {statusLabels[problem.lastStatus ?? ''] ?? problem.lastStatus}</Link></div>}
+    <Link to={`/submission/${encodeURIComponent(mainId)}`} className={old ? 'muted' : undefined}>{old ? t('Принято, старая версия задачи') : <Status status={accepted ? 'accepted' : problem.lastStatus ?? ''} />}</Link>
+    {accepted && problem.lastSubmissionId && problem.lastSubmissionId !== best && problem.lastStatus !== 'accepted' && <div className="small"><Link to={`/submission/${encodeURIComponent(problem.lastSubmissionId)}`}>{t('Последняя:')} {statusLabels[problem.lastStatus ?? ''] ?? problem.lastStatus}</Link></div>}
   </>;
 }
 
@@ -128,63 +129,63 @@ export default function Contest() {
   const startVirtual = useMutation({ mutationFn: () => api.startVirtual(id), onSuccess: attempt => navigate(`/virtual/${attempt.id}`) });
   useEffect(() => resetJoin(), [id, resetJoin]);
 
-  if (contest.isPending) return <p className="loading" role="status">Загрузка контеста...</p>;
-  if (contest.error && !item) return <><PageHeader title="Контест" /><ErrorMessage error={contest.error} /><button className="text-link" onClick={() => void contest.refetch()}>Повторить</button><p><Link to="/contests">К соревнованиям</Link></p></>;
-  if (!item) return <Empty>Контест не найден.</Empty>;
+  if (contest.isPending) return <p className="loading" role="status">{t('Загрузка контеста...')}</p>;
+  if (contest.error && !item) return <><PageHeader title={t('Контест')} /><ErrorMessage error={contest.error} /><button className="text-link" onClick={() => void contest.refetch()}>{t('Повторить')}</button><p><Link to="/contests">{t('К соревнованиям')}</Link></p></>;
+  if (!item) return <Empty>{t('Контест не найден.')}</Empty>;
 
   const base = `/contest/${encodeURIComponent(id)}`;
   const actions = <>
-    {item.format === 'duel' && <><Link className="text-link" to="/duels">Мои дуэли</Link><Link className="btn secondary" to="/duels/new">Новая дуэль</Link></>}
-    {phase !== 'finished' && (item.registered ? item.format !== 'duel' && <span className="success">{phase === 'upcoming' ? 'Вы зарегистрированы' : 'Вы участвуете'}</span> : !canJoinContest(item, user?.id) ? <span className="muted">Дуэль по приглашению</span> : user ? <button className="btn secondary" disabled={join.isPending} onClick={() => join.mutate()}>{join.isPending ? 'Регистрация...' : item.format === 'duel' ? 'Принять дуэль' : 'Зарегистрироваться'}</button> : <button className="btn secondary" onClick={() => openAuth('login', location.pathname + location.search)}>Зарегистрироваться</button>)}
-    {item.finalized && item.format !== 'duel' && <><Link className="btn secondary" to={`${base}${upsolving ? '' : '?mode=upsolving'}`}>{upsolving ? 'Официальные результаты' : 'Дорешивание'}</Link>{user && <button className="btn secondary" disabled={startVirtual.isPending} onClick={() => startVirtual.mutate()}>Начать виртуально</button>}</>}
-    {user && item.format !== 'duel' && <Link className="text-link" to="/virtual">Мои виртуальные контесты</Link>}
+    {item.format === 'duel' && <><Link className="text-link" to="/duels">{t('Мои дуэли')}</Link><Link className="btn secondary" to="/duels/new">{t('Новая дуэль')}</Link></>}
+    {phase !== 'finished' && (item.registered ? item.format !== 'duel' && <span className="success">{phase === 'upcoming' ? t('Вы зарегистрированы') : t('Вы участвуете')}</span> : !canJoinContest(item, user?.id) ? <span className="muted">{t('Дуэль по приглашению')}</span> : user ? <button className="btn secondary" disabled={join.isPending} onClick={() => join.mutate()}>{join.isPending ? t('Регистрация...') : item.format === 'duel' ? t('Принять дуэль') : t('Зарегистрироваться')}</button> : <button className="btn secondary" onClick={() => openAuth('login', location.pathname + location.search)}>{t('Зарегистрироваться')}</button>)}
+    {item.finalized && item.format !== 'duel' && <><Link className="btn secondary" to={`${base}${upsolving ? '' : '?mode=upsolving'}`}>{upsolving ? t('Официальные результаты') : t('Дорешивание')}</Link>{user && <button className="btn secondary" disabled={startVirtual.isPending} onClick={() => startVirtual.mutate()}>{t('Начать виртуально')}</button>}</>}
+    {user && item.format !== 'duel' && <Link className="text-link" to="/virtual">{t('Мои виртуальные контесты')}</Link>}
 
-    {author && phase === 'upcoming' && item.format !== 'duel' && <Link className="btn secondary" to={`${base}/edit`}>Изменить</Link>}
+    {author && phase === 'upcoming' && item.format !== 'duel' && <Link className="btn secondary" to={`${base}/edit`}>{t('Изменить')}</Link>}
   </>;
   const columns = tasks.data ?? [];
 
   return <>
     <PageHeader title={item.title} actions={actions} />
-    {contest.error && <div><ErrorMessage error={contest.error} /><button className="text-link" disabled={contest.isFetching} onClick={() => void contest.refetch()}>Повторить загрузку соревнования</button></div>}
+    {contest.error && <div><ErrorMessage error={contest.error} /><button className="text-link" disabled={contest.isFetching} onClick={() => void contest.refetch()}>{t('Повторить загрузку соревнования')}</button></div>}
     {item.format !== 'duel' && <div className="toolbar small contest-meta">
-      <span className="muted">{dateTime(item.startAt)} - {dateTime(item.endAt)} МСК</span>
-      <span>{phase === 'finished' ? 'Завершен' : <>{phase === 'upcoming' ? 'До начала' : 'До конца'} <time>{countdown(phase === 'upcoming' ? item.startAt : item.endAt, serverNow)}</time></>}</span>
-      <span className="muted">Процессор: {catalog.title(item.processor)}{catalog.find(item.processor) && <> · {item.processor === GPU_CUDA && runtime.data?.gpuName ? runtime.data.gpuName : catalog.find(item.processor)?.model}</>}</span>
-      <span className="muted">Авторы: {item.authors.map((person, index) => <span key={person.id}>{index > 0 && ', '}<UserLink user={person} /></span>)}</span>
+      <span className="muted">{dateTime(item.startAt)} - {dateTime(item.endAt)} {t('МСК')}</span>
+      <span>{phase === 'finished' ? t('Завершен') : <>{phase === 'upcoming' ? t('До начала') : t('До конца')} <time>{countdown(phase === 'upcoming' ? item.startAt : item.endAt, serverNow)}</time></>}</span>
+      <span className="muted">{t('Процессор:')} {catalog.title(item.processor)}{catalog.find(item.processor) && <> · {item.processor === GPU_CUDA && runtime.data?.gpuName ? runtime.data.gpuName : catalog.find(item.processor)?.model}</>}</span>
+      <span className="muted">{t('Авторы:')} {item.authors.map((person, index) => <span key={person.id}>{index > 0 && ', '}<UserLink user={person} /></span>)}</span>
     </div>}
     {join.error && <ErrorMessage error={join.error} />}
     <ErrorMessage error={startVirtual.error} />
-    {upsolving && <p className="notice">Дорешивание. Ваши новые отправки не изменяют официальный зачет.</p>}
-    {item.format !== 'duel' && phase === 'finished' && item.finalized === false && <p className="notice">{item.hackEndAt && Date.parse(item.hackEndAt) > serverNow ? `Период взломов до ${dateTime(item.hackEndAt)} МСК.${hackNote(columns)}` : 'Ожидаем окончания проверок. Результаты предварительные.'}</p>}
+    {upsolving && <p className="notice">{t('Дорешивание. Ваши новые отправки не изменяют официальный зачет.')}</p>}
+    {item.format !== 'duel' && phase === 'finished' && item.finalized === false && <p className="notice">{item.hackEndAt && Date.parse(item.hackEndAt) > serverNow ? t('Период взломов до {0} МСК.{1}', [dateTime(item.hackEndAt), hackNote(columns)]) : t('Ожидаем окончания проверок. Результаты предварительные.')}</p>}
     {item.format === 'duel' && !upsolving ? <>
       <DuelBoard contest={item} finished={phase === 'finished'} clockOffset={clockOffset} contestUpdatedAt={contestSnapshot.current?.id === id && contestSnapshot.current.userId === user?.id ? contestSnapshot.current.startedAt : 0} showHeading={false} />
-      {tasks.isPending && <p role="status">Загрузка задачи...</p>}
+      {tasks.isPending && <p role="status">{t('Загрузка задачи...')}</p>}
       {tasks.error && <ErrorMessage error={tasks.error} />}
       {tasks.data?.[0] && <div className="duel-task-link"><Link className="btn primary" to={problemPath(tasks.data[0].id, context)}>{tasks.data[0].title}</Link><span className="small muted">{difficultyLabels[tasks.data[0].difficulty]}</span></div>}
-      {item.rulesMarkdown && <details className="disclosure"><summary>Правила дуэли</summary><Markdown>{item.rulesMarkdown}</Markdown></details>}
+      {item.rulesMarkdown && <details className="disclosure"><summary>{t('Правила дуэли')}</summary><Markdown>{item.rulesMarkdown}</Markdown></details>}
     </> : <>
-    <Tabs selected={selected} items={[{ id: 'tasks', label: 'Задачи', to: `${base}?tab=tasks${upsolving ? '&mode=upsolving' : ''}` }, { id: 'standings', label: 'Таблица', to: `${base}?tab=standings` }, { id: 'rules', label: 'Правила', to: `${base}?tab=rules` }, ...(item.hackEndAt && item.format !== 'duel' ? [{ id: 'hacks', label: 'Взломы', to: `${base}?tab=hacks` }] : [])]} />
+    <Tabs selected={selected} items={[{ id: 'tasks', label: t('Задачи'), to: `${base}?tab=tasks${upsolving ? '&mode=upsolving' : ''}` }, { id: 'standings', label: t('Таблица'), to: `${base}?tab=standings` }, { id: 'rules', label: t('Правила'), to: `${base}?tab=rules` }, ...(item.hackEndAt && item.format !== 'duel' ? [{ id: 'hacks', label: t('Взломы'), to: `${base}?tab=hacks` }] : [])]} />
     {selected === 'hacks' && item.format !== 'duel' && <HackList contestId={id} />}
 
-    {selected === 'hacks' ? null : selected === 'rules' ? item.rulesMarkdown ? <Markdown>{item.rulesMarkdown}</Markdown> : <Empty>Правила пока недоступны.</Empty> : phase === 'upcoming' && (selected === 'standings' || !author) ? <Empty>{selected === 'standings' ? 'Таблица появится после начала.' : `Задачи откроются ${dateTime(item.startAt)} МСК.`}</Empty> : <>
-      {tasks.isPending && <p className="loading" role="status">Загрузка задач...</p>}
-      {tasks.error && <div><ErrorMessage error={tasks.error} /><button className="text-link" onClick={() => void tasks.refetch()}>Повторить</button></div>}
+    {selected === 'hacks' ? null : selected === 'rules' ? item.rulesMarkdown ? <Markdown>{item.rulesMarkdown}</Markdown> : <Empty>{t('Правила пока недоступны.')}</Empty> : phase === 'upcoming' && (selected === 'standings' || !author) ? <Empty>{selected === 'standings' ? t('Таблица появится после начала.') : t('Задачи откроются {0} МСК.', [dateTime(item.startAt)])}</Empty> : <>
+      {tasks.isPending && <p className="loading" role="status">{t('Загрузка задач...')}</p>}
+      {tasks.error && <div><ErrorMessage error={tasks.error} /><button className="text-link" onClick={() => void tasks.refetch()}>{t('Повторить')}</button></div>}
       {selected === 'tasks' && tasks.data && <>
-        {phase === 'finished' && !upsolving && <p className="notice">{item.finalized ? 'Контест завершён. Можно дорешать задачи или начать виртуальное участие.' : 'Контест завершен. На странице задачи можно перейти к решению в практике.'}</p>}
-        {tasks.data.length ? <div className="table-wrap"><table className="data-table" aria-label="Задачи соревнования"><thead><tr><th>Задача</th><th>Сложность</th>{user && <th>Ваш статус</th>}</tr></thead><tbody>{tasks.data.map((problem, index) => <tr key={problem.id}>
+        {phase === 'finished' && !upsolving && <p className="notice">{item.finalized ? t('Контест завершён. Можно дорешать задачи или начать виртуальное участие.') : t('Контест завершен. На странице задачи можно перейти к решению в практике.')}</p>}
+        {tasks.data.length ? <div className="table-wrap"><table className="data-table" aria-label={t('Задачи соревнования')}><thead><tr><th>{t('Задача')}</th><th>{t('Сложность')}</th>{user && <th>{t('Ваш статус')}</th>}</tr></thead><tbody>{tasks.data.map((problem, index) => <tr key={problem.id}>
           <td><Link to={problemPath(problem.id, context)}>{taskLabel(index)}. {problem.title}</Link></td>
           <td><Difficulty difficulty={problem.difficulty} /><div className="subline">{formatLabels[problem.format ?? 'standard']}</div></td>
           {user && <td><PersonalStatus problem={problem} /></td>}
-        </tr>)}</tbody></table></div> : <Empty>В контесте пока нет задач.</Empty>}
+        </tr>)}</tbody></table></div> : <Empty>{t('В контесте пока нет задач.')}</Empty>}
       </>}
       {selected === 'standings' && <>
-        {phase === 'finished' && <p className="small muted">Итоговая таблица.</p>}
-        {standings.isPending && <p className="loading" role="status">Загрузка таблицы...</p>}
-        {standings.error && <div><ErrorMessage error={standings.error} /><button className="text-link" onClick={() => void standings.refetch()}>Повторить</button></div>}
-        {standings.data && (standings.data.length ? <div className="table-wrap"><table className="data-table" aria-label="Таблица контеста"><thead><tr><th className="num">Место</th><th>Участник</th><th className="num">Решено</th><th className="num">Время</th>{columns.map((problem, index) => <th key={problem.id} className="num"><Link title={problem.title} to={problemPath(problem.id, id)}>{taskLabel(index)}</Link></th>)}</tr></thead><tbody>{standings.data.map(row => <tr key={row.user.id} className={row.user.id === user?.id ? 'own-row' : undefined}>
-          <td className="num">{row.rank}</td><td><UserLink user={row.user} />{row.user.id === user?.id && <span className="small muted"> вы</span>}{phase === 'finished' && <div className="small"><Link to={`/submissions?user=${encodeURIComponent(row.user.id)}&contest=${encodeURIComponent(id)}`}>Решения</Link></div>}</td><td className="num">{row.solved}</td><td className="num mono">{solveTime(row.totalSeconds)}</td>
+        {phase === 'finished' && <p className="small muted">{t('Итоговая таблица.')}</p>}
+        {standings.isPending && <p className="loading" role="status">{t('Загрузка таблицы...')}</p>}
+        {standings.error && <div><ErrorMessage error={standings.error} /><button className="text-link" onClick={() => void standings.refetch()}>{t('Повторить')}</button></div>}
+        {standings.data && (standings.data.length ? <div className="table-wrap"><table className="data-table" aria-label={t('Таблица контеста')}><thead><tr><th className="num">{t('Место')}</th><th>{t('Участник')}</th><th className="num">{t('Решено')}</th><th className="num">{t('Время')}</th>{columns.map((problem, index) => <th key={problem.id} className="num"><Link title={problem.title} to={problemPath(problem.id, id)}>{taskLabel(index)}</Link></th>)}</tr></thead><tbody>{standings.data.map(row => <tr key={row.user.id} className={row.user.id === user?.id ? 'own-row' : undefined}>
+          <td className="num">{row.rank}</td><td><UserLink user={row.user} />{row.user.id === user?.id && <span className="small muted"> {t('вы')}</span>}{phase === 'finished' && <div className="small"><Link to={`/submissions?user=${encodeURIComponent(row.user.id)}&contest=${encodeURIComponent(id)}`}>{t('Решения')}</Link></div>}</td><td className="num">{row.solved}</td><td className="num mono">{solveTime(row.totalSeconds)}</td>
           {columns.map(problem => <td key={problem.id} className="num mono">{row.times[problem.id] === undefined ? '-' : solveTime(row.times[problem.id])}</td>)}
-        </tr>)}</tbody></table></div> : <Empty>Результатов пока нет.</Empty>)}
+        </tr>)}</tbody></table></div> : <Empty>{t('Результатов пока нет.')}</Empty>)}
       </>}
     </>}
     </>}

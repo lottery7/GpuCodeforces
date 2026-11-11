@@ -6,6 +6,7 @@ import { useSession } from '../auth';
 import { useProcessors } from '../processors';
 import { ErrorMessage, ScoreValue, UserLink } from '../ui';
 import { solveTime } from '../utils';
+import { t } from '../i18n';
 
 export default function DuelBoard({ contest, finished, contestUpdatedAt, clockOffset = 0, showHeading = true }: { contest: Contest; finished: boolean; contestUpdatedAt?: number; clockOffset?: number; showHeading?: boolean }) {
   const { user } = useSession();
@@ -43,20 +44,20 @@ export default function DuelBoard({ contest, finished, contestUpdatedAt, clockOf
   const winner = rows.data?.[0];
   const draw = !winner || rows.data?.filter(row => row.rank === winner.rank).length !== 1;
   const participant = user && [contest.challengerId, contest.opponentId].includes(user.id);
-  return <section className="panel duel-board" aria-label="Результаты дуэли">
-    <div className="duel-board-heading">{showHeading && <h2>{ended ? 'Результат дуэли' : 'Дуэль'}</h2>}<span className="small muted">{processors.title(contest.processor)}</span>
-      {!ended && <time dateTime={contest.endAt}>До конца: {solveTime(Math.max(0, Math.ceil((Date.parse(contest.endAt) - now) / 1000)))}</time>}
-      {participant && !ended && Date.parse(contest.startAt) <= now && !confirm && <button className="text-link duel-surrender" onClick={() => setConfirm(true)}>Сдаться</button>}
+  return <section className="panel duel-board" aria-label={t('Результаты дуэли')}>
+    <div className="duel-board-heading">{showHeading && <h2>{ended ? t('Результат дуэли') : t('Дуэль')}</h2>}<span className="small muted">{processors.title(contest.processor)}</span>
+      {!ended && <time dateTime={contest.endAt}>{t('До конца:')} {solveTime(Math.max(0, Math.ceil((Date.parse(contest.endAt) - now) / 1000)))}</time>}
+      {participant && !ended && Date.parse(contest.startAt) <= now && !confirm && <button className="text-link duel-surrender" onClick={() => setConfirm(true)}>{t('Сдаться')}</button>}
     </div>
-    {confirm && !ended && <div className="duel-surrender-confirm" role="group" aria-label="Подтвердить сдачу"><span>Завершить дуэль поражением?</span><button className="btn secondary" disabled={surrender.isPending} onClick={() => surrender.mutate(contest.id)}>{surrender.isPending ? 'Завершаем...' : 'Да, сдаться'}</button><button className="text-link" disabled={surrender.isPending} onClick={() => setConfirm(false)}>Отмена</button></div>}
+    {confirm && !ended && <div className="duel-surrender-confirm" role="group" aria-label={t('Подтвердить сдачу')}><span>{t('Завершить дуэль поражением?')}</span><button className="btn secondary" disabled={surrender.isPending} onClick={() => surrender.mutate(contest.id)}>{surrender.isPending ? t('Завершаем...') : t('Да, сдаться')}</button><button className="text-link" disabled={surrender.isPending} onClick={() => setConfirm(false)}>{t('Отмена')}</button></div>}
     <ErrorMessage error={rows.error || surrender.error} />
-    {rows.isPending && !ended && <p role="status">Загрузка результатов...</p>}
+    {rows.isPending && !ended && <p role="status">{t('Загрузка результатов...')}</p>}
     <div className="duel-players">{rows.data?.map(row => <div key={row.user.id} className={row.surrendered ? 'surrendered' : undefined}>
       <div className="duel-player-heading"><span className="duel-place">{row.rank}</span><UserLink user={row.user} /></div>
-      <p>{row.bestScore ? <ScoreValue score={row.bestScore} /> : 'Нет принятого решения'}</p>
-      {row.surrendered && <span className="small muted">Сдался</span>}
+      <p>{row.bestScore ? <ScoreValue score={row.bestScore} /> : t('Нет принятого решения')}</p>
+      {row.surrendered && <span className="small muted">{t('Сдался')}</span>}
     </div>)}</div>
-    {pending ? <p role="status">Проверяются посылки</p> : ended && !finalReady ? !rows.error && <p role="status">Загрузка результатов...</p> : ended && rows.data && <p role="status">{draw ? 'Ничья.' : <>Победитель: <UserLink user={winner.user} />.</>}</p>}
-    {ended && !pending && rows.error && <button className="text-link" onClick={() => void refetchRows().then(result => { if (snapshot && !result.isError) setFinalized(snapshot); })}>Повторить загрузку результатов</button>}
+    {pending ? <p role="status">{t('Проверяются посылки')}</p> : ended && !finalReady ? !rows.error && <p role="status">{t('Загрузка результатов...')}</p> : ended && rows.data && <p role="status">{draw ? t('Ничья.') : <>{t('Победитель:')} <UserLink user={winner.user} />.</>}</p>}
+    {ended && !pending && rows.error && <button className="text-link" onClick={() => void refetchRows().then(result => { if (snapshot && !result.isError) setFinalized(snapshot); })}>{t('Повторить загрузку результатов')}</button>}
   </section>;
 }

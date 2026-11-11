@@ -5,6 +5,7 @@ import { useSession } from './auth';
 import { completeEditorLogin } from './drafts';
 import { ErrorMessage } from './ui';
 import { safeReturnTo } from './utils';
+import { t } from './i18n';
 
 export type AuthMode = 'login' | 'register';
 
@@ -41,23 +42,23 @@ export function AuthForm({ mode, returnTo, onClose }: { mode: AuthMode; returnTo
       onClose();
       navigate(returnTo, { replace: true });
     } catch (reason) {
-      setError(current === 'login' && reason instanceof ApiError && reason.status === 401 ? new Error('Неверный ник, почта или пароль.') : reason);
+      setError(current === 'login' && reason instanceof ApiError && reason.status === 401 ? new Error(t('Неверный ник, почта или пароль.')) : reason);
     } finally {
       setBusy(false);
     }
   }
 
   return <>
-    <div className="auth-dialog-head"><h2>Аккаунт</h2><button type="button" className="auth-close" aria-label="Закрыть" onClick={onClose}>×</button></div>
-    <nav className="tabs auth-tabs" aria-label="Доступ к аккаунту">{(['login', 'register'] as const).map(id => <button key={id} type="button" className={`tab${current === id ? ' active' : ''}`} aria-current={current === id ? 'true' : undefined} onClick={() => switchMode(id)}>{id === 'login' ? 'Вход' : 'Регистрация'}</button>)}</nav>
+    <div className="auth-dialog-head"><h2>{t('Аккаунт')}</h2><button type="button" className="auth-close" aria-label={t('Закрыть')} onClick={onClose}>×</button></div>
+    <nav className="tabs auth-tabs" aria-label={t('Доступ к аккаунту')}>{(['login', 'register'] as const).map(id => <button key={id} type="button" className={`tab${current === id ? ' active' : ''}`} aria-current={current === id ? 'true' : undefined} onClick={() => switchMode(id)}>{id === 'login' ? t('Вход') : t('Регистрация')}</button>)}</nav>
     <form className="form" onSubmit={event => void submit(event)}>
-      {current === 'login' ? <label className="field"><span>Ник или почта</span><input name="identifier" required autoComplete="username" value={identifier} disabled={busy} autoFocus onChange={event => setIdentifier(event.target.value)} /></label> : <>
-        <label className="field"><span>Ник участника</span><input name="handle" required minLength={3} maxLength={24} pattern="[A-Za-z0-9_]{3,24}" autoComplete="username" aria-describedby="handle-hint" value={handle} disabled={busy} onChange={event => setHandle(event.target.value)} /><span id="handle-hint" className="small muted">От 3 до 24 символов: латинские буквы, цифры и _.</span></label>
-        <label className="field"><span>Почта</span><input name="email" type="email" required autoComplete="email" value={email} disabled={busy} onChange={event => setEmail(event.target.value)} /></label>
+      {current === 'login' ? <label className="field"><span>{t('Ник или почта')}</span><input name="identifier" required autoComplete="username" value={identifier} disabled={busy} autoFocus onChange={event => setIdentifier(event.target.value)} /></label> : <>
+        <label className="field"><span>{t('Ник участника')}</span><input name="handle" required minLength={3} maxLength={24} pattern="[A-Za-z0-9_]{3,24}" autoComplete="username" aria-describedby="handle-hint" value={handle} disabled={busy} onChange={event => setHandle(event.target.value)} /><span id="handle-hint" className="small muted">{t('От 3 до 24 символов: латинские буквы, цифры и _.')}</span></label>
+        <label className="field"><span>{t('Почта')}</span><input name="email" type="email" required autoComplete="email" value={email} disabled={busy} onChange={event => setEmail(event.target.value)} /></label>
       </>}
-      <label className="field"><span>Пароль</span><input name="password" type="password" required minLength={current === 'register' ? 8 : undefined} autoComplete={current === 'register' ? 'new-password' : 'current-password'} aria-describedby={current === 'register' ? 'password-hint' : undefined} value={password} disabled={busy} onChange={event => setPassword(event.target.value)} />{current === 'register' && <span id="password-hint" className="small muted">Не меньше 8 символов.</span>}</label>
+      <label className="field"><span>{t('Пароль')}</span><input name="password" type="password" required minLength={current === 'register' ? 8 : undefined} autoComplete={current === 'register' ? 'new-password' : 'current-password'} aria-describedby={current === 'register' ? 'password-hint' : undefined} value={password} disabled={busy} onChange={event => setPassword(event.target.value)} />{current === 'register' && <span id="password-hint" className="small muted">{t('Не меньше 8 символов.')}</span>}</label>
       <ErrorMessage error={error} reveal />
-      <button className="btn primary" type="submit" disabled={busy}>{busy ? current === 'login' ? 'Вход...' : 'Регистрация...' : current === 'login' ? 'Войти' : 'Зарегистрироваться'}</button>
+      <button className="btn primary" type="submit" disabled={busy}>{busy ? current === 'login' ? t('Вход...') : t('Регистрация...') : current === 'login' ? t('Войти') : t('Зарегистрироваться')}</button>
     </form>
   </>;
 }
@@ -88,7 +89,7 @@ export function AuthDialogProvider({ children }: { children: ReactNode }) {
   return <AuthDialogContext.Provider value={openAuth}>
     {children}
     <dialog key={state.n} ref={dialogRef} className="auth-dialog">
-      {session.isLoading ? <div className="auth-dialog-head"><h2>Аккаунт</h2><button type="button" className="auth-close" aria-label="Закрыть" onClick={close}>×</button></div>
+      {session.isLoading ? <div className="auth-dialog-head"><h2>{t('Аккаунт')}</h2><button type="button" className="auth-close" aria-label={t('Закрыть')} onClick={close}>×</button></div>
         : <AuthForm mode={state.mode} returnTo={state.returnTo} onClose={close} />}
     </dialog>
   </AuthDialogContext.Provider>;

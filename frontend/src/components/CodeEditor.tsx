@@ -6,6 +6,7 @@ import { StreamLanguage } from '@codemirror/language';
 import { gas } from '@codemirror/legacy-modes/mode/gas';
 import { verilog } from '@codemirror/legacy-modes/mode/verilog';
 import { EditorView, keymap, type KeyBinding } from '@codemirror/view';
+import { t } from '../i18n';
 
 const historyShortcuts = keymap.of([
   { key: 'Ctrl-z', run: undo, preventDefault: true },
@@ -21,7 +22,7 @@ const languages: Record<string, { mode: () => ReturnType<typeof cpp> | StreamLan
   asm: { mode: () => StreamLanguage.define(gas), label: 'Код решения на ассемблере RISC-V', status: 'RISC-V assembly' },
 };
 
-export const editorLabel = (language: string) => (languages[language] ?? languages.cuda).label;
+export const editorLabel = (language: string) => t((languages[language] ?? languages.cuda).label);
 
 const editorTheme = EditorView.theme({
   // sizes follow the 1.2x scale of styles.css
@@ -47,7 +48,7 @@ export default function CodeEditor({ value, onChange, readOnly = false, language
 }) {
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
   const settings = languages[language] ?? languages.cuda;
-  const name = label ?? settings.label;
+  const name = label ?? t(settings.label);
   const extensions = useMemo(() => {
     const mode = settings.mode();
     return [...(mode ? [mode] : []), editorTheme, historyShortcuts, EditorView.contentAttributes.of({ 'aria-label': name, spellcheck: 'false' })];
@@ -73,6 +74,6 @@ export default function CodeEditor({ value, onChange, readOnly = false, language
       }}
     />
     </div>
-    {!readOnly && <div className="editor-status"><span role={status ? 'status' : undefined}>{status || `${settings.status} / UTF-8`}</span><span>Строка {cursor.line}, столбец {cursor.column}</span></div>}
+    {!readOnly && <div className="editor-status"><span role={status ? 'status' : undefined}>{status || `${settings.status} / UTF-8`}</span><span>{t('Строка')} {cursor.line}{t(', столбец')} {cursor.column}</span></div>}
   </>;
 }

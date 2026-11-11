@@ -7,6 +7,7 @@ import { useSession } from '../auth';
 import { GPU_CUDA, useProcessors } from '../processors';
 import { Difficulty, Empty, ErrorMessage, LoginRequired, PageHeader, UserLink, useFeedbackVisibility } from '../ui';
 import { difficultyLabels, phaseOf } from '../utils';
+import { t } from '../i18n';
 
 type Values = { title: string; startAt: string; duration: string; hackDuration: string; processor: string; authors: User[]; problemIds: string[] };
 
@@ -98,14 +99,14 @@ export default function ContestEditor() {
   const resetSave = save.reset;
   useEffect(() => resetSave(), [id, user?.id, resetSave]);
 
-  if (isLoading) return <p className="loading" role="status">Загрузка аккаунта...</p>;
-  if (!user) return <><PageHeader title={id ? 'Настройки контеста' : 'Новый контест'} /><LoginRequired returnTo={location.pathname + location.search}>Войдите, чтобы создать или изменить контест.</LoginRequired></>;
-  if (id && contest.isPending) return <p className="loading" role="status">Загрузка контеста...</p>;
-  if (contest.error && id && contest.data === undefined) return <><PageHeader title="Настройки контеста" /><ErrorMessage error={contest.error} /><button className="text-link" onClick={() => void contest.refetch()}>Повторить</button></>;
-  if (contest.data?.format === 'duel') return <><PageHeader title="Дуэль" /><p>Участники и общая задача назначаются при подборе.</p><Link className="btn secondary" to={`/contest/${encodeURIComponent(id ?? '')}`}>Открыть дуэль</Link></>;
-  if (id && contest.data && (phaseOf(contest.data) !== 'upcoming' || !contest.data.authors.some(author => author.id === user.id))) return <><PageHeader title="Настройки недоступны" /><Empty>Изменять контест могут его авторы до начала соревнования.</Empty><Link className="btn secondary" to={`/contest/${encodeURIComponent(id)}`}>К контесту</Link></>;
-  if (pool.error && pool.data === undefined || id && snapshots.error && snapshots.data === undefined) return <><PageHeader title={id ? 'Настройки контеста' : 'Новый контест'} /><ErrorMessage error={pool.error && pool.data === undefined ? pool.error : snapshots.error} /><button className="text-link" onClick={() => { void pool.refetch(); if (id) void snapshots.refetch(); }}>Повторить</button></>;
-  if (!values || initialized.current !== formKey || pool.isPending || id && snapshots.isPending) return <p className="loading" role="status">Загрузка задач...</p>;
+  if (isLoading) return <p className="loading" role="status">{t('Загрузка аккаунта...')}</p>;
+  if (!user) return <><PageHeader title={id ? t('Настройки контеста') : t('Новый контест')} /><LoginRequired returnTo={location.pathname + location.search}>{t('Войдите, чтобы создать или изменить контест.')}</LoginRequired></>;
+  if (id && contest.isPending) return <p className="loading" role="status">{t('Загрузка контеста...')}</p>;
+  if (contest.error && id && contest.data === undefined) return <><PageHeader title={t('Настройки контеста')} /><ErrorMessage error={contest.error} /><button className="text-link" onClick={() => void contest.refetch()}>{t('Повторить')}</button></>;
+  if (contest.data?.format === 'duel') return <><PageHeader title={t('Дуэль')} /><p>{t('Участники и общая задача назначаются при подборе.')}</p><Link className="btn secondary" to={`/contest/${encodeURIComponent(id ?? '')}`}>{t('Открыть дуэль')}</Link></>;
+  if (id && contest.data && (phaseOf(contest.data) !== 'upcoming' || !contest.data.authors.some(author => author.id === user.id))) return <><PageHeader title={t('Настройки недоступны')} /><Empty>{t('Изменять контест могут его авторы до начала соревнования.')}</Empty><Link className="btn secondary" to={`/contest/${encodeURIComponent(id)}`}>{t('К контесту')}</Link></>;
+  if (pool.error && pool.data === undefined || id && snapshots.error && snapshots.data === undefined) return <><PageHeader title={id ? t('Настройки контеста') : t('Новый контест')} /><ErrorMessage error={pool.error && pool.data === undefined ? pool.error : snapshots.error} /><button className="text-link" onClick={() => { void pool.refetch(); if (id) void snapshots.refetch(); }}>{t('Повторить')}</button></>;
+  if (!values || initialized.current !== formKey || pool.isPending || id && snapshots.isPending) return <p className="loading" role="status">{t('Загрузка задач...')}</p>;
 
   // A contest's own versions show only its current processor, so whether a problem supports another one is read
   // from the bank where it is there.
@@ -154,12 +155,12 @@ export default function ContestEditor() {
     save.reset();
     const start = Date.parse(`${values.startAt}+03:00`);
     const minutes = Number(values.duration);
-    if (!values.title.trim()) { setFormError(new Error('Введите название контеста.')); return; }
-    if (!Number.isFinite(start) || start <= Date.now()) { setFormError(new Error('Начало контеста должно быть в будущем.')); return; }
+    if (!values.title.trim()) { setFormError(new Error(t('Введите название контеста.'))); return; }
+    if (!Number.isFinite(start) || start <= Date.now()) { setFormError(new Error(t('Начало контеста должно быть в будущем.'))); return; }
     const end = new Date(start + minutes * 60000);
-    if (!Number.isInteger(minutes) || minutes < 1 || !Number.isFinite(end.getTime())) { setFormError(new Error('Укажите длительность в минутах.')); return; }
-    if (!values.authors.length) { setFormError(new Error('Нужен хотя бы один автор.')); return; }
-    if (!values.problemIds.length) { setFormError(new Error('Выберите хотя бы одну задачу.')); return; }
+    if (!Number.isInteger(minutes) || minutes < 1 || !Number.isFinite(end.getTime())) { setFormError(new Error(t('Укажите длительность в минутах.'))); return; }
+    if (!values.authors.length) { setFormError(new Error(t('Нужен хотя бы один автор.'))); return; }
+    if (!values.problemIds.length) { setFormError(new Error(t('Выберите хотя бы одну задачу.'))); return; }
     save.mutate({
       title: values.title.trim(),
       startAt: new Date(start).toISOString(),
@@ -173,23 +174,23 @@ export default function ContestEditor() {
   };
 
   return <>
-    <PageHeader title={id ? 'Настройки контеста' : 'Новый контест'} actions={<Link className="btn secondary" to={id ? `/contest/${encodeURIComponent(id)}` : '/contests?tabs=mine'}>{id ? 'К контесту' : 'Мои контесты'}</Link>} />
+    <PageHeader title={id ? t('Настройки контеста') : t('Новый контест')} actions={<Link className="btn secondary" to={id ? `/contest/${encodeURIComponent(id)}` : '/contests?tabs=mine'}>{id ? t('К контесту') : t('Мои контесты')}</Link>} />
     <form className="form contest-form contest-builder" onSubmit={submit} aria-busy={save.isPending}>
       <div className="contest-settings">
-        <label className="field"><span>Название</span><input name="title" required maxLength={100} value={values.title} disabled={save.isPending} onChange={event => update({ title: event.target.value })} /></label>
+        <label className="field"><span>{t('Название')}</span><input name="title" required maxLength={100} value={values.title} disabled={save.isPending} onChange={event => update({ title: event.target.value })} /></label>
         <div className="field-pair">
-          <label className="field"><span>Начало (МСК)</span><input name="startAt" type="datetime-local" required value={values.startAt} disabled={save.isPending} onChange={event => update({ startAt: event.target.value })} /></label>
-          <label className="field"><span>Длительность, минут</span><input name="duration" type="number" min={1} step={1} required value={values.duration} disabled={save.isPending} onChange={event => update({ duration: event.target.value })} /></label>
+          <label className="field"><span>{t('Начало (МСК)')}</span><input name="startAt" type="datetime-local" required value={values.startAt} disabled={save.isPending} onChange={event => update({ startAt: event.target.value })} /></label>
+          <label className="field"><span>{t('Длительность, минут')}</span><input name="duration" type="number" min={1} step={1} required value={values.duration} disabled={save.isPending} onChange={event => update({ duration: event.target.value })} /></label>
         </div>
-        <label className="field"><span>Процессор</span><select name="processor" aria-label="Процессор" value={values.processor} disabled={save.isPending} onChange={event => changeProcessor(event.target.value)}>
+        <label className="field"><span>{t('Процессор')}</span><select name="processor" aria-label={t('Процессор')} value={values.processor} disabled={save.isPending} onChange={event => changeProcessor(event.target.value)}>
           {(catalog.processors.some(item => item.id === values.processor) ? catalog.processors : [...catalog.processors, { id: values.processor, title: values.processor, model: '' }]).map(item => <option key={item.id} value={item.id}>{item.title}{item.model && ` (${item.model})`}</option>)}
-        </select><span className="small muted">Все посылки контеста проверяются на нём; в списке задач остаются только задачи, которые можно сдавать на этом процессоре.</span></label>
-        <label className="field"><span>Период взломов, минут (0 — отключён)</span><input name="hackDuration" type="number" min={0} max={10080} step={1} required value={values.hackDuration} disabled={save.isPending} aria-describedby="hack-hint" onChange={event => update({ hackDuration: event.target.value })} /><span id="hack-hint" className="small muted">{!hackPeriod ? 'После окончания контеста участники ищут тесты, на которых чужие принятые решения ошибаются. Задачи, которые это допускают, помечены в списке.' : hackable.length ? `Взламывать можно решения задач: ${hackable.join(', ')}.` : <span className="hack-warning">Ни одна из выбранных задач не допускает взломы: в этом периоде взламывать будет нечего.</span>}</span></label>
+        </select><span className="small muted">{t('Все посылки контеста проверяются на нём; в списке задач остаются только задачи, которые можно сдавать на этом процессоре.')}</span></label>
+        <label className="field"><span>{t('Период взломов, минут (0 — отключён)')}</span><input name="hackDuration" type="number" min={0} max={10080} step={1} required value={values.hackDuration} disabled={save.isPending} aria-describedby="hack-hint" onChange={event => update({ hackDuration: event.target.value })} /><span id="hack-hint" className="small muted">{!hackPeriod ? t('После окончания контеста участники ищут тесты, на которых чужие принятые решения ошибаются. Задачи, которые это допускают, помечены в списке.') : hackable.length ? t('Взламывать можно решения задач: {0}.', [hackable.join(', ')]) : <span className="hack-warning">{t('Ни одна из выбранных задач не допускает взломы: в этом периоде взламывать будет нечего.')}</span>}</span></label>
         <fieldset className="contest-authors" disabled={save.isPending}>
-          <legend>Авторы</legend>
-          <p className="small muted">{values.authors.some(author => author.id === user.id) ? 'Авторы могут изменять контест до начала.' : 'После сохранения вы потеряете право редактирования.'}</p>
-          <div className="contest-selected-authors">{values.authors.map(author => <div className="contest-selected-author" key={author.id}><UserLink user={author} /><button type="button" className="text-link" aria-label={`Убрать ${author.handle}`} disabled={values.authors.length === 1 || !id && author.id === user.id} title={values.authors.length === 1 ? 'Нужен хотя бы один автор' : !id && author.id === user.id ? 'Новый контест создаёт один из его авторов; выйти из авторов можно после создания' : undefined} onClick={() => update({ authors: values.authors.filter(person => person.id !== author.id) })}>Убрать</button></div>)}</div>
-          <input type="search" aria-label="Найти автора по нику" placeholder="Ник пользователя" value={authorQuery} onChange={event => setAuthorQuery(event.target.value)} onKeyDown={event => {
+          <legend>{t('Авторы')}</legend>
+          <p className="small muted">{values.authors.some(author => author.id === user.id) ? t('Авторы могут изменять контест до начала.') : t('После сохранения вы потеряете право редактирования.')}</p>
+          <div className="contest-selected-authors">{values.authors.map(author => <div className="contest-selected-author" key={author.id}><UserLink user={author} /><button type="button" className="text-link" aria-label={t('Убрать {0}', [author.handle])} disabled={values.authors.length === 1 || !id && author.id === user.id} title={values.authors.length === 1 ? t('Нужен хотя бы один автор') : !id && author.id === user.id ? t('Новый контест создаёт один из его авторов; выйти из авторов можно после создания') : undefined} onClick={() => update({ authors: values.authors.filter(person => person.id !== author.id) })}>{t('Убрать')}</button></div>)}</div>
+          <input type="search" aria-label={t('Найти автора по нику')} placeholder={t('Ник пользователя')} value={authorQuery} onChange={event => setAuthorQuery(event.target.value)} onKeyDown={event => {
             if (event.key === 'Escape') { setAuthorQuery(''); setAuthorSearch(''); }
             if (event.key !== 'Enter') return;
             event.preventDefault();
@@ -197,30 +198,30 @@ export default function ContestEditor() {
             const candidate = exact ?? (matches.length === 1 ? matches[0] : undefined);
             if (candidate) addAuthor(candidate);
           }} />
-          {authorQuery.trim() && <div className="contest-author-results" aria-label="Результаты поиска авторов">
-            {!authorSearchReady || users.isFetching ? <p className="small muted" role="status">Поиск...</p> : users.error ? <><ErrorMessage error={users.error} /><button className="text-link" type="button" onClick={() => void users.refetch()}>Повторить</button></> : matches.length ? matches.map(person => <div className="contest-author-result" key={person.id}><UserLink user={person} /><button type="button" className="text-link" aria-label={`Добавить ${person.handle}`} onClick={() => addAuthor(person)}>Добавить</button></div>) : authorSearch && <p className="small muted">{users.data?.items.length ? 'Все найденные пользователи уже добавлены.' : 'Пользователь не найден.'}</p>}
+          {authorQuery.trim() && <div className="contest-author-results" aria-label={t('Результаты поиска авторов')}>
+            {!authorSearchReady || users.isFetching ? <p className="small muted" role="status">{t('Поиск...')}</p> : users.error ? <><ErrorMessage error={users.error} /><button className="text-link" type="button" onClick={() => void users.refetch()}>{t('Повторить')}</button></> : matches.length ? matches.map(person => <div className="contest-author-result" key={person.id}><UserLink user={person} /><button type="button" className="text-link" aria-label={t('Добавить {0}', [person.handle])} onClick={() => addAuthor(person)}>{t('Добавить')}</button></div>) : authorSearch && <p className="small muted">{users.data?.items.length ? t('Все найденные пользователи уже добавлены.') : t('Пользователь не найден.')}</p>}
           </div>}
         </fieldset>
       </div>
       <div className="contest-task-picker">
         <fieldset className="problem-choices" disabled={save.isPending}>
-          <legend>Задачи</legend>
-          <div className="toolbar contest-picker-summary"><span className="small muted" aria-live="polite">Выбрано: {values.problemIds.length}</span><label className="checkbox-label"><input type="checkbox" checked={selectedOnly} onChange={event => setSelectedOnly(event.target.checked)} />Только выбранные</label></div>
+          <legend>{t('Задачи')}</legend>
+          <div className="toolbar contest-picker-summary"><span className="small muted" aria-live="polite">{t('Выбрано:')} {values.problemIds.length}</span><label className="checkbox-label"><input type="checkbox" checked={selectedOnly} onChange={event => setSelectedOnly(event.target.checked)} />{t('Только выбранные')}</label></div>
           <div className="toolbar contest-picker-filters">
-            <div className="search"><input type="search" aria-label="Найти задачу для контеста" placeholder="Название или номер задачи" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') event.preventDefault(); }} /></div>
-            <select aria-label="Сложность задач" value={difficulty} onChange={event => setDifficulty(event.target.value)}><option value="all">Сложность</option>{Object.entries(difficultyLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-            <select aria-label="Тема задач" value={tag} onChange={event => setTag(event.target.value)}><option value="all">Тема</option>{tags.map(value => <option key={value}>{value}</option>)}</select>
-            {filtersActive && <button type="button" className="text-link filter-reset" onClick={() => { setQuery(''); setDifficulty('all'); setTag('all'); setSelectedOnly(false); }}>Сбросить</button>}
+            <div className="search"><input type="search" aria-label={t('Найти задачу для контеста')} placeholder={t('Название или номер задачи')} value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') event.preventDefault(); }} /></div>
+            <select aria-label={t('Сложность задач')} value={difficulty} onChange={event => setDifficulty(event.target.value)}><option value="all">{t('Сложность')}</option>{Object.entries(difficultyLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+            <select aria-label={t('Тема задач')} value={tag} onChange={event => setTag(event.target.value)}><option value="all">{t('Тема')}</option>{tags.map(value => <option key={value}>{value}</option>)}</select>
+            {filtersActive && <button type="button" className="text-link filter-reset" onClick={() => { setQuery(''); setDifficulty('all'); setTag('all'); setSelectedOnly(false); }}>{t('Сбросить')}</button>}
           </div>
           <div className="contest-problem-list">
             {visible.map(problem => <div className="problem-choice-row" key={problem.id}>
               <label className="problem-choice"><input type="checkbox" checked={selectedIds.has(problem.id)} onChange={event => update({ problemIds: event.target.checked ? [...values.problemIds, problem.id] : values.problemIds.filter(problemId => problemId !== problem.id) })} /><span className="problem-choice-title">{problem.code}. {problem.title}</span></label>
-              {problem.hacksAllowed && <span className="small muted">взломы</span>}
+              {problem.hacksAllowed && <span className="small muted">{t('взломы')}</span>}
               <Difficulty difficulty={problem.difficulty} />
-              {selectedOnly && values.problemIds.length > 1 && <div className="choice-actions"><button type="button" className="text-link" aria-label={`Поднять ${problem.title}`} disabled={values.problemIds[0] === problem.id} onClick={() => move(problem.id, -1)}>Выше</button><button type="button" className="text-link" aria-label={`Опустить ${problem.title}`} disabled={values.problemIds.at(-1) === problem.id} onClick={() => move(problem.id, 1)}>Ниже</button></div>}
+              {selectedOnly && values.problemIds.length > 1 && <div className="choice-actions"><button type="button" className="text-link" aria-label={t('Поднять {0}', [problem.title])} disabled={values.problemIds[0] === problem.id} onClick={() => move(problem.id, -1)}>{t('Выше')}</button><button type="button" className="text-link" aria-label={t('Опустить {0}', [problem.title])} disabled={values.problemIds.at(-1) === problem.id} onClick={() => move(problem.id, 1)}>{t('Ниже')}</button></div>}
             </div>)}
-            {!visible.length && <p className="muted">Нет задач по этим фильтрам.</p>}
-            {missing.map(problemId => <div className="problem-choice-row" key={problemId}><span>{problemId} (задача недоступна)</span><button type="button" className="text-link" onClick={() => update({ problemIds: values.problemIds.filter(value => value !== problemId) })}>Убрать</button></div>)}
+            {!visible.length && <p className="muted">{t('Нет задач по этим фильтрам.')}</p>}
+            {missing.map(problemId => <div className="problem-choice-row" key={problemId}><span>{problemId} {t('(задача недоступна)')}</span><button type="button" className="text-link" onClick={() => update({ problemIds: values.problemIds.filter(value => value !== problemId) })}>{t('Убрать')}</button></div>)}
           </div>
         </fieldset>
         <div className="contest-builder-actions">
@@ -231,9 +232,9 @@ export default function ContestEditor() {
               if (contest.error) void contest.refetch();
               if (pool.error) void pool.refetch();
               if (id && snapshots.error) void snapshots.refetch();
-            }}>Повторить загрузку</button></>}
+            }}>{t('Повторить загрузку')}</button></>}
           </div>
-          <button className="btn primary" type="submit" disabled={save.isPending || !values.problemIds.length}>{save.isPending ? 'Сохранение...' : id ? 'Сохранить' : 'Создать контест'}</button>
+          <button className="btn primary" type="submit" disabled={save.isPending || !values.problemIds.length}>{save.isPending ? t('Сохранение...') : id ? t('Сохранить') : t('Создать контест')}</button>
         </div>
       </div>
     </form>

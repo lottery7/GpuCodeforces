@@ -1,6 +1,7 @@
 import createClient from 'openapi-fetch';
 import type { paths } from './schema';
 import type { ComparisonInput, ContestInput, ContestQuery, DuelInput, DuelProblemQuery, DuelQuery, DuelRequest, ExampleInput, GuessInput, LoginInput, NotificationQuery, ProblemQuery, RegisterInput, SubmissionQuery, SubmitInput, UserQuery } from './types';
+import { t } from '../i18n';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -13,14 +14,14 @@ async function result<T>(request: Promise<{ data?: T; error?: unknown; response:
   try {
     const { data, error, response } = await request;
     if (!response.ok) {
-      const message = typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string' ? error.message : `Ошибка сервера (${response.status}).`;
+      const message = typeof error === 'object' && error !== null && 'message' in error && typeof error.message === 'string' ? error.message : t('Ошибка сервера ({0}).', [response.status]);
       throw new ApiError(response.status, message);
     }
-    if (data === undefined && response.status !== 204) throw new ApiError(502, 'Сервер вернул пустой ответ.');
+    if (data === undefined && response.status !== 204) throw new ApiError(502, t('Сервер вернул пустой ответ.'));
     return data as T;
   } catch (error) {
     if (error instanceof ApiError || typeof error === 'object' && error !== null && 'name' in error && error.name === 'AbortError') throw error;
-    throw new ApiError(0, 'Не удалось получить ответ сервера. Проверьте соединение и попробуйте снова.');
+    throw new ApiError(0, t('Не удалось получить ответ сервера. Проверьте соединение и попробуйте снова.'));
   }
 }
 

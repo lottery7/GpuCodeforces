@@ -2,6 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
 import { afterEach, beforeEach, vi } from 'vitest';
 import { api } from '../src/api/client';
+import { setLanguage } from '../src/i18n';
 import type { Processor } from '../src/api/types';
 
 /** The catalog the pages load once; a test that needs another one mocks listProcessors itself. */
@@ -16,6 +17,8 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  // the language is kept by the i18n module, not by a component: a test that switched it gives Russian back
+  setLanguage('ru');
   localStorage.clear();
   sessionStorage.clear();
 });

@@ -15,6 +15,7 @@ import { formatLimit, scoreUnits, useProcessors } from '../processors';
 import { Difficulty, Empty, ErrorMessage, Markdown, PageHeader, QueryState, ScoreValue, Tabs, UserLink, useFeedbackVisibility } from '../ui';
 import { canJoinContest, contextFromSearch, difficultyLabels, formatLabels, guessLabels, problemPath } from '../utils';
 import { SubmissionList } from './Submissions';
+import { t } from '../i18n';
 
 function phaseOf(contest: Contest | undefined, now: number) {
   if (!contest) return null;
@@ -98,7 +99,7 @@ function EditorPane({ problem, detail, summary, target, context, contest, contes
   }
   function reset() {
     changeCode(starterCode);
-    setUndo({ code, message: problem.format === 'optimization' ? 'Исходный код восстановлен.' : 'Шаблон восстановлен.' });
+    setUndo({ code, message: problem.format === 'optimization' ? t('Исходный код восстановлен.') : t('Шаблон восстановлен.') });
     setExample(null);
     check.reset();
   }
@@ -123,38 +124,38 @@ function EditorPane({ problem, detail, summary, target, context, contest, contes
     setView(next);
     event.currentTarget.querySelector<HTMLButtonElement>(`[data-view="${next}"]`)?.focus();
   }
-  return <section className="editor-section" id="editor" aria-label="Редактор решения">
+  return <section className="editor-section" id="editor" aria-label={t('Редактор решения')}>
     <OptimizationSummary problem={problem} processor={summary} />
     <div className="panel editor-panel">
-      <div className="editor-title">{problem.format === 'optimization' ? <div className="solution-tabs" role="tablist" aria-label="Код оптимизации" onKeyDown={switchCodeTab}><button type="button" role="tab" id="solution-tab" data-view="solution" aria-controls="solution-panel" aria-selected={view === 'solution'} tabIndex={view === 'solution' ? 0 : -1} onClick={() => setView('solution')}>Ваше решение</button><button type="button" role="tab" id="original-tab" data-view="original" aria-controls="original-panel" aria-selected={view === 'original'} tabIndex={view === 'original' ? 0 : -1} onClick={() => setView('original')}>Исходное решение</button></div> : <span className="editor-file-tab active"><span className="file-tab-mark" aria-hidden="true">{extension.slice(1).toUpperCase().slice(0, 2)}</span>{fileName}</span>}
-        <div className="inline"><button type="button" className="text-link" onClick={download}>Скачать код</button><label className="text-link file-button">Выбрать файл<input type="file" accept={`${extension},.txt`} aria-label="Загрузить код из файла" onChange={async event => {
+      <div className="editor-title">{problem.format === 'optimization' ? <div className="solution-tabs" role="tablist" aria-label={t('Код оптимизации')} onKeyDown={switchCodeTab}><button type="button" role="tab" id="solution-tab" data-view="solution" aria-controls="solution-panel" aria-selected={view === 'solution'} tabIndex={view === 'solution' ? 0 : -1} onClick={() => setView('solution')}>{t('Ваше решение')}</button><button type="button" role="tab" id="original-tab" data-view="original" aria-controls="original-panel" aria-selected={view === 'original'} tabIndex={view === 'original' ? 0 : -1} onClick={() => setView('original')}>{t('Исходное решение')}</button></div> : <span className="editor-file-tab active"><span className="file-tab-mark" aria-hidden="true">{extension.slice(1).toUpperCase().slice(0, 2)}</span>{fileName}</span>}
+        <div className="inline"><button type="button" className="text-link" onClick={download}>{t('Скачать код')}</button><label className="text-link file-button">{t('Выбрать файл')}<input type="file" accept={`${extension},.txt`} aria-label={t('Загрузить код из файла')} onChange={async event => {
           const file = event.target.files?.[0];
           setView('solution');
           event.target.value = '';
           if (!file) return;
-          try { changeCode(await file.text()); setUndo({ code, message: 'Файл загружен.' }); } catch { setLocalError(new Error('Не удалось прочитать файл.')); }
+          try { changeCode(await file.text()); setUndo({ code, message: t('Файл загружен.') }); } catch { setLocalError(new Error(t('Не удалось прочитать файл.'))); }
         }} /></label></div>
       </div>
-      {problem.format === 'optimization' ? <div className="optimization-editors"><div id="solution-panel" role="tabpanel" aria-labelledby="solution-tab" hidden={view !== 'solution'}><CodeEditor fit language={target.language} value={code} onChange={changeCode} status={saved ? 'Черновик сохранен' : 'Хранилище недоступно. Скачайте код.'} /></div><div id="original-panel" role="tabpanel" aria-labelledby="original-tab" hidden={view !== 'original'}><CodeEditor fit language={target.language} value={starterCode} readOnly label="Исходное решение" status="Исходный код задачи" /></div></div> : <CodeEditor fit language={target.language} value={code} onChange={changeCode} status={saved ? 'Черновик сохранен' : 'Хранилище недоступно. Скачайте код.'} />}
+      {problem.format === 'optimization' ? <div className="optimization-editors"><div id="solution-panel" role="tabpanel" aria-labelledby="solution-tab" hidden={view !== 'solution'}><CodeEditor fit language={target.language} value={code} onChange={changeCode} status={saved ? t('Черновик сохранен') : t('Хранилище недоступно. Скачайте код.')} /></div><div id="original-panel" role="tabpanel" aria-labelledby="original-tab" hidden={view !== 'original'}><CodeEditor fit language={target.language} value={starterCode} readOnly label={t('Исходное решение')} status={t('Исходный код задачи')} /></div></div> : <CodeEditor fit language={target.language} value={code} onChange={changeCode} status={saved ? t('Черновик сохранен') : t('Хранилище недоступно. Скачайте код.')} />}
       <div className="editor-footer" ref={feedbackRef}>
       {(undo || error || check.isPending || example) && <div className="editor-feedback">
-        {!busy && Boolean(error || example) && <button type="button" className="close-output" aria-label="Закрыть вывод" title="Закрыть вывод" onClick={closeOutput}><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg></button>}
-        {undo !== null && <div className="small">{undo.message} <button type="button" className="text-link" onClick={() => changeCode(undo.code)}>Отменить</button></div>}
+        {!busy && Boolean(error || example) && <button type="button" className="close-output" aria-label={t('Закрыть вывод')} title={t('Закрыть вывод')} onClick={closeOutput}><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg></button>}
+        {undo !== null && <div className="small">{undo.message} <button type="button" className="text-link" onClick={() => changeCode(undo.code)}>{t('Отменить')}</button></div>}
         <ErrorMessage error={error} />
-        {(check.isPending || example) && <section className="run-console" aria-label="Вывод проверки"><div className="tool-window-body">
-          {check.isPending ? <p role="status">Проверяем пример...</p> : example && (example.code !== code ? <p className="muted" role="status">Код изменен. Проверьте пример снова.</p> : <><p role="status" className={example.passed ? 'success' : 'error'}>{example.passed ? 'Пример пройден.' : 'Пример не пройден.'}</p>{example.diagnostic && <pre className="diagnostic" tabIndex={0} aria-label="Диагностика примера">{example.diagnostic}</pre>}</>)}
+        {(check.isPending || example) && <section className="run-console" aria-label={t('Вывод проверки')}><div className="tool-window-body">
+          {check.isPending ? <p role="status">{t('Проверяем пример...')}</p> : example && (example.code !== code ? <p className="muted" role="status">{t('Код изменен. Проверьте пример снова.')}</p> : <><p role="status" className={example.passed ? 'success' : 'error'}>{example.passed ? t('Пример пройден.') : t('Пример не пройден.')}</p>{example.diagnostic && <pre className="diagnostic" tabIndex={0} aria-label={t('Диагностика примера')}>{example.diagnostic}</pre>}</>)}
         </div></section>}
       </div>}
       <div className="editor-actions">
-        {view === 'original' ? <button type="button" className="btn primary" onClick={() => setView('solution')}>Продолжить редактирование</button> : <>
-        <button type="button" className="text-link" onClick={reset} disabled={busy}>{problem.format === 'optimization' ? 'Восстановить исходный код' : 'Восстановить шаблон'}</button>
-        <button type="button" className="btn secondary run-btn" onClick={() => { clearErrors(); setExample(null); check.mutate(code); }} disabled={busy || !code.trim()}>{check.isPending ? 'Проверяем пример...' : 'Проверить пример'}</button>
-        {phase === 'finished' ? <button type="button" className="btn primary" onClick={practice}>{contest?.finalized && contest.format !== 'duel' ? 'Перейти к дорешиванию' : 'Продолжить в практике'}</button>
-          : phase === 'upcoming' ? <button type="button" className="btn primary" disabled>Отправка после начала</button>
-          : !user ? <button type="button" className="btn primary" onClick={requestLogin}>Войти и отправить</button>
-          : contest?.format === 'duel' && !context.includes(':') && !canJoinContest(contest, user.id) ? <button type="button" className="btn primary" disabled>Только для участников дуэли</button>
-          : context !== 'practice' && !context.includes(':') && !contest?.registered ? <button type="button" className="btn primary" disabled={busy || contestLoading} onClick={() => { clearErrors(); join.mutate(); }}>{join.isPending ? 'Регистрируем...' : contest?.format === 'duel' ? 'Принять дуэль' : 'Участвовать'}</button>
-          : <button type="button" className="btn primary" disabled={busy || !code.trim() || contestLoading} onClick={() => { clearErrors(); submit.mutate(); }}>{submit.isPending ? 'Отправляем...' : 'Отправить'}</button>}
+        {view === 'original' ? <button type="button" className="btn primary" onClick={() => setView('solution')}>{t('Продолжить редактирование')}</button> : <>
+        <button type="button" className="text-link" onClick={reset} disabled={busy}>{problem.format === 'optimization' ? t('Восстановить исходный код') : t('Восстановить шаблон')}</button>
+        <button type="button" className="btn secondary run-btn" onClick={() => { clearErrors(); setExample(null); check.mutate(code); }} disabled={busy || !code.trim()}>{check.isPending ? t('Проверяем пример...') : t('Проверить пример')}</button>
+        {phase === 'finished' ? <button type="button" className="btn primary" onClick={practice}>{contest?.finalized && contest.format !== 'duel' ? t('Перейти к дорешиванию') : t('Продолжить в практике')}</button>
+          : phase === 'upcoming' ? <button type="button" className="btn primary" disabled>{t('Отправка после начала')}</button>
+          : !user ? <button type="button" className="btn primary" onClick={requestLogin}>{t('Войти и отправить')}</button>
+          : contest?.format === 'duel' && !context.includes(':') && !canJoinContest(contest, user.id) ? <button type="button" className="btn primary" disabled>{t('Только для участников дуэли')}</button>
+          : context !== 'practice' && !context.includes(':') && !contest?.registered ? <button type="button" className="btn primary" disabled={busy || contestLoading} onClick={() => { clearErrors(); join.mutate(); }}>{join.isPending ? t('Регистрируем...') : contest?.format === 'duel' ? t('Принять дуэль') : t('Участвовать')}</button>
+          : <button type="button" className="btn primary" disabled={busy || !code.trim() || contestLoading} onClick={() => { clearErrors(); submit.mutate(); }}>{submit.isPending ? t('Отправляем...') : t('Отправить')}</button>}
         </>}
       </div>
       </div>
@@ -180,7 +181,7 @@ function GuessPane({ problem, processor, context, contest, phase, contestLoading
   const saved = referencesReady ? answer ?? previous.data : undefined;
   const guess = useMutation({
     mutationFn: (value: GuessInput['choice']) => {
-      if (!benchmarkKey) throw new ApiError(503, 'Эталонные измерения еще не готовы.');
+      if (!benchmarkKey) throw new ApiError(503, t('Эталонные измерения еще не готовы.'));
       return api.submitGuess(problem.id, context, { choice: value, benchmarkKey });
     },
     onSuccess: result => { setAnswer(result); void queryClient.invalidateQueries(); },
@@ -195,31 +196,31 @@ function GuessPane({ problem, processor, context, contest, phase, contestLoading
   });
   const feedbackRef = useFeedbackVisibility(saved || guess.error || join.error);
   const blocked = !referencesReady || guess.isPending || join.isPending || Boolean(saved) || Boolean(user && problem.guessSubmissionId && !previous.data) || contestLoading || phase === 'upcoming' || phase === 'finished';
-  return <section className="guess-pane" id="editor" aria-label="Выберите более быстрый код">
+  return <section className="guess-pane" id="editor" aria-label={t('Выберите более быстрый код')}>
     {!referencesReady && <ReferenceStatus format={problem.format} measurement={processor.referenceMeasurement} />}
-    <fieldset className="guess-comparison" disabled={blocked}><legend className="visually-hidden">Выберите более быстрый код</legend>
+    <fieldset className="guess-comparison" disabled={blocked}><legend className="visually-hidden">{t('Выберите более быстрый код')}</legend>
       <div className="guess-codes">{[problem.firstCode, problem.secondCode].map((code, index) => {
         const value = index === 0 ? 'first' : 'second';
         const selected = (saved?.guessResult?.choice ?? choice) === value;
         const correct = saved?.guessResult?.correctChoice === value;
         return <section className={`panel editor-panel guess-code-card${selected ? ' selected' : ''}${saved ? correct ? ' answer-correct' : selected ? ' answer-wrong' : '' : ''}`} key={value}>
-          <div className="guess-code-heading"><h3>Вариант {index + 1}</h3></div>
-          <CodeEditor value={code ?? ''} language={processor.languages[0]} readOnly label={`Код ${index + 1}`} />
+          <div className="guess-code-heading"><h3>{t('Вариант')} {index + 1}</h3></div>
+          <CodeEditor value={code ?? ''} language={processor.languages[0]} readOnly label={t('Код {0}', [index + 1])} />
           <label className="guess-pick"><input type="radio" name="guess" value={value} checked={selected} onChange={() => setChoice(value)} /><span className="guess-pick-mark" aria-hidden="true" /><span>{guessLabels[value]}</span></label>
         </section>;
       })}</div>
-      <label className={`guess-equal guess-pick${saved?.guessResult?.correctChoice === 'equal' ? ' answer-correct' : ''}`}><input type="radio" name="guess" value="equal" aria-label="Одинаково" checked={(saved?.guessResult?.choice ?? choice) === 'equal'} onChange={() => setChoice('equal')} /><span className="guess-equal-symbol" aria-hidden="true">=</span><span><strong>Одинаково</strong></span><span className="guess-pick-mark" aria-hidden="true" /></label>
+      <label className={`guess-equal guess-pick${saved?.guessResult?.correctChoice === 'equal' ? ' answer-correct' : ''}`}><input type="radio" name="guess" value="equal" aria-label={t('Одинаково')} checked={(saved?.guessResult?.choice ?? choice) === 'equal'} onChange={() => setChoice('equal')} /><span className="guess-equal-symbol" aria-hidden="true">=</span><span><strong>{t('Одинаково')}</strong></span><span className="guess-pick-mark" aria-hidden="true" /></label>
     </fieldset>
-    {phase === 'finished' ? <Link className="btn secondary" to={problemPath(problem.id, contest?.finalized && contest.format !== 'duel' ? `upsolve:${contest.id}` : 'practice')}>{contest?.finalized && contest.format !== 'duel' ? 'Перейти к дорешиванию' : 'Продолжить в практике'}</Link>
-      : phase === 'upcoming' ? <p className="muted">Ответы принимаются после начала.</p>
-      : !user ? <button className="btn primary" onClick={() => openAuth('login', location.pathname + location.search)}>Войти и ответить</button>
-      : contest?.format === 'duel' && !context.includes(':') && !canJoinContest(contest, user.id) ? <p className="muted">Ответить могут только участники дуэли.</p>
-      : context !== 'practice' && !context.includes(':') && !contest?.registered ? <button className="btn primary" disabled={blocked} onClick={() => join.mutate()}>{join.isPending ? 'Регистрируем...' : contest?.format === 'duel' ? 'Принять дуэль' : 'Участвовать'}</button>
-      : !saved && <button className="btn primary guess-submit" disabled={blocked || !choice} onClick={() => { if (choice) guess.mutate(choice); }}>{guess.isPending ? 'Проверяем ответ...' : 'Проверить выбор'}</button>}
-    {!saved && referencesReady && phase !== 'finished' && <p className="small muted guess-attempt-note">Одна попытка. После проверки откроется разбор.</p>}
+    {phase === 'finished' ? <Link className="btn secondary" to={problemPath(problem.id, contest?.finalized && contest.format !== 'duel' ? `upsolve:${contest.id}` : 'practice')}>{contest?.finalized && contest.format !== 'duel' ? t('Перейти к дорешиванию') : t('Продолжить в практике')}</Link>
+      : phase === 'upcoming' ? <p className="muted">{t('Ответы принимаются после начала.')}</p>
+      : !user ? <button className="btn primary" onClick={() => openAuth('login', location.pathname + location.search)}>{t('Войти и ответить')}</button>
+      : contest?.format === 'duel' && !context.includes(':') && !canJoinContest(contest, user.id) ? <p className="muted">{t('Ответить могут только участники дуэли.')}</p>
+      : context !== 'practice' && !context.includes(':') && !contest?.registered ? <button className="btn primary" disabled={blocked} onClick={() => join.mutate()}>{join.isPending ? t('Регистрируем...') : contest?.format === 'duel' ? t('Принять дуэль') : t('Участвовать')}</button>
+      : !saved && <button className="btn primary guess-submit" disabled={blocked || !choice} onClick={() => { if (choice) guess.mutate(choice); }}>{guess.isPending ? t('Проверяем ответ...') : t('Проверить выбор')}</button>}
+    {!saved && referencesReady && phase !== 'finished' && <p className="small muted guess-attempt-note">{t('Одна попытка. После проверки откроется разбор.')}</p>}
     <div ref={feedbackRef}><ErrorMessage error={guess.error || join.error || previous.error} />
-      {referencesReady && previous.isFetching && !saved && <p role="status">Загрузка предыдущего ответа...</p>}
-      {referencesReady && previous.error && <button className="text-link" onClick={() => void previous.refetch()}>Повторить загрузку ответа</button>}
+      {referencesReady && previous.isFetching && !saved && <p role="status">{t('Загрузка предыдущего ответа...')}</p>}
+      {referencesReady && previous.error && <button className="text-link" onClick={() => void previous.refetch()}>{t('Повторить загрузку ответа')}</button>}
       {saved?.guessResult && <GuessResult result={saved.guessResult} />}
     </div>
   </section>;
@@ -232,8 +233,8 @@ function OptimizationSummary({ problem, processor }: { problem: ProblemDetail; p
   const baseline = ready && processor.baselineScore && processor.baselineScore.value > 0 ? processor.baselineScore : null;
   const best = processor.bestScore;
   const speedup = baseline && best && best.value > 0 ? baseline.value / best.value : null;
-  return <section className="optimization-summary" aria-label="Результаты оптимизации">
-    {!ready ? <ReferenceStatus format={problem.format} measurement={processor.referenceMeasurement} /> : baseline ? <dl className="optimization-metrics"><div><dt>Исходное решение</dt><dd><ScoreValue score={baseline} /></dd></div><div><dt>Ваш лучший результат</dt><dd>{best ? <ScoreValue score={best} /> : <span className="metric-empty">Нет посылок</span>}</dd></div>{speedup != null && <div className={speedup > 1 ? 'metric-improved' : ''}><dt>Улучшение</dt><dd>{speedup.toFixed(3)}x</dd></div>}</dl> : <p className="small muted">Результат исходного решения недоступен.</p>}
+  return <section className="optimization-summary" aria-label={t('Результаты оптимизации')}>
+    {!ready ? <ReferenceStatus format={problem.format} measurement={processor.referenceMeasurement} /> : baseline ? <dl className="optimization-metrics"><div><dt>{t('Исходное решение')}</dt><dd><ScoreValue score={baseline} /></dd></div><div><dt>{t('Ваш лучший результат')}</dt><dd>{best ? <ScoreValue score={best} /> : <span className="metric-empty">{t('Нет посылок')}</span>}</dd></div>{speedup != null && <div className={speedup > 1 ? 'metric-improved' : ''}><dt>{t('Улучшение')}</dt><dd>{speedup.toFixed(3)}x</dd></div>}</dl> : <p className="small muted">{t('Результат исходного решения недоступен.')}</p>}
   </section>;
 }
 
@@ -245,10 +246,10 @@ function Leaders({ problemId, processor, context, finished }: { problemId: strin
     queryFn: ({ signal }) => api.problemLeaders(problemId, processor, context, signal),
     refetchInterval: finished ? false : 5000,
   });
-  return <QueryState query={leaders}>{leaders.data && (leaders.data.length ? <div className="panel table-wrap"><table className="data-table" aria-label="Лидеры задачи">
-    <thead><tr><th className="num">Место</th><th>Участник</th><th className="num">Лучший результат</th><th className="num">Посылка</th></tr></thead>
+  return <QueryState query={leaders}>{leaders.data && (leaders.data.length ? <div className="panel table-wrap"><table className="data-table" aria-label={t('Лидеры задачи')}>
+    <thead><tr><th className="num">{t('Место')}</th><th>{t('Участник')}</th><th className="num">{t('Лучший результат')}</th><th className="num">{t('Посылка')}</th></tr></thead>
     <tbody>{leaders.data.map(item => <tr key={item.user.id} className={item.user.id === user?.id ? 'own-row' : undefined}><td className="num">{item.rank}</td><td><UserLink user={item.user} /></td><td className="num mono"><ScoreValue score={item.score} /></td><td className="num"><Link to={`/submission/${encodeURIComponent(item.submissionId)}`}>#{item.submissionId}</Link></td></tr>)}</tbody>
-  </table></div> : <Empty>Принятых решений на процессоре {processors.title(processor)} в этой конфигурации пока нет.</Empty>)}</QueryState>;
+  </table></div> : <Empty>{t('Принятых решений на процессоре')} {processors.title(processor)} {t('в этой конфигурации пока нет.')}</Empty>)}</QueryState>;
 }
 
 /** The processor and language the page works with: from the address, else the first the problem offers. */
@@ -263,14 +264,14 @@ function TargetPicker({ problem, target, onChange }: { problem: ProblemDetail; t
   const processors = useProcessors();
   const languages = problem.processors.find(item => item.id === target.processor)?.languages ?? [];
   return <div className="toolbar target-picker">
-    {problem.processors.length > 1 ? <label className="field-inline"><span>Процессор</span><select aria-label="Процессор" value={target.processor} onChange={event => {
+    {problem.processors.length > 1 ? <label className="field-inline"><span>{t('Процессор')}</span><select aria-label={t('Процессор')} value={target.processor} onChange={event => {
       const next = problem.processors.find(item => item.id === event.target.value);
       if (next) onChange({ processor: next.id, language: next.languages[0] ?? target.language });
     }}>{problem.processors.map(item => <option key={item.id} value={item.id}>{processors.title(item.id)}</option>)}</select></label>
-      : <span className="muted">Процессор: {processors.title(target.processor)}</span>}
-    {languages.length > 1 ? <label className="field-inline"><span>Язык</span><select aria-label="Язык" value={target.language} onChange={event => onChange({ ...target, language: event.target.value })}>
+      : <span className="muted">{t('Процессор:')} {processors.title(target.processor)}</span>}
+    {languages.length > 1 ? <label className="field-inline"><span>{t('Язык')}</span><select aria-label={t('Язык')} value={target.language} onChange={event => onChange({ ...target, language: event.target.value })}>
       {languages.map(id => <option key={id} value={id}>{processors.language(target.processor, id)?.title ?? id}</option>)}
-    </select></label> : <span className="muted">Язык: {processors.language(target.processor, target.language)?.title ?? target.language}</span>}
+    </select></label> : <span className="muted">{t('Язык:')} {processors.language(target.processor, target.language)?.title ?? target.language}</span>}
   </div>;
 }
 
@@ -359,22 +360,22 @@ export default function Problem() {
     setParams(query, { replace: true });
   }
   return <QueryState query={problem}>{problem.data && <>
-    <div className="breadcrumbs"><Link to={context === 'practice' ? '/problems' : virtualId ? `/virtual/${encodeURIComponent(virtualId)}` : `/contest/${encodeURIComponent(contestId || '')}`}>{context === 'practice' ? 'Практика' : contest.data?.title || 'Контест'}</Link>{upsolving && <span> / Дорешивание</span>}{virtualId && <span> / Виртуальное участие</span>}</div>
-    {virtual.error && <div><ErrorMessage error={virtual.error} /><button className="text-link" onClick={() => void virtual.refetch()}>Повторить загрузку участия</button></div>}
-    {virtual.data && <p className="notice">Виртуальный контест. Осталось {Math.max(0, Math.ceil((Date.parse(virtual.data.endsAt) - virtualNow) / 1000))} с.</p>}
-    <PageHeader title={`${problem.data.code}. ${problem.data.title}`} actions={tab === 'statement' ? <a className="text-link editor-anchor" href="#editor">{isGuess ? 'К вариантам ответа' : 'К редактору'}</a> : undefined} />
-    <div className="problem-meta"><span>{formatLabels[problem.data.format ?? 'standard']}</span><span><Difficulty difficulty={problem.data.difficulty} /></span>{!isGuess && <>{detail && <span>Лимит: {formatLimit(detail.limit)} {scoreUnits[detail.limit.type]}</span>}<span>Память: {problem.data.memoryLimitMb} МБ</span></>}</div>
+    <div className="breadcrumbs"><Link to={context === 'practice' ? '/problems' : virtualId ? `/virtual/${encodeURIComponent(virtualId)}` : `/contest/${encodeURIComponent(contestId || '')}`}>{context === 'practice' ? t('Практика') : contest.data?.title || t('Контест')}</Link>{upsolving && <span> {t('/ Дорешивание')}</span>}{virtualId && <span> {t('/ Виртуальное участие')}</span>}</div>
+    {virtual.error && <div><ErrorMessage error={virtual.error} /><button className="text-link" onClick={() => void virtual.refetch()}>{t('Повторить загрузку участия')}</button></div>}
+    {virtual.data && <p className="notice">{t('Виртуальный контест. Осталось')} {Math.max(0, Math.ceil((Date.parse(virtual.data.endsAt) - virtualNow) / 1000))} {t('с.')}</p>}
+    <PageHeader title={`${problem.data.code}. ${problem.data.title}`} actions={tab === 'statement' ? <a className="text-link editor-anchor" href="#editor">{isGuess ? t('К вариантам ответа') : t('К редактору')}</a> : undefined} />
+    <div className="problem-meta"><span>{formatLabels[problem.data.format ?? 'standard']}</span><span><Difficulty difficulty={problem.data.difficulty} /></span>{!isGuess && <>{detail && <span>{t('Лимит:')} {formatLimit(detail.limit)} {scoreUnits[detail.limit.type]}</span>}<span>{t('Память:')} {problem.data.memoryLimitMb} {t('МБ')}</span></>}</div>
     {target && <TargetPicker problem={problem.data} target={target} onChange={pickTarget} />}
     <Tabs selected={tab} items={[
-      { id: 'statement', label: isGuess ? 'Условие и ответ' : 'Условие и решение', to: problemPath(id, context, undefined, target ?? undefined) },
-      { id: 'submissions', label: isGuess ? 'История ответов' : 'Мои посылки', to: problemPath(id, context, 'submissions', target ?? undefined) },
-      ...(!isGuess && !isDuel ? [{ id: 'leaders', label: 'Лидеры', to: problemPath(id, context, 'leaders', target ?? undefined) }] : []),
+      { id: 'statement', label: isGuess ? t('Условие и ответ') : t('Условие и решение'), to: problemPath(id, context, undefined, target ?? undefined) },
+      { id: 'submissions', label: isGuess ? t('История ответов') : t('Мои посылки'), to: problemPath(id, context, 'submissions', target ?? undefined) },
+      ...(!isGuess && !isDuel ? [{ id: 'leaders', label: t('Лидеры'), to: problemPath(id, context, 'leaders', target ?? undefined) }] : []),
     ]} />
-    {context !== 'practice' && contest.error && <div><ErrorMessage error={contest.error} /><button className="text-link" disabled={contest.isFetching} onClick={() => void contest.refetch()}>Повторить загрузку соревнования</button></div>}
-    {phase === 'finished' && !isDuel && <p className="notice">Соревнование завершено. Новые решения в практике не изменят его результаты.</p>}
+    {context !== 'practice' && contest.error && <div><ErrorMessage error={contest.error} /><button className="text-link" disabled={contest.isFetching} onClick={() => void contest.refetch()}>{t('Повторить загрузку соревнования')}</button></div>}
+    {phase === 'finished' && !isDuel && <p className="notice">{t('Соревнование завершено. Новые решения в практике не изменят его результаты.')}</p>}
     {isDuel && contest.data && <DuelBoard contest={contest.data} finished={phase === 'finished'} clockOffset={clockOffset} contestUpdatedAt={contestSnapshot.current && contestSnapshot.current.id === contestId && contestSnapshot.current.userId === user?.id ? contestSnapshot.current.startedAt : 0} />}
-    {!target || !detail || !summary ? <Empty>Задачу пока нельзя сдавать ни на одном процессоре платформы.</Empty> : tab === 'statement' ? <div className={isGuess ? 'guess-workspace' : 'problem-workspace'}>
-      <section className="statement statement-pane" id="statement" ref={statementRef} tabIndex={-1} aria-label="Условие задачи"><div className="tool-window-head">Условие</div><div className="statement-body"><Markdown>{problem.data.statementMarkdown}</Markdown>{problem.data.format === 'standard' ? <details className="methodology"><summary>Среда и замер</summary><Markdown>{detail.environmentMarkdown}</Markdown></details> : <BenchmarkInfo benchmark={detail.benchmark} />}</div></section>
+    {!target || !detail || !summary ? <Empty>{t('Задачу пока нельзя сдавать ни на одном процессоре платформы.')}</Empty> : tab === 'statement' ? <div className={isGuess ? 'guess-workspace' : 'problem-workspace'}>
+      <section className="statement statement-pane" id="statement" ref={statementRef} tabIndex={-1} aria-label={t('Условие задачи')}><div className="tool-window-head">{t('Условие')}</div><div className="statement-body"><Markdown>{problem.data.statementMarkdown}</Markdown>{problem.data.format === 'standard' ? <details className="methodology"><summary>{t('Среда и замер')}</summary><Markdown>{detail.environmentMarkdown}</Markdown></details> : <BenchmarkInfo benchmark={detail.benchmark} />}</div></section>
       {isGuess ? <GuessPane key={`${user?.id || 'guest'}:${id}:${context}:${problem.data.versionId ?? ''}:${summary.referenceMeasurement?.key ?? ''}`} problem={problem.data} processor={summary} context={context} contest={contest.data} phase={phase} contestLoading={context !== 'practice' && (contest.isPending || Boolean(contest.error) || Boolean(virtualId && (virtual.isPending || virtual.error)))} /> : <EditorPane key={`${user?.id || 'guest'}:${id}:${context}:${target.processor}:${target.language}`} problem={problem.data} detail={detail} summary={summary} target={target} context={context} contest={contest.data} phase={phase} onCloseOutput={returnToStatement} contestLoading={context !== 'practice' && (contest.isPending || Boolean(contest.error) || Boolean(virtualId && (virtual.isPending || virtual.error)))} />}
     </div> : tab === 'submissions' ? <SubmissionList key={`${id}:${context}:${user?.id || 'guest'}`} problemId={id} context={context} /> : <Leaders problemId={id} processor={target.processor} context={context} finished={phase === 'finished' && (virtualId ? !virtual.data?.pending : contest.data?.finalized !== false)} />}
 

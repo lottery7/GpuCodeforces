@@ -1,3 +1,8 @@
+.language-switch { display: inline-flex; margin-left: auto; border: 1.2px solid var(--border); border-radius: 4.8px; overflow: hidden; }
+.language-switch button { min-width: 38.4px; min-height: 33.6px; padding: 0 8.4px; border: 0; background: transparent; color: var(--muted); font-size: var(--font-xs); font-weight: 600; letter-spacing: 0.4px; }
+.language-switch button:hover { color: var(--text-strong); }
+.language-switch button[aria-pressed="true"] { background: var(--selection); color: var(--text-strong); }
+.language-switch + .header-notifications { margin-left: 0; }
 .header-notifications { margin-left: auto; }
 .header-notifications + .account { margin-left: 0; }
 .header-notifications + .account + .mobile-nav { margin-left: 0; }
