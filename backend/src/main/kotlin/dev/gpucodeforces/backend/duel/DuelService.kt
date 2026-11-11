@@ -14,6 +14,7 @@ import dev.gpucodeforces.backend.contest.ContestRegistrationRepository
 import dev.gpucodeforces.backend.contest.ContestRepository
 import dev.gpucodeforces.backend.notification.Notification
 import dev.gpucodeforces.backend.notification.NotificationRepository
+import dev.gpucodeforces.backend.problem.bankCodeOrder
 import dev.gpucodeforces.backend.problem.ProblemCatalog
 import dev.gpucodeforces.backend.problem.ProblemVersion
 import dev.gpucodeforces.backend.processor.ProcessorCatalog
@@ -51,7 +52,7 @@ class DuelService(
         val rows = codingPool(processor).filter { problem ->
             (difficulty == null || problem.difficulty == difficulty) &&
                 (term.isEmpty() || problem.title.contains(term, true) || problem.problemId.contains(term, true) || problem.code.contains(term, true))
-        }.sortedWith(compareBy<ProblemVersion> { it.code }.thenBy { it.title }.thenBy { it.problemId })
+        }.sortedWith(compareBy<ProblemVersion, String>(bankCodeOrder) { it.code }.thenBy { it.title }.thenBy { it.problemId })
         return DuelProblemList(rows.drop(offset).take(limit), rows.size)
     }
 

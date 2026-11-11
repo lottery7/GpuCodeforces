@@ -108,11 +108,13 @@ class ProblemListing(private val jdbc: NamedParameterJdbcTemplate) {
                AND (CAST(:duelFinishedBefore AS timestamptz) IS NULL OR s.finished_at IS NULL OR s.finished_at <= :duelFinishedBefore)
              ORDER BY s.score LIMIT 1)
         """
+        // The order of bankCodeOrder: a code of the bank is a number, and "2" goes before "10".
+        @Language("SQL") val byCode = "CASE WHEN v.code ~ '^[0-9]{1,18}\$' THEN CAST(v.code AS bigint) END NULLS LAST, v.code, v.problem_id"
         @Language("SQL") val order = when {
             contest != null -> "cp.position"
-            filter.sort == SORT_DIFFICULTY -> "CASE v.difficulty WHEN 'easy' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, v.code, v.problem_id"
-            filter.sort == SORT_BEST_SCORE -> "$bestScore NULLS LAST, v.code, v.problem_id"
-            else -> "v.code, v.problem_id"
+            filter.sort == SORT_DIFFICULTY -> "CASE v.difficulty WHEN 'easy' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, $byCode"
+            filter.sort == SORT_BEST_SCORE -> "$bestScore NULLS LAST, $byCode"
+            else -> byCode
         }
         @Language("SQL") val pageSql = "SELECT v.id $source $filters ORDER BY $order LIMIT :limit OFFSET :offset"
         val versionIds = jdbc.query(pageSql, parameters) { row, _ -> row.getObject("id", UUID::class.java) }
@@ -133,3 +135,6 @@ class ProblemListing(private val jdbc: NamedParameterJdbcTemplate) {
         val SORTS = setOf(SORT_CODE, SORT_DIFFICULTY, SORT_BEST_SCORE)
     }
 }
+
+/** Order of problem codes in the bank: numbers by their value, so "2" goes before "10"; any other code after them, as text. */
+val bankCodeOrder: Comparator<String> = compareBy<String> { it.toLongOrNull() == null }.thenBy { it.toLongOrNull() ?: 0 }.thenBy { it }
