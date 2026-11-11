@@ -21,6 +21,8 @@ import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentMatchers.any
+import org.mockito.ArgumentMatchers.eq
+import org.mockito.ArgumentMatchers.isNull
 import org.mockito.BDDMockito.given
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
@@ -95,7 +97,7 @@ class GuessServiceTest {
         assertThat(snapshot.scoreType).isEqualTo(ScoreType.CYCLES_X_DEPTH_X_TRANSISTORS)
         assertThat(snapshot.correctChoice()).isEqualTo("first")
         verify(users).findForUpdate(author.id)
-        verify(submissions).submissionContext(null, author)
+        verify(submissions).submissionContext(isNull(), eq(author) ?: author, any(Instant::class.java) ?: Instant.EPOCH)
     }
 
     @Test
@@ -122,7 +124,8 @@ class GuessServiceTest {
 
     @Test
     fun `a forbidden contest submission does not save an answer`() {
-        given(submissions.submissionContext(null, author)).willThrow(ForbiddenException("Нет регистрации"))
+        given(submissions.submissionContext(isNull(), eq(author) ?: author, any(Instant::class.java) ?: Instant.EPOCH))
+            .willThrow(ForbiddenException("Нет регистрации"))
 
         assertThatThrownBy { submit() }.isInstanceOf(ForbiddenException::class.java)
         verify(repository, never()).save(any(Submission::class.java))

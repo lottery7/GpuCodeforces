@@ -49,6 +49,7 @@ export default function Contest() {
   const queryClient = useQueryClient();
   const catalog = useProcessors();
   const [now, setNow] = useState(Date.now());
+  const contestSnapshot = useRef<{ id: string; userId: string | undefined; startedAt: number } | null>(null);
   const runtime = useQuery({ queryKey: ['runtime'], queryFn: ({ signal }) => api.getRuntime(signal), staleTime: 300000 });
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -56,9 +57,17 @@ export default function Contest() {
   }, []);
   const contest = useQuery({
     queryKey: ['contest', id, user?.id],
-    queryFn: ({ signal }) => api.getContest(id, signal),
+    queryFn: async ({ signal }) => {
+      const startedAt = Date.now();
+      const result = await api.getContest(id, signal);
+      contestSnapshot.current = { id, userId: user?.id, startedAt };
+      return result;
+    },
     enabled: Boolean(id) && !isLoading,
-    refetchInterval: query => query.state.data && (phaseOf(query.state.data) !== 'finished' || query.state.data.resultsPending) ? 5000 : false,
+    refetchInterval: query => {
+      const snapshot = contestSnapshot.current;
+      return query.state.data && !query.state.data.resultsPending && snapshot?.id === id && snapshot.userId === user?.id && snapshot.startedAt >= Date.parse(query.state.data.endAt) ? false : 5000;
+    },
   });
   const item = contest.data;
   const phase = item ? phaseOf(item) : 'upcoming';
@@ -110,7 +119,7 @@ export default function Contest() {
 
   return <>
     <PageHeader title={item.title} actions={actions} />
-    {contest.error && <ErrorMessage error={contest.error} />}
+    {contest.error && <div><ErrorMessage error={contest.error} /><button className="text-link" disabled={contest.isFetching} onClick={() => void contest.refetch()}>Повторить загрузку соревнования</button></div>}
     {item.format !== 'duel' && <div className="toolbar small contest-meta">
       <span className="muted">{dateTime(item.startAt)} - {dateTime(item.endAt)} МСК</span>
       <span>{phase === 'finished' ? 'Завершен' : <>{phase === 'upcoming' ? 'До начала' : 'До конца'} <time>{countdown(phase === 'upcoming' ? item.startAt : item.endAt, now)}</time></>}</span>
@@ -119,7 +128,7 @@ export default function Contest() {
     </div>}
     {join.error && <ErrorMessage error={join.error} />}
     {item.format === 'duel' ? <>
-      <DuelBoard contest={item} finished={phase === 'finished'} contestUpdatedAt={contest.dataUpdatedAt} showHeading={false} />
+      <DuelBoard contest={item} finished={phase === 'finished'} contestUpdatedAt={contestSnapshot.current?.id === id && contestSnapshot.current.userId === user?.id ? contestSnapshot.current.startedAt : 0} showHeading={false} />
       {tasks.isPending && <p role="status">Загрузка задачи...</p>}
       {tasks.error && <ErrorMessage error={tasks.error} />}
       {tasks.data?.[0] && <div className="duel-task-link"><Link className="btn primary" to={problemPath(tasks.data[0].id, id)}>{tasks.data[0].title}</Link><span className="small muted">{difficultyLabels[tasks.data[0].difficulty]}</span></div>}

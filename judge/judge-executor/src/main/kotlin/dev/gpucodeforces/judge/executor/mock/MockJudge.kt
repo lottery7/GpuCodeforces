@@ -150,8 +150,8 @@ class MockJudge(
             reporter.finish(
                 result.copy(
                     judgeTimeMs = (System.nanoTime() - started) / 1_000_000,
-                    processor = if (served) ProcessorRun(job.processor, version = TOOLCHAIN, model = modelOf(job.processor), executorId = props.id) else null,
-                    gpu = if (gpu) GpuInfo(props.gpuProfile, name = GPU_NAME, index = 0, executorId = props.id) else null,
+                    processor = if (served) ProcessorRun(job.processor, version = TOOLCHAIN, model = modelOf(job.processor), executorId = props.id, executorVersion = javaClass.`package`?.implementationVersion ?: "dev") else null,
+                    gpu = if (gpu) GpuInfo(props.gpuProfile, name = GPU_NAME, index = 0, executorId = props.id, clocksLocked = false) else null,
                 ),
             )
             log.info("Mock verdict {} for problem {}", result.verdict, job.problem.id)

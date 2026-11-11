@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { api } from '../src/api/client';
+import { api, ApiError } from '../src/api/client';
 import type { AppNotification, Contest, DuelProblem, DuelRequest, Processor, Standing, User } from '../src/api/types';
 import Duels from '../src/pages/Duels';
 import NewDuel from '../src/pages/NewDuel';
@@ -59,6 +59,25 @@ describe('Подбор дуэли', () => {
     expect(screen.getByRole('button', { name: 'Отменить поиск' })).toBeVisible();
   });
 
+  it('не показывает подтвержденный запрос прежнего аккаунта после смены пользователя и отказа GET', async () => {
+    vi.spyOn(api, 'createDuel').mockResolvedValue(queued);
+    vi.mocked(api.getDuel).mockImplementation(async () => {
+      if (session.user?.id !== creator.id) throw new ApiError(403, 'Эта дуэль недоступна новому аккаунту.');
+      return queued;
+    });
+    const cache = open();
+    await userEvent.click(await screen.findByRole('button', { name: 'Найти соперника' }));
+    await screen.findByRole('heading', { name: 'Поиск соперника' });
+    session.user = { ...creator, id: 'another-account', handle: 'another_user' };
+    await act(async () => { await cache.invalidateQueries({ queryKey: ['duel-request'] }); });
+
+    expect(await screen.findByText('Эта дуэль недоступна новому аккаунту.')).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Состояние дуэли' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Поиск соперника' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Отменить поиск' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Повторить' })).toBeVisible();
+  });
+
   it('дожидается каталога и выбирает единственный доступный RTL для новой дуэли', async () => {
     let finish!: (value: Processor[]) => void;
     vi.mocked(api.listProcessors).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
@@ -73,6 +92,27 @@ describe('Подбор дуэли', () => {
     expect(screen.queryByRole('combobox', { name: 'Процессор дуэли' })).not.toBeInTheDocument();
     await userEvent.click(submit);
     expect(create).toHaveBeenCalledWith({ mode: 'random', processor: 'rtl' });
+  });
+
+  it('повторяет загрузку каталога после ошибки и разблокирует создание дуэли', async () => {
+    vi.mocked(api.listProcessors).mockRejectedValueOnce(new Error('Каталог недоступен.')).mockResolvedValue([{ id: 'rtl', title: 'RTL', model: 'Verilator', languages: [{ id: 'systemverilog', title: 'SystemVerilog', extension: '.sv' }], scoreType: 'CYCLES_X_DEPTH_X_TRANSISTORS', emulated: true }]);
+    const create = vi.spyOn(api, 'createDuel').mockResolvedValue({ ...queued, processor: 'rtl' });
+    open();
+    expect(await screen.findByText('Каталог недоступен.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Найти соперника' })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: 'Повторить загрузку процессоров' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Найти соперника' })).toBeEnabled());
+    expect(create).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Найти соперника' }));
+    expect(create).toHaveBeenCalledWith({ mode: 'random', processor: 'rtl' });
+  });
+
+  it('показывает пустой каталог и оставляет отправку недоступной', async () => {
+    vi.mocked(api.listProcessors).mockResolvedValue([]);
+    open();
+    expect(await screen.findByText('Нет доступных процессоров.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Найти соперника' })).toBeDisabled();
+    expect(screen.queryByText('Загрузка процессоров...')).not.toBeInTheDocument();
   });
 
   it('восстанавливает очередь и автоматически открывает подобранную комнату', async () => {
@@ -110,6 +150,39 @@ describe('Подбор дуэли', () => {
     expect(await screen.findByText('Приглашение отменено')).toBeVisible();
     await userEvent.click(screen.getByRole('link', { name: 'Новая дуэль' }));
     expect(await screen.findByRole('button', { name: 'Найти соперника' })).toBeVisible();
+  });
+
+  it('не возвращает старое приглашение после отмены, если уже открыта новая форма', async () => {
+    let finish!: (value: DuelRequest) => void;
+    vi.mocked(api.getDuel).mockResolvedValue(invited);
+    vi.spyOn(api, 'cancelDuel').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const cache = open('/duels/new?request=request');
+    const store = vi.spyOn(cache, 'setQueryData');
+    await userEvent.click(await screen.findByRole('button', { name: 'Отменить приглашение' }));
+    await userEvent.click(screen.getByRole('link', { name: 'Новая дуэль' }));
+    await userEvent.click(screen.getByRole('radio', { name: 'Выбрать соперника' }));
+    await userEvent.type(screen.getByRole('combobox', { name: 'Ник соперника' }), 'another_user');
+    const cancelled = { ...invited, status: 'cancelled' as const };
+    await act(async () => finish(cancelled));
+    expect(screen.getByRole('combobox', { name: 'Ник соперника' })).toHaveValue('another_user');
+    expect(screen.queryByText('Приглашение отменено')).not.toBeInTheDocument();
+    expect(store).toHaveBeenCalledWith(['duel-request', invited.id, creator.id], cancelled);
+  });
+
+  it('сохраняет созданную комнату без перехода, если пользователь ушел в список до ответа', async () => {
+    let finish!: (value: DuelRequest) => void;
+    const create = vi.spyOn(api, 'createDuel').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const cache = open();
+    const store = vi.spyOn(cache, 'setQueryData');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Найти соперника' })).toBeEnabled());
+    await userEvent.click(screen.getByRole('button', { name: 'Найти соперника' }));
+    expect(create).toHaveBeenCalledOnce();
+    await userEvent.click(screen.getByRole('link', { name: 'Мои дуэли' }));
+    expect(await screen.findByRole('heading', { name: 'Дуэли' })).toBeVisible();
+    await act(async () => finish(matched));
+    expect(screen.getByRole('heading', { name: 'Дуэли' })).toBeVisible();
+    expect(screen.queryByText('Комната дуэли')).not.toBeInTheDocument();
+    expect(store).toHaveBeenCalledWith(['duel-request', matched.id, creator.id], matched);
   });
 
   it('оставляет форму доступной после ошибки подбора', async () => {
@@ -276,6 +349,15 @@ describe('Подбор дуэли', () => {
     await userEvent.click(screen.getByRole('link', { name: 'Текущие' }));
     await waitFor(() => expect(list).toHaveBeenLastCalledWith({ processor: 'rtl', phase: 'active', offset: 0, limit: 20 }, expect.any(AbortSignal)));
   });
+
+  it.each(['cancelled', 'declined'] as const)('не показывает будущий срок приглашения как время завершения при %s', async status => {
+    vi.mocked(api.listDuels).mockResolvedValue({ items: [{ ...invited, status, expiresAt: new Date(Date.now() + 86400000).toISOString() }], total: 1 });
+    open('/duels?tab=history');
+    const table = await screen.findByRole('table', { name: 'Мои дуэли' });
+    expect(within(table).getByRole('columnheader', { name: 'Завершена, МСК' })).toBeVisible();
+    expect(table.querySelector('time')).toBeNull();
+    expect(within(table).getByText('-')).toBeVisible();
+  });
 });
 
 describe('Сдача дуэли', () => {
@@ -396,6 +478,21 @@ describe('Уведомления', () => {
     expect(screen.queryByRole('button', { name: 'Принять дуэль' })).not.toBeInTheDocument();
   });
 
+  it.each(['закрытие', 'переход'] as const)('не меняет страницу поздним ответом на приглашение после действия: %s', async action => {
+    let finish!: (value: DuelRequest) => void;
+    vi.spyOn(api, 'listNotifications').mockResolvedValue({ items: [invitation], total: 1, unreadCount: 1 });
+    vi.spyOn(api, 'acceptDuel').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const cache = open('/duels/new');
+    await userEvent.click(await screen.findByRole('button', { name: /Уведомления/ }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Принять дуэль' }));
+    if (action === 'закрытие') await userEvent.click(screen.getByRole('button', { name: 'Закрыть уведомления' }));
+    else await userEvent.click(screen.getByRole('link', { name: 'Мои дуэли' }));
+    await act(async () => finish(matched));
+    expect(screen.queryByText('Комната дуэли')).not.toBeInTheDocument();
+    expect(cache.getQueryData(['duel-request', matched.id, opponent.id])).toEqual(matched);
+    expect(screen.getByRole('heading', { name: action === 'закрытие' ? 'Новая дуэль' : 'Дуэли' })).toBeVisible();
+  });
+
   it('показывает отмененное приглашение и закрывается по Escape с возвратом фокуса', async () => {
     vi.spyOn(api, 'listNotifications').mockResolvedValue({ items: [{ ...invitation, duelStatus: 'cancelled' }], total: 1, unreadCount: 0 });
     open('/empty');
@@ -442,6 +539,6 @@ describe('Режим стенда', () => {
     vi.spyOn(api, 'getRuntime').mockResolvedValue({ executionMode: 'mock', gpuName: null });
     const client = new QueryClient();
     render(<QueryClientProvider client={client}><RuntimeNotice /></QueryClientProvider>);
-    expect(await screen.findByText('Локальный стенд: код не выполняется на GPU, результаты тестовые.')).toBeVisible();
+    expect(await screen.findByText('Локальный стенд: код не выполняется, результаты тестовые.')).toBeVisible();
   });
 });

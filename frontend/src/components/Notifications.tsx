@@ -9,16 +9,22 @@ import { dateTime } from '../utils';
 
 function NotificationItem({ item, close }: { item: AppNotification; close: () => void }) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { user } = useSession();
   const cache = useQueryClient();
+  const mounted = useRef(false);
+  const current = useRef({ key: location.key, userId: user?.id });
+  current.current = { key: location.key, userId: user?.id };
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const invitation = item.type === 'duel_invitation';
   const action = useMutation({
-    mutationFn: (kind: 'accept' | 'decline') => kind === 'accept' ? api.acceptDuel(item.duelRequestId) : api.declineDuel(item.duelRequestId),
-    onSuccess: result => {
-      cache.setQueriesData({ queryKey: ['duel-request', result.id] }, result);
+    mutationFn: (input: { kind: 'accept' | 'decline'; key: string; userId: string | undefined }) => input.kind === 'accept' ? api.acceptDuel(item.duelRequestId) : api.declineDuel(item.duelRequestId),
+    onSuccess: (result, input) => {
+      cache.setQueryData(['duel-request', result.id, input.userId], result);
       void cache.invalidateQueries({ queryKey: ['notifications'] });
       void cache.invalidateQueries({ queryKey: ['current-duel'] });
       void cache.invalidateQueries({ queryKey: ['duels'] });
-      if (result.status === 'matched' && result.contestId && Date.parse(result.expiresAt) > Date.now()) { close(); navigate(`/contest/${encodeURIComponent(result.contestId)}`); }
+      if (mounted.current && current.current.key === input.key && current.current.userId === input.userId && result.status === 'matched' && result.contestId && Date.parse(result.expiresAt) > Date.now()) { close(); navigate(`/contest/${encodeURIComponent(result.contestId)}`); }
     },
   });
   const status = action.data?.status ?? item.duelStatus;
@@ -26,7 +32,7 @@ function NotificationItem({ item, close }: { item: AppNotification; close: () =>
   return <li className={item.readAt ? 'notification-item' : 'notification-item unread'}>
     <p>{item.message}</p><time className="small muted" dateTime={item.createdAt}>{dateTime(item.createdAt)} МСК</time>
     <ErrorMessage error={action.error} />
-    {invitation && status === 'invited' && <div className="notification-actions"><button className="btn primary" disabled={action.isPending} onClick={() => action.mutate('accept')}>Принять дуэль</button><button className="btn secondary" disabled={action.isPending} onClick={() => action.mutate('decline')}>Отклонить</button></div>}
+    {invitation && status === 'invited' && <div className="notification-actions"><button className="btn primary" disabled={action.isPending} onClick={() => action.mutate({ kind: 'accept', key: location.key, userId: user?.id })}>Принять дуэль</button><button className="btn secondary" disabled={action.isPending} onClick={() => action.mutate({ kind: 'decline', key: location.key, userId: user?.id })}>Отклонить</button></div>}
     {status === 'cancelled' && <p className="small muted" role="status">Приглашение отменено.</p>}
     {status === 'declined' && <p className="small muted" role="status">Приглашение отклонено.</p>}
     {status === 'expired' && <p className="small muted" role="status">Срок приглашения истек.</p>}

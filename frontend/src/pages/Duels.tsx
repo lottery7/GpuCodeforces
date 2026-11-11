@@ -33,7 +33,7 @@ export default function Duels() {
           <td>{duel.problemTitle ?? 'Случайная задача'}{duel.difficulty && <div className="subline">{difficultyLabels[duel.difficulty]}</div>}</td>
           <td>{catalog.title(duel.processor)}</td>
           <td>{duel.surrenderedUserId ? 'Завершена сдачей' : duel.status === 'matched' ? history ? 'Завершена' : 'Идет' : ({ queued: 'Поиск', invited: 'Приглашение', declined: 'Отклонено', cancelled: 'Отменено', expired: 'Истек срок' })[duel.status]}</td>
-          <td><time dateTime={duel.expiresAt}>{dateTime(duel.expiresAt)}</time></td>
+          <td>{history && ['cancelled', 'declined'].includes(duel.status) ? '-' : <time dateTime={duel.expiresAt}>{dateTime(duel.expiresAt)}</time>}</td>
           <td><Link className="text-link" to={duel.contestId ? `/contest/${encodeURIComponent(duel.contestId)}` : `/duels/new?request=${encodeURIComponent(duel.id)}`}>{duel.contestId ? 'Открыть дуэль' : duel.mode === 'invite' ? 'Открыть приглашение' : 'Открыть поиск'}</Link></td>
         </tr>)}</tbody>
       </table></div> : <Empty>{history ? 'Завершенных дуэлей пока нет.' : 'Текущих дуэлей нет. Найдите соперника или отправьте приглашение.'}</Empty>)}

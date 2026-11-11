@@ -12,5 +12,5 @@ export function SyntheticResultsNotice({ synthetic }: { synthetic?: boolean }) {
 
 export default function RuntimeNotice() {
   const runtime = useRuntime();
-  return runtime.data?.executionMode === 'mock' ? <div className="notice runtime-notice" role="status">Локальный стенд: код не выполняется на GPU, результаты тестовые.</div> : null;
+  return runtime.data?.executionMode === 'mock' ? <div className="notice runtime-notice" role="status">Локальный стенд: код не выполняется, результаты тестовые.</div> : null;
 }

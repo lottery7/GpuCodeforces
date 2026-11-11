@@ -117,6 +117,22 @@ class ReferenceMeasurements(
     /** Key of the current reference environment of [processor], null while no executor serves it. */
     fun environmentKey(processor: String): String? = monitor.snapshot(processor)?.key
 
+    fun environmentSnapshot(processor: String): ReferenceEnvironmentSnapshot? = monitor.snapshot(processor)
+
+    fun environmentFor(result: JudgeResult, expected: ReferenceEnvironmentSnapshot?, source: String): ReferenceEnvironmentSnapshot? {
+        if (expected?.proves(result, source) == true) return expected
+        val run = result.processor ?: return null
+        if (run.executorId != source) return null
+        return monitor.snapshot(run.id, force = true)?.takeIf { it.accepts(result) }
+    }
+
+    private fun failureEnvironment(result: JudgeResult, expected: ReferenceEnvironmentSnapshot?, source: String): ReferenceEnvironmentSnapshot? {
+        if (result.gpu != null || result.verdict !in COMPILATION_FAILURES) return environmentFor(result, expected, source)
+        if (expected?.provesCompilation(result, source) == true) return expected
+        val processor = result.processor?.id ?: return null
+        return monitor.snapshot(processor, force = true)?.takeIf { it.acceptsCompilation(result, source) }
+    }
+
     /** Model of the real GPU the executors report now. */
     fun environmentName(): String? = monitor.snapshot(Processors.GPU_CUDA)?.model
 
@@ -142,8 +158,9 @@ class ReferenceMeasurements(
         if (!event.submissionId.startsWith(PREFIX)) return false
         val identifier = event.submissionId.removePrefix(PREFIX).substringBeforeLast("-r")
         val id = runCatching { UUID.fromString(identifier) }.getOrNull() ?: return true
-        val processor = jobs.findById(id).orElse(null)?.processor ?: return true
-        val environment = monitor.snapshot(processor, force = event.status == SubmissionStatus.FINISHED)
+        val stored = jobs.findById(id).orElse(null) ?: return true
+        val expected = stored.expectedEnvironment?.let { json.readValue(it, ReferenceEnvironmentSnapshot::class.java) }
+        val environment = event.result?.let { failureEnvironment(it, expected, event.source) }
         transactions.executeWithoutResult {
             val job = jobs.findForUpdate(id) ?: return@executeWithoutResult
             if (event.submissionId != job.submissionId || job.status in TERMINAL) return@executeWithoutResult
@@ -164,12 +181,12 @@ class ReferenceMeasurements(
             val result = event.result
             if (result == null || result.verdict in INFRA_FAILURES) {
                 retry(job, now, result?.message ?: "Нет результата эталонной проверки")
+            } else if (environment == null || environment.key != job.environmentKey || result.processor?.executorId != event.source) {
+                retry(job, now, "Результат пришёл из другого или недоступного окружения проверки")
             } else if (result.verdict != Verdict.ACCEPTED) {
                 fail(job, "${result.verdict}: ${result.message.orEmpty()}\n${result.compileLog.orEmpty()}")
-            } else if (environment == null || environment.key != job.environmentKey || !environment.accepts(result) || result.processor?.executorId != event.source) {
-                retry(job, now, "Результат пришёл из другого или недоступного окружения проверки")
             } else {
-                finish(job, result, now)
+                finish(job, result, now, environment.synthetic)
             }
         }
         return true
@@ -209,6 +226,7 @@ class ReferenceMeasurements(
                 return@execute null
             }
             job.sendAttempts++
+            if (job.expectedEnvironment == null) job.expectedEnvironment = json.writeValueAsString(environment)
             job.leaseUntil = now.plusSeconds(45)
             job.updatedAt = now
             SubmissionRequest(job.submissionId, catalog.spec(version), source, job.processor, job.language)
@@ -235,10 +253,10 @@ class ReferenceMeasurements(
         }
     }
 
-    private fun finish(job: ReferenceJob, result: JudgeResult, now: Instant) {
+    private fun finish(job: ReferenceJob, result: JudgeResult, now: Instant, synthetic: Boolean) {
         val version = catalog.versions(listOf(job.problemVersionId)).getValue(job.problemVersionId)
         try {
-            val capture = captureMeasurement(result, catalog.spec(version), catalog.format(version).aggregation(), properties.synthetic, job.expectedTests)
+            val capture = captureMeasurement(result, catalog.spec(version), catalog.format(version).aggregation(), synthetic, job.expectedTests)
             if (capture.score <= BigDecimal.ZERO) throw InvalidMeasurementException("Эталонный результат должен быть больше нуля")
             job.score = capture.score
             job.scoreType = capture.data.scoreType
@@ -267,6 +285,7 @@ class ReferenceMeasurements(
         job.eventAttempt = 0
         job.eventSeq = 0
         job.expectedTests = null
+        job.expectedEnvironment = null
         job.sendAttempts = 0
         job.leaseUntil = null
         job.score = null
@@ -325,6 +344,7 @@ class ReferenceMeasurements(
         private const val PREFIX = "reference-"
         private val TERMINAL = setOf("ready", "failed")
         private val INFRA_FAILURES = setOf(Verdict.INTERNAL_ERROR, Verdict.CANCELLED)
+        private val COMPILATION_FAILURES = setOf(Verdict.COMPILATION_ERROR, Verdict.POLICY_VIOLATION)
         private val JOB_TIMEOUT = Duration.ofMinutes(30)
         private const val MAX_FAILURES = 3
         private const val MAX_SEND_ATTEMPTS = 12

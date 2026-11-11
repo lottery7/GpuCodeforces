@@ -22,6 +22,9 @@ import dev.gpucodeforces.backend.submission.MeasuredTest
 import dev.gpucodeforces.backend.submission.MeasurementData
 import dev.gpucodeforces.backend.submission.SendOutcome
 import dev.gpucodeforces.backend.submission.SubmissionRepository
+import dev.gpucodeforces.backend.submission.SubmissionService
+import dev.gpucodeforces.backend.submission.Submission as StoredSubmission
+import dev.gpucodeforces.backend.submission.SubmissionStatus as StoredStatus
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.backend.user.UserRepository
 import dev.gpucodeforces.judge.api.ExecutorHeartbeat
@@ -82,6 +85,7 @@ class ReferenceMeasurementsIntegrationTest {
     @Autowired lateinit var transactions: TransactionTemplate
     @Autowired lateinit var json: JsonMapper
     @Autowired lateinit var submissions: SubmissionRepository
+    @Autowired lateinit var submissionService: SubmissionService
     @Autowired lateinit var contests: ContestRepository
     @Autowired lateinit var contestProblems: ContestProblemRepository
     @Autowired lateinit var users: UserRepository
@@ -96,6 +100,7 @@ class ReferenceMeasurementsIntegrationTest {
 
     @BeforeEach
     fun setup() {
+        submissions.deleteAll()
         Files.list(root).use { children -> children.forEach { directory ->
             Files.walk(directory).use { paths -> paths.sorted(Comparator.reverseOrder()).forEach(Files::delete) }
         } }
@@ -190,7 +195,8 @@ class ReferenceMeasurementsIntegrationTest {
                 TestResult(index + 1, "test-${index + 1}", index == 0, Verdict.ACCEPTED, score = Score(time, ScoreType.TIME_MS), wallTimeMs = time, runs = 1)
             },
             score = times.maxOrNull()?.let { Score(it, ScoreType.TIME_MS) }, timingMode = request.problem.timing.effectiveMode,
-            gpu = GpuInfo("rtx3060", device, 0, "reference-executor"), processor = ProcessorRun(GPU, "nvcc test", device, "reference-executor"),
+            gpu = GpuInfo("rtx3060", device, 0, "reference-executor", clocksLocked = false),
+            processor = ProcessorRun(GPU, "nvcc test", device, "reference-executor", executorVersion = "test-version"),
         )
         assertThat(references.apply(JudgeEvent(request.submissionId, 1, 2, SubmissionStatus.FINISHED, Instant.now(), "reference-executor", result = result, jobId = jobId))).isTrue()
     }
@@ -352,6 +358,114 @@ class ReferenceMeasurementsIntegrationTest {
         complete(retry, listOf(1.0, 9.0))
         assertTime(restored.requireReady(version, GPU).baselineScore, 3.0)
         assertThat(jobs.findByProblemVersionIdAndEnvironmentKey(version.id, references.environmentKey(GPU)!!)).hasSize(1)
+    }
+
+    @Test
+    fun `a delayed reference result can complete its original persisted environment after hardware changes`() {
+        val (_, version) = importProblem("optimization")
+        references.refresh()
+        val original = sent.single()
+        val environment = references.environmentKey(GPU)!!
+        val stored = jobs.findByProblemVersionIdAndEnvironmentKey(version.id, environment).single()
+        assertThat(stored.expectedEnvironment).isNotNull()
+        model = "NVIDIA GeForce RTX 4090"
+        references.refresh()
+        complete(original, listOf(1.0, 9.0), device = "NVIDIA GeForce RTX 3060")
+        assertTime(references.viewInEnvironment(version, GPU, environment)!!.baselineScore, 3.0)
+        assertThat(references.view(version, GPU)!!.baselineScore).isNull()
+        val current = sent.last()
+        complete(current, listOf(1.0, 1.0), device = "NVIDIA GeForce RTX 3060")
+        assertThat(references.view(version, GPU)!!.baselineScore).isNull()
+        assertThat(jobs.findByProblemVersionIdAndEnvironmentKey(version.id, references.environmentKey(GPU)!!).single().generation).isEqualTo(1)
+    }
+
+    @Test
+    fun `foreign failed reference results retry instead of failing the captured environment`() {
+        for (verdict in listOf(Verdict.COMPILATION_ERROR, Verdict.WRONG_ANSWER)) {
+            model = "NVIDIA GeForce RTX 3060"
+            references.refresh()
+            val (_, version) = importProblem("optimization")
+            references.refresh()
+            val original = sent.last { it.problem.id == version.problemId }
+            val environment = references.environmentKey(GPU)!!
+            model = "NVIDIA GeForce RTX 4090"
+            references.refresh()
+            complete(original, listOf(1.0), verdict, device = model)
+            val stored = jobs.findByProblemVersionIdAndEnvironmentKey(version.id, environment).single()
+            assertThat(stored.status).isEqualTo("pending")
+            assertThat(stored.generation).isEqualTo(1)
+            assertThat(stored.failures).isEqualTo(1)
+        }
+    }
+
+    @Test
+    fun `a historical compiler failure without GPU telemetry proves its own environment`() {
+        val (_, version) = importProblem("optimization")
+        references.refresh()
+        val original = sent.single()
+        val environment = references.environmentKey(GPU)!!
+        model = "NVIDIA GeForce RTX 4090"
+        references.refresh()
+        val result = JudgeResult(
+            Verdict.COMPILATION_ERROR, compileLog = "private compiler failure",
+            processor = ProcessorRun(GPU, "nvcc test", "NVIDIA GeForce RTX 3060", "reference-executor", "test-version"),
+        )
+        references.apply(JudgeEvent(
+            original.submissionId, 1, 1, SubmissionStatus.FINISHED, Instant.now(), "reference-executor",
+            result = result, jobId = "job-${original.submissionId}",
+        ))
+        assertThat(jobs.findByProblemVersionIdAndEnvironmentKey(version.id, environment).single().status).isEqualTo("failed")
+        assertThat(references.viewInEnvironment(version, GPU, environment)!!.diagnostic).doesNotContain("private compiler failure")
+        assertThat(references.view(version, GPU)!!.status).isEqualTo("running")
+    }
+
+    @Test
+    fun `submission provenance survives a runtime change and previous best uses the actual result cohort`() {
+        val (_, version) = importProblem("optimization")
+        val handle = "cohort_${UUID.randomUUID().toString().take(8)}"
+        val author = users.save(User(handle, "$handle@example.com", "hash"))
+        val environmentA = references.environmentKey(GPU)!!
+        fun accepted(score: Double, device: String, full: Boolean = true) = JudgeResult(
+            Verdict.ACCEPTED, tests = listOf(TestResult(1, "test", false, Verdict.ACCEPTED, score = Score(score, ScoreType.TIME_MS), runs = 1)),
+            score = Score(score, ScoreType.TIME_MS), timingMode = catalog.spec(version).timing.effectiveMode,
+            gpu = GpuInfo("rtx3060", device, 0, "reference-executor", clocksLocked = if (full) false else null),
+            processor = ProcessorRun(GPU, "nvcc test", device, "reference-executor", executorVersion = if (full) "test-version" else null),
+        )
+        fun finish(submission: StoredSubmission, result: JudgeResult) {
+            submissionService.apply(JudgeEvent(
+                submission.judgeSubmissionId, 1, 2, SubmissionStatus.FINISHED, Instant.now(), "reference-executor",
+                result = result, jobId = "job-${submission.judgeSubmissionId}",
+            ))
+        }
+        val first = submissionService.submit(version.problemId, null, GPU, "cuda", source(128), author)
+        finish(first, accepted(100.0, model))
+        val lateA = submissionService.submit(version.problemId, null, GPU, "cuda", source(128), author)
+        assertTime(lateA.previousBestScore, 100.0)
+        val changed = submissionService.submit(version.problemId, null, GPU, "cuda", source(256), author)
+        assertThat(submissions.findById(lateA.id).orElseThrow().expectedEnvironment).isNotNull()
+        model = "NVIDIA GeForce RTX 4090"
+        references.refresh()
+        val environmentB = references.environmentKey(GPU)!!
+        finish(lateA, accepted(50.0, "NVIDIA GeForce RTX 3060"))
+        val late = submissions.findById(lateA.id).orElseThrow()
+        assertThat(late.status).isEqualTo(StoredStatus.ACCEPTED)
+        assertThat(late.benchmarkEnvironmentKey).isEqualTo(environmentA)
+        assertTime(late.previousBestScore, 100.0)
+        finish(changed, accepted(10.0, model))
+        val actualB = submissions.findById(changed.id).orElseThrow()
+        assertThat(actualB.benchmarkEnvironmentKey).isEqualTo(environmentB)
+        assertThat(actualB.previousBestScore).isNull()
+        val legacy = submissionService.submit(version.problemId, null, GPU, "cuda", source(128), author)
+        finish(legacy, accepted(5.0, model, full = false))
+        assertThat(submissions.findById(legacy.id).orElseThrow().status).isEqualTo(StoredStatus.ACCEPTED)
+        val retry = submissionService.submit(version.problemId, null, GPU, "cuda", source(128), author)
+        finish(retry, JudgeResult(Verdict.INTERNAL_ERROR))
+        model = "NVIDIA GeForce RTX 3060"
+        references.refresh()
+        val retried = submissionService.recheck(retry.id.toString(), author)
+        finish(retried, accepted(25.0, model))
+        assertTime(submissions.findById(retry.id).orElseThrow().previousBestScore, 50.0)
+        assertThat(submissions.findById(retry.id).orElseThrow().benchmarkEnvironmentKey).isEqualTo(environmentA)
     }
 
     @Test

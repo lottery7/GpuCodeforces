@@ -76,6 +76,28 @@ class ReferenceEnvironmentTest {
     }
 
     @Test
+    fun `a historical GPU result proves executor version and clock settings while legacy results only match current rules`() {
+        val environment = gpu(listOf(executor()))!!
+        val result = JudgeResult(
+            Verdict.ACCEPTED, gpu = GpuInfo("profile", "GPU A", 0, "executor", clocksLocked = false),
+            processor = ProcessorRun(GPU, "nvcc test", "GPU A", "executor", executorVersion = "v1"),
+        )
+        assertThat(environment.proves(result, "executor")).isTrue()
+        assertThat(environment.proves(result, "another-executor")).isFalse()
+        assertThat(environment.proves(result.copy(processor = result.processor!!.copy(executorVersion = "v2")), "executor")).isFalse()
+        assertThat(environment.proves(result.copy(gpu = result.gpu!!.copy(clocksLocked = true)), "executor")).isFalse()
+        val legacy = result.copy(processor = result.processor!!.copy(executorVersion = null), gpu = result.gpu!!.copy(clocksLocked = null))
+        assertThat(environment.accepts(legacy)).isTrue()
+        assertThat(environment.proves(legacy, "executor")).isFalse()
+        val compilation = result.copy(verdict = Verdict.COMPILATION_ERROR, gpu = null)
+        assertThat(environment.provesCompilation(compilation, "executor")).isTrue()
+        assertThat(environment.provesCompilation(compilation, "another-executor")).isFalse()
+        assertThat(environment.provesCompilation(compilation.copy(processor = result.processor!!.copy(model = "GPU B")), "executor")).isFalse()
+        assertThat(environment.provesCompilation(compilation.copy(processor = legacy.processor), "executor")).isFalse()
+        assertThat(environment.acceptsCompilation(compilation.copy(processor = legacy.processor), "executor")).isTrue()
+    }
+
+    @Test
     fun `mock environments only accept explicit mock results`() {
         val mockProperties = JudgeProperties(executionMode = "mock")
         val mock = "mock (no compiler, no GPU, no emulator)"

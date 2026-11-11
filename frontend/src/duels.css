@@ -27,7 +27,7 @@
 .duel-mode-option { display: flex; align-items: center; gap: 10px; min-height: 58px; padding: 14px; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
 .duel-mode-option:has(input:checked) { border-color: var(--accent-border); background: var(--selection); color: var(--text-strong); }
 .duel-opponent-picker { position: relative; }
-.duel-opponent-results { position: absolute; z-index: 5; top: 100%; right: 0; left: 0; padding: 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--chrome); box-shadow: 0 6px 16px #0004; }
+.duel-opponent-results { position: absolute; z-index: 5; top: 100%; right: 0; left: 0; max-height: min(260px, 40dvh); overflow-y: auto; overscroll-behavior: contain; padding: 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--chrome); box-shadow: 0 6px 16px #0004; }
 .duel-opponent-results ul { margin: 0; padding: 0; list-style: none; }
 .duel-opponent-results [role="option"] { padding: 8px 10px; cursor: pointer; }
 .duel-opponent-results [role="option"]:hover, .duel-opponent-results [aria-selected="true"] { background: var(--selection); color: var(--text-strong); }

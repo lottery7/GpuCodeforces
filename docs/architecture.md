@@ -213,6 +213,7 @@ classDiagram
     UUID surrenderedUserId
     String benchmarkEnvironmentKey
     Instant ratingAppliedAt
+    JSON finalDuelResults
     phaseAt(now) ContestPhase
   }
   class ContestProblem {
@@ -272,6 +273,7 @@ classDiagram
     ScoreType scoreType
     Map metrics
     JSON measurement
+    JSON expectedEnvironment
     Int passedTests
     Int totalTests
     String judgeHash
@@ -298,6 +300,7 @@ classDiagram
     BigDecimal score
     ScoreType scoreType
     JSON measurement
+    JSON expectedEnvironment
     String jobId
   }
   ProblemVersion "1" -- "*" ReferenceJob

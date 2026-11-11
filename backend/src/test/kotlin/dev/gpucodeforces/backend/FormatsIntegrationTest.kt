@@ -145,6 +145,21 @@ class FormatsIntegrationTest {
             .expectBody(Submission::class.java).returnResult().responseBody!!
     }
 
+    private fun optimizationVersion(): ProblemVersion {
+        val template = catalog.currentVersion("vector_add")!!
+        val problemId = "optimization-${UUID.randomUUID()}"
+        problems.save(Problem(problemId, source = "comparison"))
+        val version = versions.save(ProblemVersion(
+            id = UUID.randomUUID(), problemId = problemId, code = "O", title = "Optimization $problemId", difficulty = "easy",
+            tags = emptyList(), authors = emptyList(), draft = false, statementMarkdown = "Ускорьте решение",
+            processors = listOf(GPU), starters = mapOf(GPU to mapOf("cuda" to "void solve() {}")), judgeSpec = template.judgeSpec,
+            contentHash = UUID.randomUUID().toString(), judgeHash = UUID.randomUUID().toString(), revision = null, format = "optimization",
+            formatData = jsonMapper.writeValueAsString(ProblemFormatData(format = "optimization")),
+        ))
+        problems.save(problems.findById(problemId).orElseThrow().apply { currentVersionId = version.id })
+        return version
+    }
+
     @Test
     fun `guess answers are private immutable and concurrent retries share one submission`() {
         val (_, cookie) = register()
@@ -265,18 +280,8 @@ class FormatsIntegrationTest {
     @Test
     fun `optimization baseline and best results stay in the captured cohort after the environment changes`() {
         val (user, cookie) = register()
-        val template = catalog.currentVersion("vector_add")!!
-        val problemId = "optimization-${UUID.randomUUID()}"
-        problems.save(Problem(problemId, source = "comparison"))
-        val version = versions.save(ProblemVersion(
-            id = UUID.randomUUID(), problemId = problemId, code = "O", title = "Optimization $problemId", difficulty = "easy",
-            tags = emptyList(), authors = emptyList(), draft = false, statementMarkdown = "Ускорьте решение",
-            processors = listOf(GPU), starters = mapOf(GPU to mapOf("cuda" to "void solve() {}")), judgeSpec = template.judgeSpec,
-            contentHash = UUID.randomUUID().toString(),
-            judgeHash = UUID.randomUUID().toString(), revision = null, format = "optimization",
-            formatData = jsonMapper.writeValueAsString(ProblemFormatData(format = "optimization")),
-        ))
-        problems.save(problems.findById(problemId).orElseThrow().apply { currentVersionId = version.id })
+        val version = optimizationVersion()
+        val problemId = version.problemId
         val reference = ReferenceMeasurementView(
             processor = GPU, key = "${version.id}:environment-A", status = "ready", scoreType = ScoreType.TIME_MS, baselineScore = BigDecimal("20"),
             firstScore = null, secondScore = null, measuredAt = Instant.now(), synthetic = false,
@@ -313,6 +318,58 @@ class FormatsIntegrationTest {
         assertThat(listed.bestScore!!.value).isEqualByComparingTo("4")
         assertThat(listed.recordScore!!.value).isEqualByComparingTo("4")
         assertThat(listed.bestSubmissionId).isEqualTo(captured.id.toString())
+    }
+
+    @Test
+    fun `finalized optimization cards and submission comparability exclude verdicts after the cutoff`() {
+        val (user, cookie) = register()
+        val (opponent, opponentCookie) = register()
+        val version = optimizationVersion()
+        val now = Instant.now()
+        val cutoff = now.minusSeconds(60)
+        val contest = contests.save(Contest(
+            id = UUID.randomUUID(), title = "Завершенная дуэль", startAt = now.minusSeconds(7200), endAt = now.minusSeconds(3600),
+            processor = GPU, format = "duel", challengerId = UUID.fromString(user.id), opponentId = UUID.fromString(opponent.id),
+            benchmarkEnvironmentKey = "frozen-environment", ratingAppliedAt = cutoff,
+        ))
+        contestProblems.save(ContestProblem(contest.id, version.problemId, 0, version.id))
+        val reference = ReferenceMeasurementView(
+            processor = GPU, key = "${version.id}:frozen-environment", status = "ready", scoreType = ScoreType.TIME_MS,
+            baselineScore = BigDecimal("20"), firstScore = null, secondScore = null, measuredAt = contest.startAt,
+            synthetic = false, diagnostic = null, environmentKey = "frozen-environment",
+        )
+        given(references.viewInEnvironment(version, GPU, "frozen-environment")).willReturn(reference)
+        fun accepted(author: User, score: String, finishedAt: Instant) = submissions.saveAndFlush(StoredSubmission(
+            id = UUID.randomUUID(), userId = UUID.fromString(author.id), problemId = version.problemId, problemVersionId = version.id,
+            contestId = contest.id, code = "void solve() {}", environmentMarkdown = "GPU", judgeHash = version.judgeHash,
+            processor = GPU, language = "cuda", previousBestScore = null, createdAt = contest.startAt.plusSeconds(60),
+        ).apply {
+            status = SubmissionStatus.ACCEPTED
+            this.score = BigDecimal(score)
+            scoreType = ScoreType.TIME_MS
+            benchmarkEnvironmentKey = "frozen-environment"
+            this.finishedAt = finishedAt
+        })
+        val counted = accepted(user, "4", cutoff)
+        val late = accepted(user, "0.1", cutoff.plusSeconds(1))
+        accepted(opponent, "0.01", cutoff.plusSeconds(2))
+
+        val detail = client.get().uri("/problems/${version.problemId}?context=${contest.id}").cookie("session", cookie)
+            .exchange().expectStatus().isOk.expectBody(GetProblem200Response::class.java).returnResult().responseBody!!.processors.single()
+        assertThat(detail.baselineScore!!.value).isEqualByComparingTo("20")
+        assertThat(detail.bestScore!!.value).isEqualByComparingTo("4")
+        assertThat(detail.recordScore!!.value).isEqualByComparingTo("4")
+        assertThat(detail.bestSubmissionId).isEqualTo(counted.id.toString())
+        val listed = client.get().uri("/problems?context=${contest.id}").cookie("session", opponentCookie)
+            .exchange().expectStatus().isOk.expectBody(ListProblems200Response::class.java).returnResult().responseBody!!.items.single().processors.single()
+        assertThat(listed.bestScore).isNull()
+        assertThat(listed.recordScore!!.value).isEqualByComparingTo("4")
+        val lateView = client.get().uri("/submissions/${late.id}").cookie("session", cookie)
+            .exchange().expectStatus().isOk.expectBody(Submission::class.java).returnResult().responseBody!!
+        assertThat(lateView.comparable).isFalse()
+        val countedView = client.get().uri("/submissions/${counted.id}").cookie("session", cookie)
+            .exchange().expectStatus().isOk.expectBody(Submission::class.java).returnResult().responseBody!!
+        assertThat(countedView.comparable).isTrue()
     }
 
     @Test

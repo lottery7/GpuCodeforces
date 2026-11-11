@@ -24,7 +24,7 @@ val apiSchemaMappings = listOf(
     "SubmissionRequest", "SubmissionAccepted", "SubmissionStatus", "ProblemSpec", "Signature", "ParamSpec",
     "ParamRole", "MemorySpace", "DType", "GeneratorSpec", "GeneratorLanguage", "CheckerSpec", "CheckerMode",
     "LimitsSpec", "TimingSpec", "TimingMode", "CompileSpec", "PolicyOverrides", "ExecutorHeartbeat", "GpuSlotStatus",
-    "ProcessorSpec", "RtlSettings", "RtlDataMode", "ProcessorStatus", "ScoreType", "LanguageInfo",
+    "ProcessorSpec", "RtlSettings", "RtlDataMode", "ProcessorStatus", "ScoreType", "LanguageInfo", "ProcessorRun", "GpuInfo",
 ).associateWith { "dev.gpucodeforces.judge.api.$it" } +
     listOf("ExecutorView", "QueueView", "ProcessorView").associateWith { "dev.gpucodeforces.judge.gateway.service.$it" }
 

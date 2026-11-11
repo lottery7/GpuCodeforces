@@ -95,6 +95,7 @@ class SubmissionViews(
             val contest = row.contestId?.let { contests.getValue(it) }
             val duel = contest?.takeIf { it.format == "duel" }
             val comparableEnvironment = duel?.benchmarkEnvironmentKey ?: gpuEnvironmentKey
+            val finishedBefore = duel?.ratingAppliedAt
             // Accepted results are comparable while the context still judges this problem the same way.
             val contextHash = comparableHashes.getOrPut(row.problemId to row.contestId) { contextJudgeHash(row.problemId, row.contestId) }
             SubmissionApiModel(
@@ -113,7 +114,8 @@ class SubmissionViews(
                 // Scores are compared within a processor; on the real GPU also within the current environment.
                 row.status == SubmissionStatus.ACCEPTED && row.score != null && row.judgeHash == contextHash &&
                     (row.processor != Processors.GPU_CUDA || comparableEnvironment != null && row.benchmarkEnvironmentKey == comparableEnvironment) &&
-                    (duel == null || row.processor == duel.processor && !row.createdAt.isBefore(duel.startAt) && row.createdAt.isBefore(duel.endAt)),
+                    (duel == null || row.processor == duel.processor && !row.createdAt.isBefore(duel.startAt) && row.createdAt.isBefore(duel.endAt)) &&
+                    (finishedBefore == null || row.finishedAt == null || !row.finishedAt.isAfter(finishedBefore)),
             ).format(SubmissionApiModel.FormatEnum.fromValue(versions.getValue(row.problemVersionId).format))
         }
     }

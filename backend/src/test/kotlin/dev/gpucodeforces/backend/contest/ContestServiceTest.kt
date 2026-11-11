@@ -12,6 +12,7 @@ import dev.gpucodeforces.backend.submission.ResultScope
 import dev.gpucodeforces.backend.submission.SubmissionStats
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.backend.user.UserRepository
+import dev.gpucodeforces.judge.api.ScoreType
 import java.math.BigDecimal
 import java.time.Instant
 import java.time.ZoneOffset
@@ -26,6 +27,7 @@ import org.mockito.BDDMockito.given
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
+import org.mockito.Mockito.verifyNoInteractions
 import dev.gpucodeforces.backend.api.model.ContestInput as ContestInputApi
 
 class ContestServiceTest {
@@ -362,5 +364,27 @@ class ContestServiceTest {
         given(contestRepository.findAll()).willReturn(listOf(standard, duel))
 
         assertThat(service.list(null, null, mine = false, processor = null, viewer = null)).containsExactly(standard)
+    }
+
+    @Test
+    fun `final duel standings use the saved scores and current users without reading live submissions or catalog`() {
+        val winner = user("renamed")
+        val loser = user("loser")
+        val contest = contestFixture(startAt = Instant.now().minusSeconds(7200), endAt = Instant.now().minusSeconds(3600),
+            format = "duel", processor = "rtl", challengerId = winner.id, opponentId = loser.id)
+        contest.finalDuelResults = listOf(
+            FinalDuelResult(winner.id, FinalDuelScore(BigDecimal("4096"), ScoreType.CYCLES_X_DEPTH_X_TRANSISTORS), 1, 1),
+            FinalDuelResult(loser.id, null, 2, 0),
+        )
+        given(contestRepository.findById(contest.id)).willReturn(Optional.of(contest))
+        given(userRepository.findAllById(listOf(winner.id, loser.id))).willReturn(listOf(loser, winner))
+
+        val rows = service.standings(contest.id.toString())
+
+        assertThat(rows.map { it.user.handle }).containsExactly("renamed", "loser")
+        assertThat(rows.map { it.rank }).containsExactly(1, 2)
+        assertThat(rows.first().bestScore!!.type.value).isEqualTo("CYCLES_X_DEPTH_X_TRANSISTORS")
+        assertThat(rows.first().bestScore!!.value).isEqualByComparingTo("4096")
+        verifyNoInteractions(stats, problemCatalog, references, contestProblemRepository)
     }
 }

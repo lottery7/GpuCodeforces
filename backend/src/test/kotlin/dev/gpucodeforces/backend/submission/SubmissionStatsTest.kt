@@ -13,6 +13,40 @@ class SubmissionStatsTest {
     private val stats = SubmissionStats(repository)
 
     @Test
+    fun `duel pending count uses its exact time window while ordinary contests keep the full count`() {
+        val contest = UUID.randomUUID()
+        val start = Instant.parse("2026-01-01T12:00:00Z")
+        val end = start.plusSeconds(3600)
+        given(repository.countInContestWithStatus(contest, SubmissionStatus.PENDING)).willReturn(9)
+        given(repository.countInContestWithStatusDuring(contest, SubmissionStatus.PENDING, start, end)).willReturn(2)
+
+        assertThat(stats.pendingInContest(contest, start, end)).isEqualTo(2)
+        assertThat(stats.pendingInContest(contest)).isEqualTo(9)
+    }
+
+    @Test
+    fun `finalized duel records ignore later verdicts but retain cutoff equality and legacy results`() {
+        val user = UUID.randomUUID()
+        val legacyUser = UUID.randomUUID()
+        val contest = UUID.randomUUID()
+        val start = Instant.parse("2026-01-01T12:00:00Z")
+        val end = start.plusSeconds(3600)
+        val cutoff = end.plusSeconds(1800)
+        val scope = ResultScope(contest, mapOf("task" to "hash"), "environment", start, end, cutoff)
+        fun accepted(score: String, finishedAt: Instant?, author: UUID = user) = AcceptedSubmission(
+            UUID.randomUUID(), author, "task", contest, "hash", GPU, BigDecimal(score), start.plusSeconds(10), "environment", finishedAt = finishedAt,
+        )
+        val atCutoff = accepted("4", cutoff)
+        val after = accepted("1", cutoff.plusNanos(1))
+        val legacy = accepted("3", null, legacyUser)
+        given(repository.findWithStatus(SubmissionStatus.ACCEPTED, listOf("task"))).willReturn(listOf(after, atCutoff, legacy))
+
+        assertThat(stats.bestScore(user, "task", scope, GPU)).isEqualByComparingTo("4")
+        assertThat(stats.leaders("task", scope, GPU, 20).map { it.submission }).containsExactly(legacy, atCutoff)
+        assertThat(stats.bestScore(user, "task", scope.copy(finishedBefore = null), GPU)).isEqualByComparingTo("1")
+    }
+
+    @Test
     fun `duel record scope preserves its captured environment and deadline after the platform profile changes`() {
         val user = UUID.randomUUID()
         val contest = UUID.randomUUID()

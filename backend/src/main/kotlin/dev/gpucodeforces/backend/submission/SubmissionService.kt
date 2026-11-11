@@ -1,6 +1,7 @@
 package dev.gpucodeforces.backend.submission
 
 import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
+import dev.gpucodeforces.backend.benchmark.ReferenceEnvironmentSnapshot
 import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.common.ForbiddenException
 import dev.gpucodeforces.backend.common.NotFoundApiException
@@ -8,6 +9,7 @@ import dev.gpucodeforces.backend.common.ServiceUnavailableException
 import dev.gpucodeforces.backend.common.toUuidOrNotFound
 import dev.gpucodeforces.backend.contest.ContestPhase
 import dev.gpucodeforces.backend.contest.ContestService
+import dev.gpucodeforces.backend.contest.ContestRepository
 import dev.gpucodeforces.backend.problem.ProblemCatalog
 import dev.gpucodeforces.backend.problem.ProblemContext
 import dev.gpucodeforces.backend.problem.ProblemEnvironments
@@ -51,11 +53,13 @@ class SubmissionService(
     private val transactionTemplate: TransactionTemplate,
     private val jsonMapper: JsonMapper,
     private val references: ReferenceMeasurements,
+    private val contests: ContestRepository,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
     fun submit(problemId: String, contestId: String?, processor: String, language: String, code: String, author: User): Submission {
-        val problem = problemService.problem(problemId, submissionContext(contestId, author), author)
+        val submittedAt = Instant.now()
+        val problem = problemService.problem(problemId, submissionContext(contestId, author, submittedAt), author)
         if (problem.version.format == ProblemFormatData.GUESS) throw BadRequestException("Выберите более быстрый код вместо отправки решения")
         problemService.requireTarget(problem, processor, language)
         validateSource(code)
@@ -65,11 +69,17 @@ class SubmissionService(
         val version = problem.version
         val contest = (problem.context as? ProblemContext.InContest)?.contest
         val duel = contest?.takeIf { it.format == "duel" }
+        val previousEnvironment = duel?.benchmarkEnvironmentKey ?: benchmarkEnvironmentKey(processor)
         val scope = ResultScope(
             contest?.id, mapOf(version.problemId to version.judgeHash),
-            duel?.benchmarkEnvironmentKey ?: benchmarkEnvironmentKey(processor), duel?.startAt, duel?.endAt,
+            previousEnvironment, duel?.startAt, duel?.endAt?.takeIf { it.isBefore(submittedAt) } ?: submittedAt,
         )
         val submission = transactionTemplate.execute {
+            if (duel != null) {
+                val current = contests.findForUpdate(duel.id) ?: throw NotFoundApiException("Дуэль не найдена")
+                if (current.ratingAppliedAt != null || current.finalDuelResults != null) throw BadRequestException("Результат дуэли уже зафиксирован; отправьте решение в практику")
+                if (current.phaseAt(submittedAt) != ContestPhase.LIVE) throw BadRequestException("Решение пришло вне времени дуэли; отправьте его в практику")
+            }
             submissionRepository.save(
                 Submission(
                     id = UUID.randomUUID(),
@@ -85,8 +95,8 @@ class SubmissionService(
                     processor = processor,
                     language = language,
                     previousBestScore = submissionStats.bestScore(author.id, version.problemId, scope, processor),
-
-                ),
+                    createdAt = submittedAt,
+                ).apply { benchmarkEnvironmentKey = previousEnvironment?.takeUnless { it == "unavailable" } },
             )
         }!!
         withSubmission(submission.id) {
@@ -110,6 +120,12 @@ class SubmissionService(
             if (submission.status != SubmissionStatus.SYSTEM_ERROR && submission.status != SubmissionStatus.MEASUREMENT_ERROR) {
                 throw BadRequestException("Повторная проверка доступна только после сбоя проверки")
             }
+            submission.contestId?.let { id ->
+                val contest = contests.findForUpdate(id) ?: throw NotFoundApiException("Контест не найден")
+                if (contest.format == "duel" && (contest.ratingAppliedAt != null || contest.finalDuelResults != null)) {
+                    throw BadRequestException("Результат дуэли уже зафиксирован; отправьте решение в практику")
+                }
+            }
             submission.recheckCount++
             submission.status = SubmissionStatus.QUEUED
             submission.score = null
@@ -117,6 +133,8 @@ class SubmissionService(
             submission.metrics = emptyMap()
             submission.measurement = null
             submission.benchmarkEnvironmentKey = null
+            submission.expectedEnvironment = null
+            submission.previousBestScore = null
             submission.passedTests = 0
             submission.totalTests = null
             submission.diagnostic = ""
@@ -181,10 +199,11 @@ class SubmissionService(
             submission.jobId != null && submission.jobId != event.jobId ->
                 return log.warn("Ignoring {} of job {}: the gateway accepted this submission as job {}", event.status, event.jobId, submission.jobId)
         }
+        val duel = if (event.status == JudgeStatus.FINISHED) submission.contestId?.let { contests.findForUpdate(it) }?.takeIf { it.format == "duel" } else null
         submission.jobId = event.jobId
         submission.updatedAt = Instant.now()
         if (event.status == JudgeStatus.FINISHED) {
-            finish(submission, event)
+            finish(submission, event, duel != null)
         } else if (compareValues(event.attempt, submission.eventAttempt).let { it > 0 || it == 0 && event.seq > submission.eventSeq }) {
             if (event.attempt > submission.eventAttempt && submission.eventAttempt > 0) {
                 log.warn("The judge restarted the job: attempt {} after {} (executor crash or retry)", event.attempt, submission.eventAttempt)
@@ -211,7 +230,7 @@ class SubmissionService(
         }
     }
 
-    private fun finish(submission: Submission, event: JudgeEvent) {
+    private fun finish(submission: Submission, event: JudgeEvent, duel: Boolean) {
         val result = event.result ?: error("FINISHED event ${event.jobId}/${event.attempt}/${event.seq} has no result")
         submission.status = result.verdict.toStatus()
         submission.passedTests = result.tests.count { it.verdict == Verdict.ACCEPTED }
@@ -225,12 +244,12 @@ class SubmissionService(
             submission.score = BigDecimal.valueOf(score.value)
             submission.scoreType = score.type
             submission.metrics = result.metrics
-            measure(submission, result, expectedTestCount)
+            measure(submission, result, expectedTestCount, event.source)
             // An accepted submission ran every test of its processor: the problem page can list them now.
             if (submission.status == SubmissionStatus.ACCEPTED) environments.recordTests(submission.judgeHash, submission.processor, result.tests)
         }
         if (submission.status != SubmissionStatus.MEASUREMENT_ERROR) submission.diagnostic = result.diagnostic()
-        submission.finishedAt = event.timestamp
+        submission.finishedAt = if (duel) Instant.now() else event.timestamp
         val format = "Verdict {} -> {}: passed {}/{} failedTest={} score={}, judged in {} ms on {} ({}): {}"
         val args = arrayOf<Any?>(
             result.verdict, submission.status.value, submission.passedTests, submission.totalTests ?: "?", result.failedTest,
@@ -245,15 +264,30 @@ class SubmissionService(
      * The score under the problem's aggregation: the judge's maximum over the measured tests, or their geometric mean
      * for the formats (docs/backend/formats.md). On the real GPU records count within the current reference environment.
      */
-    private fun measure(submission: Submission, result: JudgeResult, expectedTestCount: Int?) {
+    private fun measure(submission: Submission, result: JudgeResult, expectedTestCount: Int?, source: String) {
         val version = problemCatalog.versions(listOf(submission.problemVersionId)).getValue(submission.problemVersionId)
         try {
+            val run = result.processor ?: throw InvalidMeasurementException("Результат не содержит процессор")
+            if (run.id != submission.processor) throw InvalidMeasurementException("Результат пришёл от другого процессора")
+            val expected = submission.expectedEnvironment?.let { jsonMapper.readValue(it, ReferenceEnvironmentSnapshot::class.java) }
+            val environment = references.environmentFor(result, expected, source)
+            val environmentKey = environment?.key ?: if (expected == null && run.executorId == source) references.environmentKeyFor(result) else null
+            if (submission.processor == Processors.GPU_CUDA && environmentKey == null) {
+                throw InvalidMeasurementException("Не удалось подтвердить окружение замера. Повторите проверку")
+            }
             val measurement = captureMeasurement(
-                result, problemCatalog.spec(version), problemCatalog.format(version).aggregation(), judgeProperties.synthetic, expectedTestCount,
+                result, problemCatalog.spec(version), problemCatalog.format(version).aggregation(), environment?.synthetic ?: judgeProperties.synthetic, expectedTestCount,
             )
+            if (submission.processor == Processors.GPU_CUDA && submission.benchmarkEnvironmentKey != environmentKey || submission.previousBestScore == null) {
+                val contest = submission.contestId?.let { contestService.get(it.toString()) }
+                val duel = contest?.takeIf { it.format == "duel" }
+                val end = duel?.endAt?.takeIf { it.isBefore(submission.createdAt) } ?: submission.createdAt
+                val scope = ResultScope(submission.contestId, mapOf(version.problemId to version.judgeHash), environmentKey, duel?.startAt, end)
+                submission.previousBestScore = submissionStats.bestScore(submission.userId, version.problemId, scope, submission.processor)
+            }
             submission.score = measurement.score
             submission.measurement = jsonMapper.writeValueAsString(measurement.data)
-            submission.benchmarkEnvironmentKey = references.environmentKeyFor(result)
+            submission.benchmarkEnvironmentKey = environmentKey
         } catch (exception: InvalidMeasurementException) {
             submission.status = SubmissionStatus.MEASUREMENT_ERROR
             submission.score = null
@@ -269,12 +303,21 @@ class SubmissionService(
         if (processor == Processors.GPU_CUDA) references.environmentKey(processor) ?: "unavailable" else null
 
     private fun send(submission: Submission): Submission = withSubmission(submission.id) {
+        val environment = references.environmentSnapshot(submission.processor)
+        val prepared = transactionTemplate.execute {
+            val current = submissionRepository.findForUpdate(submission.id)!!
+            if (current.judgeSubmissionId != submission.judgeSubmissionId || current.status.terminal) return@execute null
+            if (current.expectedEnvironment == null && current.jobId == null && environment != null) {
+                current.expectedEnvironment = jsonMapper.writeValueAsString(environment)
+            }
+            current
+        } ?: return@withSubmission get(submission.id.toString())
         val request = SubmissionRequest(
-            submissionId = submission.judgeSubmissionId,
-            problem = problemCatalog.spec(problemCatalog.versions(listOf(submission.problemVersionId)).getValue(submission.problemVersionId)),
-            source = submission.code,
-            processor = submission.processor,
-            language = submission.language,
+            submissionId = prepared.judgeSubmissionId,
+            problem = problemCatalog.spec(problemCatalog.versions(listOf(prepared.problemVersionId)).getValue(prepared.problemVersionId)),
+            source = prepared.code,
+            processor = prepared.processor,
+            language = prepared.language,
         )
         val outcome = judgeGateway.send(request)
         transactionTemplate.execute {
@@ -305,11 +348,11 @@ class SubmissionService(
         }!!
     }
 
-    fun submissionContext(contestId: String?, author: User): ProblemContext {
+    fun submissionContext(contestId: String?, author: User, submittedAt: Instant = Instant.now()): ProblemContext {
         if (contestId == null) return ProblemContext.Practice
         val context = problemService.context(contestId, author) as ProblemContext.InContest
         val contest = context.contest
-        if (contest.phaseAt(Instant.now()) != ContestPhase.LIVE) throw BadRequestException("Контест не идёт; решение можно отправить в практику")
+        if (contest.phaseAt(submittedAt) != ContestPhase.LIVE) throw BadRequestException("Контест не идёт; решение можно отправить в практику")
         if (!contestService.isRegistered(contest.id, author.id)) throw ForbiddenException("Для отправки нужна регистрация на контест")
         if (contest.format == "duel" && contest.benchmarkEnvironmentKey != null && references.environmentKey(contest.processor) != contest.benchmarkEnvironmentKey) {
             throw ServiceUnavailableException("Окружение проверки этой дуэли сейчас недоступно")

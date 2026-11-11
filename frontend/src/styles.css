@@ -362,6 +362,7 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
 .loading { padding: 24px 0; color: var(--muted); }
 .session-error { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 16px; }
 .global-feedback { position: sticky; z-index: 30; top: 0; background: var(--bg); }
+.global-feedback:has(.runtime-notice):not(:has(.error, .session-error)) { position: static; }
 .global-feedback:empty { display: none; }
 .pagination button { display: inline-flex; align-items: center; justify-content: center; min-width: 32px; min-height: 32px; padding: 4px 9px; border: 1px solid var(--border); border-radius: 3px; background: transparent; color: var(--text); }
 .pagination button:hover { background: var(--chrome); }

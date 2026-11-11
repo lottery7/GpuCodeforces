@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router';
@@ -135,6 +135,49 @@ describe('Личные результаты контеста', () => {
 });
 
 describe('Таблица контеста', () => {
+  it.each(['poll', 'retry'])('получает финальный снимок дуэли после ошибки последнего GET: %s', async recovery => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T10:00:00Z'));
+    try {
+      const room: ContestRecord = { ...contest('live'), format: 'duel', challengerId: participant.id, opponentId: author.id, registered: true, endAt: '2026-01-01T10:00:02Z' };
+      const get = vi.spyOn(api, 'getContest').mockResolvedValueOnce(room).mockRejectedValueOnce(new Error('Не удалось обновить дуэль.')).mockResolvedValue(room);
+      vi.spyOn(api, 'allProblems').mockResolvedValue([problem]);
+      vi.spyOn(api, 'contestStandings').mockResolvedValue([{ rank: 1, user: participant, solved: 1, totalSeconds: 0, times: {}, bestScore: { value: 1, type: 'TIME_MS' } }, { rank: 2, user: author, solved: 0, totalSeconds: 0, times: {} }]);
+      open('/contest/cuda-round');
+      await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+      expect(screen.getByText('Не удалось обновить дуэль.')).toBeVisible();
+      expect(screen.queryByText(/Победитель:/)).not.toBeInTheDocument();
+      const retry = screen.getByRole('button', { name: 'Повторить загрузку соревнования' });
+      if (recovery === 'retry') await act(async () => { fireEvent.click(retry); await vi.advanceTimersByTimeAsync(100); });
+      else await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(screen.getByText(/Победитель:/)).toHaveTextContent(participant.handle);
+      expect(get).toHaveBeenCalledTimes(3);
+      await act(async () => { await vi.advanceTimersByTimeAsync(15000); });
+      expect(get).toHaveBeenCalledTimes(3);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('не считает ответ начатого до таймера запроса финальным снимком', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T10:00:00Z'));
+    try {
+      const room: ContestRecord = { ...contest('live'), format: 'duel', challengerId: participant.id, opponentId: author.id, registered: true, endAt: '2026-01-01T10:00:02Z' };
+      let finish!: (value: ContestRecord) => void;
+      const get = vi.spyOn(api, 'getContest').mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValue(room);
+      vi.spyOn(api, 'allProblems').mockResolvedValue([problem]);
+      vi.spyOn(api, 'contestStandings').mockResolvedValue([{ rank: 1, user: participant, solved: 1, totalSeconds: 0, times: {}, bestScore: { value: 1, type: 'TIME_MS' } }, { rank: 2, user: author, solved: 0, totalSeconds: 0, times: {} }]);
+      open('/contest/cuda-round');
+      await act(async () => { await vi.advanceTimersByTimeAsync(2100); finish(room); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+      expect(screen.queryByText(/Победитель:/)).not.toBeInTheDocument();
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(get).toHaveBeenCalledTimes(2);
+      expect(screen.getByText(/Победитель:/)).toHaveTextContent(participant.handle);
+    } finally { vi.useRealTimers(); }
+  });
+
   it('ранжирует по решенным задачам и времени сдачи без времени GPU', async () => {
     vi.spyOn(api, 'getContest').mockResolvedValue(contest('live'));
     vi.spyOn(api, 'allProblems').mockResolvedValue([problem]);

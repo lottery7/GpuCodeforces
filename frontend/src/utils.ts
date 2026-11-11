@@ -15,6 +15,7 @@ export function canJoinContest(contest: Contest, userId: string | undefined) {
 }
 export const dateTime = (value: string) => new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
 export const userPath = (id: string) => `/profile?user=${encodeURIComponent(id)}`;
+export const shortId = (id: string) => id.length > 12 ? id.slice(0, 8) : id;
 export function queryParams(values: Record<string, string | number | boolean | null | undefined>) {
   const params = new URLSearchParams();
   Object.entries(values).forEach(([key, value]) => { if (value !== undefined && value !== null && value !== '') params.set(key, String(value)); });

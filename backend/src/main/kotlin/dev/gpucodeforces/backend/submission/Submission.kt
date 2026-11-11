@@ -78,7 +78,7 @@ class Submission(
     val language: String,
     /** Best accepted score of the author in the same context and configuration before this submission. */
     @Column(name = "previous_best_score")
-    val previousBestScore: BigDecimal?,
+    var previousBestScore: BigDecimal?,
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: Instant = Instant.now(),
     @Column(name = "guess_choice")
@@ -104,6 +104,10 @@ class Submission(
 
     @Column(name = "benchmark_environment_key")
     var benchmarkEnvironmentKey: String? = null
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "expected_environment")
+    var expectedEnvironment: String? = null
 
     @Column(name = "guess_benchmark_key")
     var guessBenchmarkKey: String? = null
@@ -149,7 +153,7 @@ class Submission(
 
     fun toRow() = SubmissionRow(
         id, userId, problemId, problemVersionId, contestId, status, score, scoreType, judgeHash, processor, language, createdAt,
-        benchmarkEnvironmentKey,
+        benchmarkEnvironmentKey, finishedAt,
     )
 
     companion object {
@@ -171,6 +175,7 @@ class SubmissionRow(
     val language: String,
     val createdAt: Instant,
     val benchmarkEnvironmentKey: String? = null,
+    val finishedAt: Instant? = null,
 )
 
 interface SubmissionRepository : JpaRepository<Submission, UUID> {
@@ -196,7 +201,7 @@ interface SubmissionRepository : JpaRepository<Submission, UUID> {
         """
         SELECT new dev.gpucodeforces.backend.submission.SubmissionRow(
             s.id, s.userId, s.problemId, s.problemVersionId, s.contestId, s.status, s.score, s.scoreType, s.judgeHash, s.processor,
-            s.language, s.createdAt, s.benchmarkEnvironmentKey)
+            s.language, s.createdAt, s.benchmarkEnvironmentKey, s.finishedAt)
         FROM Submission s
         WHERE s.userId = :userId
           AND (:problemId IS NULL OR s.problemId = :problemId)

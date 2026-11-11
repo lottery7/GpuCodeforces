@@ -434,6 +434,28 @@ components:
         healthy: {type: boolean, description: 'Может взять задание (у gpu-cuda - есть исправная GPU)'}
         busy: {type: boolean, description: Все работники процессора заняты}
         capacity: {type: integer, format: int32, description: Сколько заданий процессора executor берёт сразу}
+    ProcessorRun:
+      type: object
+      required: [id, version, model, executorId]
+      properties:
+        id: {type: string}
+        version: {type: string}
+        model: {type: string}
+        executorId: {type: string}
+        executorVersion: {type: string, nullable: true, description: Версия исполнителя из heartbeat на момент проверки.}
+    GpuInfo:
+      type: object
+      required: [profile, name, index, executorId]
+      properties:
+        profile: {type: string}
+        name: {type: string}
+        index: {type: integer, format: int32}
+        executorId: {type: string}
+        maxTemperatureC: {type: integer, format: int32, nullable: true}
+        minSmClockMhz: {type: integer, format: int32, nullable: true}
+        maxSmClockMhz: {type: integer, format: int32, nullable: true}
+        throttled: {type: boolean, nullable: true}
+        clocksLocked: {type: boolean, nullable: true, description: Частоты были закреплены во время замера.}
     GpuSlotStatus:
       type: object
       required: [index, name, healthy, busy, clocksLocked]

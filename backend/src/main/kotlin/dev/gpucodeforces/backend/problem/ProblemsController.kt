@@ -192,6 +192,7 @@ class ProblemsController(
         return ResultScope(
             contest?.id, problems.associate { it.version.problemId to it.version.judgeHash },
             duel?.benchmarkEnvironmentKey ?: gpuEnvironmentKey, duel?.startAt, duel?.endAt,
+            finishedBefore = duel?.ratingAppliedAt,
         )
     }
 

@@ -21,6 +21,7 @@ class AcceptedSubmission(
     val createdAt: Instant,
     val benchmarkEnvironmentKey: String? = null,
     val problemVersionId: UUID? = null,
+    val finishedAt: Instant? = null,
 )
 
 /** Submission header for "last submission" summaries. */
@@ -30,7 +31,7 @@ interface SubmissionStatsRepository : Repository<Submission, UUID> {
     @Query(
         """
         SELECT new dev.gpucodeforces.backend.submission.AcceptedSubmission(
-            s.id, s.userId, s.problemId, s.contestId, s.judgeHash, s.processor, s.score, s.createdAt, s.benchmarkEnvironmentKey, s.problemVersionId)
+            s.id, s.userId, s.problemId, s.contestId, s.judgeHash, s.processor, s.score, s.createdAt, s.benchmarkEnvironmentKey, s.problemVersionId, s.finishedAt)
         FROM Submission s WHERE s.status = :status AND s.problemId IN :problemIds
         """,
     )
@@ -39,7 +40,7 @@ interface SubmissionStatsRepository : Repository<Submission, UUID> {
     @Query(
         """
         SELECT new dev.gpucodeforces.backend.submission.AcceptedSubmission(
-            s.id, s.userId, s.problemId, s.contestId, s.judgeHash, s.processor, s.score, s.createdAt, s.benchmarkEnvironmentKey, s.problemVersionId)
+            s.id, s.userId, s.problemId, s.contestId, s.judgeHash, s.processor, s.score, s.createdAt, s.benchmarkEnvironmentKey, s.problemVersionId, s.finishedAt)
         FROM Submission s WHERE s.status = :status AND s.contestId = :contestId
         """,
     )
@@ -59,6 +60,10 @@ interface SubmissionStatsRepository : Repository<Submission, UUID> {
     @Query("SELECT count(s) FROM Submission s WHERE s.contestId = :contestId AND s.status IN :statuses")
     fun countInContestWithStatus(contestId: UUID, statuses: Collection<SubmissionStatus>): Long
 
+    @Query("SELECT count(s) FROM Submission s WHERE s.contestId = :contestId AND s.status IN :statuses " +
+        "AND s.createdAt >= :startAt AND s.createdAt < :endAt")
+    fun countInContestWithStatusDuring(contestId: UUID, statuses: Collection<SubmissionStatus>, startAt: Instant, endAt: Instant): Long
+
     @Query("SELECT count(DISTINCT s.problemId) FROM Submission s WHERE s.userId = :userId AND s.status = :status")
     fun countProblemsWithStatus(userId: UUID, status: SubmissionStatus): Long
 }
@@ -70,12 +75,14 @@ interface SubmissionStatsRepository : Repository<Submission, UUID> {
 data class ResultScope(
     val contestId: UUID?, val judgeHashes: Map<String, String>, val gpuEnvironmentKey: String? = null,
     val startAt: Instant? = null, val endAt: Instant? = null,
+    val finishedBefore: Instant? = null,
 ) {
     /** On the real GPU a result counts only from the current environment ([gpuEnvironmentKey]); emulators are deterministic. */
     fun counts(submission: AcceptedSubmission, processor: String): Boolean =
         submission.processor == processor && submission.contestId == contestId && judgeHashes[submission.problemId] == submission.judgeHash &&
             (processor != Processors.GPU_CUDA || gpuEnvironmentKey == null || submission.benchmarkEnvironmentKey == gpuEnvironmentKey) &&
-            (startAt == null || !submission.createdAt.isBefore(startAt)) && (endAt == null || submission.createdAt.isBefore(endAt))
+            (startAt == null || !submission.createdAt.isBefore(startAt)) && (endAt == null || submission.createdAt.isBefore(endAt)) &&
+            (finishedBefore == null || submission.finishedAt == null || !submission.finishedAt.isAfter(finishedBefore))
 
 }
 
@@ -150,6 +157,9 @@ class SubmissionStats(private val repository: SubmissionStatsRepository) {
 
     /** Contest submissions still waiting for their verdict. */
     fun pendingInContest(contestId: UUID): Long = repository.countInContestWithStatus(contestId, SubmissionStatus.PENDING)
+
+    fun pendingInContest(contestId: UUID, startAt: Instant, endAt: Instant): Long =
+        repository.countInContestWithStatusDuring(contestId, SubmissionStatus.PENDING, startAt, endAt)
 
     fun solvedProblemCount(userId: UUID): Int = repository.countProblemsWithStatus(userId, SubmissionStatus.ACCEPTED).toInt()
 

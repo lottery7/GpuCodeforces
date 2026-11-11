@@ -154,9 +154,16 @@ class ContestService(
     fun resultsPending(contest: Contest, now: Instant): Boolean =
         contest.format == "duel" && contest.surrenderedUserId == null && contest.phaseAt(now) == ContestPhase.FINISHED &&
             contest.ratingAppliedAt == null && now.isBefore(contest.endAt.plus(RatingFinalizationService.VERDICT_GRACE)) &&
-            submissionStats.pendingInContest(contest.id) > 0
+            submissionStats.pendingInContest(contest.id, contest.startAt, contest.endAt) > 0
 
     private fun duelStandings(contest: Contest): List<GetContestStandings200ResponseInner> {
+        contest.finalDuelResults?.let { results ->
+            val users = userRepository.findAllById(results.map { it.userId }).associateBy { it.id }
+            return results.sortedWith(compareBy<FinalDuelResult> { it.rank }.thenBy { users.getValue(it.userId).handle.lowercase() }).map { result ->
+                GetContestStandings200ResponseInner(result.rank, users.getValue(result.userId).toApiModel(), result.solved, 0, emptyMap())
+                    .bestScore(result.score?.let { scoreApiModel(it.value, it.type) }).surrendered(contest.surrenderedUserId == result.userId)
+            }
+        }
         val problem = problemsOf(contest.id).singleOrNull() ?: throw NotFoundApiException("Общая задача дуэли не найдена")
         val version = problem.problemVersionId?.let { problemCatalog.versions(listOf(it))[it] }
             ?: problemCatalog.currentVersion(problem.id.problemId) ?: throw NotFoundApiException("Версия задачи дуэли не найдена")
@@ -164,6 +171,7 @@ class ContestService(
             ResultScope(
                 contest.id, mapOf(version.problemId to version.judgeHash),
                 contest.benchmarkEnvironmentKey ?: references.environmentKey(contest.processor),
+                finishedBefore = contest.ratingAppliedAt,
             ),
             version.id, contest.processor, contest.startAt, contest.endAt,
         )

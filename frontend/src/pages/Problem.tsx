@@ -10,7 +10,7 @@ import DuelBoard from '../components/DuelBoard';
 import BenchmarkInfo from '../components/BenchmarkInfo';
 import ReferenceStatus from '../components/ReferenceStatus';
 import { readDraft, rememberEditorLogin, writeDraft, type DraftTarget } from '../drafts';
-import { formatLimit, limitLabels, scoreUnits, useProcessors } from '../processors';
+import { formatLimit, scoreUnits, useProcessors } from '../processors';
 import { Empty, ErrorMessage, Markdown, PageHeader, QueryState, ScoreValue, Tabs, UserLink, useFeedbackVisibility } from '../ui';
 import { canJoinContest, contextFromSearch, difficultyLabels, formatLabels, guessLabels, problemPath } from '../utils';
 import { SubmissionList } from './Submissions';
@@ -278,6 +278,7 @@ export default function Problem() {
   const statementRef = useRef<HTMLElement>(null);
   const [now, setNow] = useState(Date.now);
   const previousPhase = useRef<{ context: string; phase: ReturnType<typeof phaseOf> } | null>(null);
+  const contestSnapshot = useRef<{ id: string; userId: string | undefined; startedAt: number } | null>(null);
   const context = contextFromSearch(params);
   function returnToStatement() {
     requestAnimationFrame(() => {
@@ -304,14 +305,21 @@ export default function Problem() {
     queryKey: ['problem', id, context, user?.id],
     queryFn: ({ signal }) => api.getProblem(id, context, signal),
     enabled: Boolean(id) && !isLoading,
-    // reference measurements of a format: refresh while any processor's is still in progress
-    refetchInterval: query => query.state.data?.processors.some(item => ['pending', 'running'].includes(item.referenceMeasurement?.status ?? '')) ? 5000 : false,
+    refetchInterval: query => query.state.data?.format && query.state.data.format !== 'standard' ? 5000 : false,
   });
   const contest = useQuery({
     queryKey: ['contest', context, user?.id],
-    queryFn: ({ signal }) => api.getContest(context, signal),
+    queryFn: async ({ signal }) => {
+      const startedAt = Date.now();
+      const result = await api.getContest(context, signal);
+      contestSnapshot.current = { id: context, userId: user?.id, startedAt };
+      return result;
+    },
     enabled: context !== 'practice' && !isLoading,
-    refetchInterval: q => q.state.data && Date.now() >= Date.parse(q.state.data.endAt) && !q.state.data.resultsPending ? false : 5000,
+    refetchInterval: q => {
+      const snapshot = contestSnapshot.current;
+      return q.state.data && !q.state.data.resultsPending && snapshot?.id === context && snapshot.userId === user?.id && snapshot.startedAt >= Date.parse(q.state.data.endAt) ? false : 5000;
+    },
   });
   const phase = phaseOf(contest.data, now);
   const isGuess = problem.data?.format === 'guess';
@@ -339,16 +347,16 @@ export default function Problem() {
   return <QueryState query={problem}>{problem.data && <>
     <div className="breadcrumbs"><Link to={context === 'practice' ? '/problems' : `/contest/${encodeURIComponent(context)}`}>{context === 'practice' ? 'Практика' : contest.data?.title || 'Контест'}</Link></div>
     <PageHeader title={`${problem.data.code}. ${problem.data.title}`} actions={tab === 'statement' ? <a className="text-link editor-anchor" href="#editor">{isGuess ? 'К вариантам ответа' : 'К редактору'}</a> : undefined} />
-    <div className="problem-meta"><span>{formatLabels[problem.data.format ?? 'standard']}</span><span>{difficultyLabels[problem.data.difficulty]}</span>{!isGuess && <>{detail && <span>{limitLabels[detail.limit.type]}: {formatLimit(detail.limit)} {scoreUnits[detail.limit.type]}</span>}<span>Память: {problem.data.memoryLimitMb} МБ</span></>}</div>
+    <div className="problem-meta"><span>{formatLabels[problem.data.format ?? 'standard']}</span><span>{difficultyLabels[problem.data.difficulty]}</span>{!isGuess && <>{detail && <span>Лимит: {formatLimit(detail.limit)} {scoreUnits[detail.limit.type]}</span>}<span>Память: {problem.data.memoryLimitMb} МБ</span></>}</div>
     {target && <TargetPicker problem={problem.data} target={target} onChange={pickTarget} />}
     <Tabs selected={tab} items={[
       { id: 'statement', label: isGuess ? 'Условие и ответ' : 'Условие и решение', to: problemPath(id, context, undefined, target ?? undefined) },
       { id: 'submissions', label: isGuess ? 'История ответов' : 'Мои посылки', to: problemPath(id, context, 'submissions', target ?? undefined) },
       ...(!isGuess && !isDuel ? [{ id: 'leaders', label: 'Лидеры', to: problemPath(id, context, 'leaders', target ?? undefined) }] : []),
     ]} />
-    {context !== 'practice' && contest.error && <ErrorMessage error={contest.error} />}
+    {context !== 'practice' && contest.error && <div><ErrorMessage error={contest.error} /><button className="text-link" disabled={contest.isFetching} onClick={() => void contest.refetch()}>Повторить загрузку соревнования</button></div>}
     {phase === 'finished' && !isDuel && <p className="notice">Соревнование завершено. Новые решения в практике не изменят его результаты.</p>}
-    {isDuel && contest.data && <DuelBoard contest={contest.data} finished={phase === 'finished'} contestUpdatedAt={contest.dataUpdatedAt} />}
+    {isDuel && contest.data && <DuelBoard contest={contest.data} finished={phase === 'finished'} contestUpdatedAt={contestSnapshot.current?.id === context && contestSnapshot.current.userId === user?.id ? contestSnapshot.current.startedAt : 0} />}
     {!target || !detail || !summary ? <Empty>Задачу пока нельзя сдавать ни на одном процессоре платформы.</Empty> : tab === 'statement' ? <div className={isGuess ? 'guess-workspace' : 'problem-workspace'}>
       <section className="statement statement-pane" id="statement" ref={statementRef} tabIndex={-1} aria-label="Условие задачи"><div className="tool-window-head">Условие</div><div className="statement-body"><Markdown>{problem.data.statementMarkdown}</Markdown>{problem.data.format === 'standard' ? <details className="methodology"><summary>Среда и замер</summary><Markdown>{detail.environmentMarkdown}</Markdown></details> : <BenchmarkInfo benchmark={detail.benchmark} />}</div></section>
       {isGuess ? <GuessPane key={`${user?.id || 'guest'}:${id}:${context}:${problem.data.versionId ?? ''}:${summary.referenceMeasurement?.key ?? ''}`} problem={problem.data} processor={summary} context={context} contest={contest.data} phase={phase} contestLoading={context !== 'practice' && (contest.isPending || Boolean(contest.error))} /> : <EditorPane key={`${user?.id || 'guest'}:${id}:${context}:${target.processor}:${target.language}`} problem={problem.data} detail={detail} summary={summary} target={target} context={context} contest={contest.data} phase={phase} onCloseOutput={returnToStatement} contestLoading={context !== 'practice' && (contest.isPending || Boolean(contest.error))} />}

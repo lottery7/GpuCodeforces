@@ -45,7 +45,7 @@ function open(path = '/problem/vector') {
 }
 
 describe('Эталонные измерения', () => {
-  it('обновляет выполняющийся замер и останавливает опрос при готовности, сохраняя правки', async () => {
+  it('обновляет выполняющийся и готовый замер при смене условий, сохраняя правки', async () => {
     vi.useFakeTimers();
     try {
       const get = vi.spyOn(api, 'getProblem')
@@ -66,7 +66,11 @@ describe('Эталонные измерения', () => {
       expect(screen.queryByText('Исходное решение измеряется')).not.toBeInTheDocument();
       expect(get).toHaveBeenCalledTimes(2);
       await act(async () => { await vi.advanceTimersByTimeAsync(15000); });
-      expect(get).toHaveBeenCalledTimes(2);
+      expect(get).toHaveBeenCalledTimes(5);
+      get.mockResolvedValue(variant(base, { format: 'optimization', versionId: 'updated-version', baselineTimeMs: 6, bestTimeMs: 2, referenceMeasurement: { ...ready, key: 'environment-b' } }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(screen.getByText('3.000x')).toBeVisible();
+      expect(editor).toHaveValue('void solve() { optimized(); }');
     } finally { vi.useRealTimers(); }
   });
 
@@ -104,21 +108,38 @@ describe('Эталонные измерения', () => {
     expect(submit).toHaveBeenCalledWith(problem.id, 'practice', { choice: 'first', benchmarkKey: ready.key });
   });
 
-  it('показывает ошибку замера угадывания без опроса и позволяет ответить после обновления', async () => {
+  it('показывает ошибку замера угадывания и автоматически восстанавливается после обновления', async () => {
     vi.useFakeTimers();
     try {
       const get = vi.spyOn(api, 'getProblem').mockResolvedValue(variant(base, { referenceMeasurement: { ...ready, status: 'failed', diagnostic: 'Замер не завершен.' } }));
-      const cache = open();
+      open();
       await act(async () => { await vi.advanceTimersByTimeAsync(100); });
       expect(screen.getByText('Не удалось измерить варианты кода')).toBeVisible();
       expect(screen.getByText('Замер не завершен.')).toBeVisible();
       expect(screen.getByRole('button', { name: 'Проверить выбор' })).toBeDisabled();
       await act(async () => { await vi.advanceTimersByTimeAsync(15000); });
-      expect(get).toHaveBeenCalledTimes(1);
+      expect(get).toHaveBeenCalledTimes(4);
       get.mockResolvedValue(problem);
-      await act(async () => { await cache.invalidateQueries({ queryKey: ['problem'] }); await vi.advanceTimersByTimeAsync(100); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
       expect(screen.getByRole('radio', { name: 'Код 1 лучше' })).toBeEnabled();
       expect(screen.queryByText('Замер не завершен.')).not.toBeInTheDocument();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('при опросе готового угадывания сохраняет выбор до фактической смены ключа', async () => {
+    vi.useFakeTimers();
+    try {
+      const get = vi.spyOn(api, 'getProblem').mockResolvedValue(problem);
+      open();
+      await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+      fireEvent.click(screen.getByRole('radio', { name: 'Код 2 лучше' }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(screen.getByRole('radio', { name: 'Код 2 лучше' })).toBeChecked();
+      get.mockResolvedValue(variant(base, { referenceMeasurement: { ...ready, key: 'environment-b' } }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+      expect(screen.getByRole('radio', { name: 'Код 2 лучше' })).not.toBeChecked();
+      expect(screen.getByRole('button', { name: 'Проверить выбор' })).toBeDisabled();
+      expect(screen.queryByText('Верно')).not.toBeInTheDocument();
     } finally { vi.useRealTimers(); }
   });
 

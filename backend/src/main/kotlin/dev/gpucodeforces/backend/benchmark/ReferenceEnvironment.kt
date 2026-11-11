@@ -25,14 +25,36 @@ data class ReferenceEnvironmentSnapshot(
     val synthetic: Boolean,
     val toolchain: String,
     val executors: Map<String, Set<Int>>,
+    val executorVersion: String? = null,
+    val clocksLocked: Boolean? = null,
 ) {
     fun accepts(result: JudgeResult): Boolean {
         val run = result.processor ?: return false
         if (run.id != processor || run.version.startsWith("mock ") != synthetic || run.executorId !in executors) return false
         if (processor != Processors.GPU_CUDA) return true
         val info = result.gpu ?: return false
-        return info.throttled != true && run.version == toolchain && info.name.trim() == model && executors[info.executorId]?.contains(info.index) == true
+        return info.throttled != true && run.version == toolchain && info.name.trim() == model &&
+            info.executorId == run.executorId && executors[info.executorId]?.contains(info.index) == true &&
+            (run.executorVersion == null || executorVersion == run.executorVersion) &&
+            (info.clocksLocked == null || clocksLocked == info.clocksLocked)
     }
+
+    fun proves(result: JudgeResult, source: String): Boolean {
+        val run = result.processor ?: return false
+        return run.executorId == source && accepts(result) && executorVersion != null && run.executorVersion == executorVersion &&
+            (processor != Processors.GPU_CUDA || clocksLocked != null && result.gpu?.clocksLocked == clocksLocked)
+    }
+
+    fun acceptsCompilation(result: JudgeResult, source: String): Boolean {
+        val run = result.processor ?: return false
+        return run.id == processor && run.executorId == source && run.executorId in executors &&
+            run.version.startsWith("mock ") == synthetic &&
+            (processor != Processors.GPU_CUDA || run.version == toolchain && run.model.trim() == model) &&
+            (run.executorVersion == null || run.executorVersion == executorVersion)
+    }
+
+    fun provesCompilation(result: JudgeResult, source: String): Boolean =
+        acceptsCompilation(result, source) && executorVersion != null && result.processor?.executorVersion == executorVersion
 }
 
 /** Reference environment of every processor some live executor serves consistently; [gpuName] is the configured GPU. */
@@ -63,6 +85,7 @@ private fun gpuEnvironment(live: List<JudgeExecutorView>, properties: JudgePrope
     return ReferenceEnvironmentSnapshot(
         key, Processors.GPU_CUDA, model, properties.synthetic, toolchain,
         eligible.associate { (view, _) -> view.heartbeat.executorId to view.heartbeat.gpus.filter { it.healthy }.map { it.index }.toSet() },
+        versions.single(), clocks.single(),
     )
 }
 
@@ -76,6 +99,7 @@ private fun emulatorEnvironment(id: String, live: List<JudgeExecutorView>, prope
     return ReferenceEnvironmentSnapshot(
         key("reference-v2", properties.executionMode, id, properties.synthetic.toString()), id, any.model, properties.synthetic,
         toolchains.sorted().joinToString(" | "), eligible.associate { (view, _) -> view.heartbeat.executorId to emptySet() },
+        eligible.map { (view, _) -> view.heartbeat.version }.distinct().singleOrNull(),
     )
 }
 
