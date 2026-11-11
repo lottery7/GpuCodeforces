@@ -98,7 +98,7 @@ class HackService(
             val spec = catalog.spec(catalog.versions(listOf(target.problemVersionId)).getValue(target.problemVersionId))
             if (!spec.allowCustomTests) throw BadRequestException("Автор задачи не включил взломы")
             val errors = SpecValidator.validateCustomTest(spec.signature, test)
-            if (errors.isNotEmpty()) throw BadRequestException(errors.joinToString("; "))
+            if (errors.isNotEmpty()) throw BadRequestException(errors.joinToString("; ", transform = ::customTestError))
             repository.save(Hack(UUID.randomUUID(), contestId, user.id, target.id, target.problemId, canonical, hash))
         }!!
         send(hack)
@@ -202,3 +202,22 @@ class HackService(
         fun isHack(judgeSubmissionId: String): Boolean = judgeSubmissionId.startsWith(JOB_PREFIX)
     }
 }
+
+/**
+ * [SpecValidator] belongs to the judge and words its findings in English; the hack form shows them to a participant.
+ * A finding this does not know is passed as it is.
+ */
+internal fun customTestError(error: String): String = when {
+    error == "invalid scalar names" -> "Скаляры теста не совпадают с сигнатурой задачи"
+    error == "invalid input names" -> "Входные массивы теста не совпадают с сигнатурой задачи"
+    error == "custom test exceeds 8192 input elements" -> "В тесте больше 8192 входных элементов"
+    error == "custom array sizes must be in 1..8192" -> "Размер каждого массива теста должен быть от 1 до 8192"
+    error.startsWith(INVALID_SCALAR) -> "Недопустимое значение скаляра ${error.removePrefix(INVALID_SCALAR)}"
+    error.startsWith(INVALID_SIZE) -> "Размер массива ${error.removePrefix(INVALID_SIZE)} не соответствует скалярам теста"
+    error.startsWith(INVALID_VALUES) -> "Недопустимые значения в массиве ${error.removePrefix(INVALID_VALUES)}"
+    else -> error
+}
+
+private const val INVALID_SCALAR = "invalid scalar "
+private const val INVALID_SIZE = "invalid size of "
+private const val INVALID_VALUES = "invalid values of "
