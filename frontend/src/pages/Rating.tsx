@@ -3,10 +3,9 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router';
 import { api } from '../api/client';
 import { useSession } from '../auth';
-import { Empty, PageHeader, Pagination, QueryState, SearchInput, UserLink } from '../ui';
+import { Empty, PageHeader, Pagination, QueryState, RatingDelta, SearchInput, UserLink } from '../ui';
 
 const limit = 20;
-const signed = (value: number | null) => value === null ? '-' : `${value > 0 ? '+' : ''}${value}`;
 
 export default function Rating() {
   const [params, setParams] = useSearchParams();
@@ -41,7 +40,7 @@ export default function Rating() {
     <QueryState query={rating}>
       {rating.data && <>
         {rating.data.items.length ? <div className="table-wrap"><table className="data-table" aria-label="Рейтинг участников"><thead><tr><th>Место</th><th>Участник</th><th>Рейтинг</th><th>После последнего контеста</th></tr></thead><tbody>{rating.data.items.map(person => <tr key={person.id} className={person.id === user?.id ? 'own-row' : undefined}>
-          <td>{person.rank ?? '-'}</td><td><UserLink user={person} />{person.id === user?.id && <span className="small muted"> вы</span>}</td><td>{person.rating ?? '-'}</td><td>{person.ratingContestId && person.ratingDelta !== null ? <Link to={`/contest/${encodeURIComponent(person.ratingContestId)}?tab=standings`}>{signed(person.ratingDelta)}</Link> : signed(person.ratingDelta)}</td>
+          <td>{person.rank ?? '-'}</td><td><UserLink user={person} />{person.id === user?.id && <span className="small muted"> вы</span>}</td><td>{person.rating ?? '-'}</td><td>{person.ratingContestId && person.ratingDelta !== null ? <Link to={`/contest/${encodeURIComponent(person.ratingContestId)}?tab=standings`}><RatingDelta value={person.ratingDelta} /></Link> : <RatingDelta value={person.ratingDelta} />}</td>
         </tr>)}</tbody></table></div> : <Empty>{q.trim() ? 'Участники не найдены. Измените запрос.' : 'Участников с рейтингом пока нет.'}</Empty>}
         <Pagination total={rating.data.total} offset={offset} limit={limit} onChange={value => { const next = new URLSearchParams(params); value ? next.set('offset', String(value)) : next.delete('offset'); setParams(next); }} />
       </>}

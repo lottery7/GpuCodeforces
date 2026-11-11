@@ -4,8 +4,8 @@ import { Link, useLocation, useParams, useSearchParams } from 'react-router';
 import { api } from '../api/client';
 import type { Problem } from '../api/types';
 import { useSession } from '../auth';
-import { Empty, ErrorMessage, Markdown, PageHeader, Status, Tabs, UserLink } from '../ui';
-import { dateTime, difficultyLabels, phaseOf, problemPath, solveTime, statusLabels } from '../utils';
+import { Difficulty, Empty, ErrorMessage, Markdown, PageHeader, Status, Tabs, UserLink } from '../ui';
+import { dateTime, phaseOf, problemPath, solveTime, statusLabels } from '../utils';
 
 function countdown(value: string, now: number) {
   const seconds = Math.max(0, Math.ceil((Date.parse(value) - now) / 1000));
@@ -119,7 +119,7 @@ export default function Contest() {
         {phase === 'finished' && <p className="notice">Контест завершен. На странице задачи можно перейти к решению в практике.</p>}
         {tasks.data.length ? <div className="table-wrap"><table className="data-table" aria-label="Задачи соревнования"><thead><tr><th>Задача</th><th>Сложность</th>{user && <th>Ваш статус</th>}</tr></thead><tbody>{tasks.data.map((problem, index) => <tr key={problem.id}>
           <td><Link to={problemPath(problem.id, id)}>{taskLabel(index)}. {problem.title}</Link></td>
-          <td>{difficultyLabels[problem.difficulty]}</td>
+          <td><Difficulty difficulty={problem.difficulty} /></td>
           {user && <td><PersonalStatus problem={problem} /></td>}
         </tr>)}</tbody></table></div> : <Empty>В контесте пока нет задач.</Empty>}
       </>}

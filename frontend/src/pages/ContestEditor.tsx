@@ -4,7 +4,7 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import { api } from '../api/client';
 import type { ContestInput, User } from '../api/types';
 import { useSession } from '../auth';
-import { Empty, ErrorMessage, LoginRequired, PageHeader, UserLink, useFeedbackVisibility } from '../ui';
+import { Difficulty, Empty, ErrorMessage, LoginRequired, PageHeader, UserLink, useFeedbackVisibility } from '../ui';
 import { difficultyLabels, phaseOf } from '../utils';
 
 type Values = { title: string; startAt: string; duration: string; authors: User[]; problemIds: string[] };
@@ -189,25 +189,26 @@ export default function ContestEditor() {
           </div>
           <div className="contest-problem-list">
             {visible.map(problem => <div className="problem-choice-row" key={problem.id}>
-              <label className="problem-choice"><input type="checkbox" checked={selectedIds.has(problem.id)} onChange={event => update({ problemIds: event.target.checked ? [...values.problemIds, problem.id] : values.problemIds.filter(problemId => problemId !== problem.id) })} /><span>{problem.code}. {problem.title}<span className="small muted">{difficultyLabels[problem.difficulty]}</span></span></label>
+              <label className="problem-choice"><input type="checkbox" checked={selectedIds.has(problem.id)} onChange={event => update({ problemIds: event.target.checked ? [...values.problemIds, problem.id] : values.problemIds.filter(problemId => problemId !== problem.id) })} /><span className="problem-choice-title">{problem.code}. {problem.title}</span></label>
+              <Difficulty difficulty={problem.difficulty} />
               {selectedOnly && values.problemIds.length > 1 && <div className="choice-actions"><button type="button" className="text-link" aria-label={`Поднять ${problem.title}`} disabled={values.problemIds[0] === problem.id} onClick={() => move(problem.id, -1)}>Выше</button><button type="button" className="text-link" aria-label={`Опустить ${problem.title}`} disabled={values.problemIds.at(-1) === problem.id} onClick={() => move(problem.id, 1)}>Ниже</button></div>}
             </div>)}
             {!visible.length && <p className="muted">Нет задач по этим фильтрам.</p>}
             {missing.map(problemId => <div className="problem-choice-row" key={problemId}><span>{problemId} (задача недоступна)</span><button type="button" className="text-link" onClick={() => update({ problemIds: values.problemIds.filter(value => value !== problemId) })}>Убрать</button></div>)}
           </div>
         </fieldset>
-      </div>
-      <div className="contest-builder-actions">
-        <div className="form-feedback">
-          {formError && <div className="notice error feedback-anchor" role="alert" ref={formErrorRef}>{formError.message}</div>}
-          <ErrorMessage error={save.error} reveal />
-          {backgroundError && <><ErrorMessage error={backgroundError} /><button type="button" className="text-link" onClick={() => {
-            if (contest.error) void contest.refetch();
-            if (pool.error) void pool.refetch();
-            if (id && snapshots.error) void snapshots.refetch();
-          }}>Повторить загрузку</button></>}
+        <div className="contest-builder-actions">
+          <div className="form-feedback">
+            {formError && <div className="notice error feedback-anchor" role="alert" ref={formErrorRef}>{formError.message}</div>}
+            <ErrorMessage error={save.error} reveal />
+            {backgroundError && <><ErrorMessage error={backgroundError} /><button type="button" className="text-link" onClick={() => {
+              if (contest.error) void contest.refetch();
+              if (pool.error) void pool.refetch();
+              if (id && snapshots.error) void snapshots.refetch();
+            }}>Повторить загрузку</button></>}
+          </div>
+          <button className="btn primary" type="submit" disabled={save.isPending || !values.problemIds.length}>{save.isPending ? 'Сохранение...' : id ? 'Сохранить' : 'Создать контест'}</button>
         </div>
-        <button className="btn primary" type="submit" disabled={save.isPending || !values.problemIds.length}>{save.isPending ? 'Сохранение...' : id ? 'Сохранить' : 'Создать контест'}</button>
       </div>
     </form>
   </>;

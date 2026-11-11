@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router';
 import { api } from '../api/client';
 import type { ProblemQuery } from '../api/types';
 import { useSession } from '../auth';
-import { Empty, PageHeader, Pagination, QueryState, SearchInput, TimeValue } from '../ui';
+import { Difficulty, Empty, PageHeader, Pagination, QueryState, SearchInput, TimeValue } from '../ui';
 import { difficultyLabels, problemPath } from '../utils';
 
 const limit = 20;
@@ -65,7 +65,7 @@ export default function Problems() {
             <tbody>{problems.data.items.map(problem => <tr key={problem.id}>
               <td>{problem.solved && <span className="accepted" aria-label="Решена">✓</span>}</td>
               <td><Link className="task-link" to={problemPath(problem.id)}>{problem.code}. {problem.title}</Link><div className="subline">{problem.tags.map((tag, index) => <span key={tag}>{index > 0 && ' / '}<button className="text-link tag" onClick={() => patch({ tag })}>{tag}</button></span>)}</div></td>
-              <td>{difficultyLabels[problem.difficulty]}</td><td>{problem.solvedCount}</td>
+              <td><Difficulty difficulty={problem.difficulty} /></td><td>{problem.solvedCount}</td>
               {personal && <td className="mono">{problem.bestSubmissionId ? <Link to={`/submission/${encodeURIComponent(problem.bestSubmissionId)}`}><TimeValue value={problem.bestTimeMs} /></Link> : <TimeValue value={problem.bestTimeMs} />}</td>}
             </tr>)}</tbody>
           </table>

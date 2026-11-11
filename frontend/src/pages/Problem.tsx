@@ -6,8 +6,8 @@ import type { Contest, ProblemDetail } from '../api/types';
 import { useSession } from '../auth';
 import CodeEditor from '../components/CodeEditor';
 import { readDraft, rememberEditorLogin, writeDraft } from '../drafts';
-import { Empty, ErrorMessage, Markdown, PageHeader, QueryState, Tabs, TimeValue, UserLink, useFeedbackVisibility } from '../ui';
-import { contextFromSearch, difficultyLabels, problemPath } from '../utils';
+import { Difficulty, Empty, ErrorMessage, Markdown, PageHeader, QueryState, Tabs, TimeValue, UserLink, useFeedbackVisibility } from '../ui';
+import { contextFromSearch, problemPath } from '../utils';
 import { SubmissionList } from './Submissions';
 
 function phaseOf(contest: Contest | undefined, now: number) {
@@ -190,7 +190,7 @@ export default function Problem() {
   return <QueryState query={problem}>{problem.data && <>
     <div className="breadcrumbs"><Link to={context === 'practice' ? '/problems' : `/contest/${encodeURIComponent(context)}`}>{context === 'practice' ? 'Практика' : contest.data?.title || 'Контест'}</Link></div>
     <PageHeader title={`${problem.data.code}. ${problem.data.title}`} actions={tab === 'statement' ? <a className="text-link editor-anchor" href="#editor">К редактору</a> : undefined} />
-    <div className="problem-meta"><span>{difficultyLabels[problem.data.difficulty]}</span><span>Время: {problem.data.timeLimitSeconds} с</span><span>Память GPU: {problem.data.memoryLimitMb} MB</span></div>
+    <div className="problem-meta"><span><Difficulty difficulty={problem.data.difficulty} /></span><span>Время: {problem.data.timeLimitSeconds} с</span><span>Память GPU: {problem.data.memoryLimitMb} MB</span></div>
     <Tabs selected={tab} items={[
       { id: 'statement', label: 'Условие и решение', to: problemPath(id, context) },
       { id: 'submissions', label: context === 'practice' ? 'Мои посылки' : 'Мои посылки в контесте', to: problemPath(id, context, 'submissions') },

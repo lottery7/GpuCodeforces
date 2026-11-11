@@ -3,7 +3,7 @@ import { Link, useLocation } from 'react-router';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ApiError } from './api/client';
-import { pendingStatuses, statusLabels, userPath } from './utils';
+import { difficultyLabels, pendingStatuses, statusLabels, userPath } from './utils';
 
 export function PageHeader({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
   useEffect(() => { document.title = 'GPU Forces - ' + title; }, [title]);
@@ -48,6 +48,14 @@ export function Status({ status }: { status: string }) {
   return <span className={`verdict ${tone}`}>{statusLabels[status] || status || '-'}</span>;
 }
 export const UserLink = ({ user }: { user: { id: string; handle: string } }) => <Link to={userPath(user.id)}>{user.handle}</Link>;
+export function Difficulty({ difficulty }: { difficulty: string }) {
+  const cls = difficulty === 'easy' ? 'difficulty-easy' : difficulty === 'medium' ? 'difficulty-medium' : difficulty === 'hard' ? 'difficulty-hard' : '';
+  return <span className={`difficulty ${cls}`}>{difficultyLabels[difficulty] || difficulty}</span>;
+}
+export function RatingDelta({ value }: { value: number | null | undefined }) {
+  const cls = value === null || value === undefined ? 'delta-zero' : value > 0 ? 'delta-up' : value < 0 ? 'delta-down' : 'delta-zero';
+  return <span className={`rating-delta ${cls}`}>{value === null || value === undefined ? '-' : `${value > 0 ? '+' : ''}${value}`}</span>;
+}
 export function Tabs({ items, selected }: { items: { id: string; label: string; to: string }[]; selected: string }) {
   return <nav className="tabs" aria-label="Разделы страницы">{items.map(item => <Link key={item.id} className={`tab${item.id === selected ? ' active' : ''}`} aria-current={item.id === selected ? 'page' : undefined} to={item.to}>{item.label}</Link>)}</nav>;
 }

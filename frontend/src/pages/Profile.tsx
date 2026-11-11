@@ -3,12 +3,11 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router';
 import { api } from '../api/client';
 import { useSession } from '../auth';
-import { Empty, LoginRequired, PageHeader, QueryState } from '../ui';
+import { Empty, LoginRequired, PageHeader, QueryState, RatingDelta } from '../ui';
 import { pendingStatuses } from '../utils';
 import { SubmissionTable } from './Submissions';
 
 const phases = { upcoming: 'До начала', live: 'Идет', finished: 'Завершен' };
-const signed = (value: number | null) => value === null ? '-' : `${value > 0 ? '+' : ''}${value}`;
 
 export default function Profile() {
   const [params] = useSearchParams();
@@ -48,7 +47,7 @@ export default function Profile() {
     <QueryState query={profile}>
       {data && <>
         <div className="metrics">
-          <span>Рейтинг: <strong>{data.user.rating ?? 'Нет рейтинга'}</strong>{data.user.ratingDelta !== null && data.user.ratingContestId && <> <Link className="small" to={`/contest/${encodeURIComponent(data.user.ratingContestId)}?tab=standings`}>{signed(data.user.ratingDelta)} после последнего контеста</Link></>}</span>
+          <span>Рейтинг: <strong>{data.user.rating ?? 'Нет рейтинга'}</strong>{data.user.ratingDelta !== null && data.user.ratingContestId && <> <Link className="small" to={`/contest/${encodeURIComponent(data.user.ratingContestId)}?tab=standings`}><RatingDelta value={data.user.ratingDelta} /> после последнего контеста</Link></>}</span>
           <span>Решено: <Link to={`/problems?user=${encoded}&status=solved`}>{data.solvedCount}</Link></span>
           <span>Контесты: <strong>{data.contests.length}</strong></span>
         </div>
@@ -60,7 +59,7 @@ export default function Profile() {
           <h2>Соревнования</h2>
           {data.contests.length ? <div className="table-wrap"><table className="data-table" aria-label="История соревнований участника"><thead><tr><th>Соревнование</th><th>Статус</th><th>Место</th><th>Изменение рейтинга</th><th>Рейтинг после контеста</th></tr></thead><tbody>{data.contests.map(contest => <tr key={contest.id}>
             <td><Link to={`/contest/${encodeURIComponent(contest.id)}${contest.phase === 'upcoming' ? '' : '?tab=standings'}`}>{contest.title}</Link></td>
-            <td>{phases[contest.phase]}</td><td>{contest.rank ?? '-'}</td><td>{signed(contest.ratingDelta)}</td><td>{contest.ratingAfter ?? '-'}</td>
+            <td>{phases[contest.phase]}</td><td>{contest.rank ?? '-'}</td><td><RatingDelta value={contest.ratingDelta} /></td><td>{contest.ratingAfter ?? '-'}</td>
           </tr>)}</tbody></table></div> : <Empty>Еще не участвовал в соревнованиях.</Empty>}
         </section>
       </>}
