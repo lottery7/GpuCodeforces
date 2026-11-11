@@ -33,7 +33,7 @@ function open(path = '/duels/new') {
 beforeEach(() => {
   session.user = creator;
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() });
-  vi.spyOn(api, 'listDuelProblems').mockResolvedValue([problem]);
+  vi.spyOn(api, 'listDuelProblems').mockResolvedValue({ items: [problem], total: 1 });
   vi.spyOn(api, 'listUsers').mockResolvedValue({ items: [creator, opponent], total: 2 });
   vi.spyOn(api, 'listDuels').mockResolvedValue({ items: [], total: 0 });
   vi.spyOn(api, 'getCurrentDuel').mockResolvedValue(null);
@@ -49,46 +49,49 @@ describe('Подбор дуэли', () => {
     expect(screen.queryByRole('textbox', { name: 'Название' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Начало (МСК)')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Найти задачу для контеста')).not.toBeInTheDocument();
-    expect(screen.queryByRole('combobox', { name: 'Задача дуэли' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('searchbox', { name: 'Найти задачу' })).not.toBeInTheDocument();
+    expect(api.listDuelProblems).not.toHaveBeenCalled();
     expect(screen.getByText('Длительность: от 1 до 3 часов.')).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: 'Найти соперника' }));
     expect(create).toHaveBeenCalledWith({ mode: 'random' });
-    await waitFor(() => expect(screen.getByRole('heading', { name: 'Ищем соперника' })).toBeVisible());
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Поиск соперника' })).toBeVisible());
     expect(screen.getByRole('button', { name: 'Отменить поиск' })).toBeVisible();
   });
 
   it('восстанавливает очередь и автоматически открывает подобранную комнату', async () => {
     const get = vi.spyOn(api, 'getDuel').mockResolvedValue(queued);
     const cache = open('/duels/new?request=request');
-    expect(await screen.findByText('Ищем соперника')).toBeVisible();
+    expect(await screen.findByText('Поиск соперника')).toBeVisible();
     get.mockResolvedValue(matched);
     await act(async () => { await cache.invalidateQueries({ queryKey: ['duel-request'] }); });
     expect(await screen.findByText('Комната дуэли')).toBeVisible();
   });
 
   it('подбирает ник клавиатурой, выбирает задачу и отменяет приглашение', async () => {
-    vi.mocked(api.listDuelProblems).mockResolvedValue([problem, { ...problem, id: 'medium', difficulty: 'medium', title: 'Матрица' }]);
+    vi.mocked(api.listDuelProblems).mockResolvedValue({ items: [problem, { ...problem, id: 'medium', code: '002', difficulty: 'medium', title: 'Матрица' }], total: 2 });
     const create = vi.spyOn(api, 'createDuel').mockResolvedValue(invited);
     vi.spyOn(api, 'getDuel').mockResolvedValue(invited);
     const cancel = vi.spyOn(api, 'cancelDuel').mockResolvedValue({ ...invited, status: 'cancelled' });
     open();
-    await userEvent.click(await screen.findByRole('radio', { name: 'Пригласить по нику' }));
+    await userEvent.click(await screen.findByRole('radio', { name: 'Выбрать соперника' }));
     const input = screen.getByRole('combobox', { name: 'Ник соперника' });
     await userEvent.type(input, 'cuda');
     const options = await screen.findByRole('listbox', { name: 'Участники' });
     expect(within(options).queryByRole('option', { name: creator.handle })).not.toBeInTheDocument();
     await userEvent.keyboard('{ArrowDown}{Enter}');
     expect(input).toHaveValue(opponent.handle);
-    const select = screen.getByRole('combobox', { name: 'Задача дуэли' });
-    await userEvent.selectOptions(select, 'medium');
+    expect(screen.getByRole('radio', { name: 'Случайная задача' })).toBeChecked();
+    await userEvent.click(screen.getByRole('radio', { name: 'Выбрать задачу' }));
+    await userEvent.click(await screen.findByRole('button', { name: '002. Матрица' }));
+    expect(screen.queryByRole('searchbox', { name: 'Найти задачу' })).not.toBeInTheDocument();
     expect(screen.getByText('Длительность: 2 часа.')).toBeVisible();
-    await userEvent.click(screen.getByRole('button', { name: 'Отправить приглашение' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Пригласить на дуэль' }));
     expect(create).toHaveBeenCalledWith({ mode: 'invite', opponentHandle: opponent.handle, problemId: 'medium' });
-    await waitFor(() => expect(screen.getByText('Ожидаем ответ на приглашение')).toBeVisible());
+    await waitFor(() => expect(screen.getByText('Приглашение отправлено')).toBeVisible());
     await userEvent.click(screen.getByRole('button', { name: 'Отменить приглашение' }));
     expect(cancel).toHaveBeenCalledWith(invited.id);
-    expect(await screen.findByText('Поиск или приглашение отменены')).toBeVisible();
-    await userEvent.click(screen.getByRole('link', { name: 'Еще одна дуэль' }));
+    expect(await screen.findByText('Приглашение отменено')).toBeVisible();
+    await userEvent.click(screen.getByRole('link', { name: 'Новая дуэль' }));
     expect(await screen.findByRole('button', { name: 'Найти соперника' })).toBeVisible();
   });
 
@@ -102,7 +105,7 @@ describe('Подбор дуэли', () => {
 
   it('закрывает подсказки по Escape и выбирает участника кликом', async () => {
     open();
-    await userEvent.click(screen.getByRole('radio', { name: 'Пригласить по нику' }));
+    await userEvent.click(screen.getByRole('radio', { name: 'Выбрать соперника' }));
     const input = screen.getByRole('combobox', { name: 'Ник соперника' });
     await userEvent.type(input, 'cuda');
     await screen.findByRole('option', { name: opponent.handle });
@@ -113,6 +116,90 @@ describe('Подбор дуэли', () => {
     await userEvent.click(screen.getByRole('option', { name: opponent.handle }));
     expect(input).toHaveValue(opponent.handle);
     expect(input).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('приглашает выбранного соперника со случайной задачей без загрузки банка', async () => {
+    const create = vi.spyOn(api, 'createDuel').mockResolvedValue(invited);
+    vi.mocked(api.getDuel).mockResolvedValue(invited);
+    open();
+    await userEvent.click(screen.getByRole('radio', { name: 'Выбрать соперника' }));
+    expect(screen.getByRole('group', { name: 'Соперник' })).toBeVisible();
+    expect(screen.getByRole('radio', { name: 'Случайная задача' })).toBeChecked();
+    await userEvent.type(screen.getByRole('combobox', { name: 'Ник соперника' }), opponent.handle);
+    await userEvent.click(screen.getByRole('button', { name: 'Пригласить на дуэль' }));
+    expect(create).toHaveBeenCalledWith({ mode: 'invite', opponentHandle: opponent.handle });
+    expect(api.listDuelProblems).not.toHaveBeenCalled();
+  });
+
+  it('сохраняет выбранную задачу при поиске, фильтрации и смене страницы', async () => {
+    const medium = { ...problem, id: 'medium', code: '002', title: 'Матрица', difficulty: 'medium' as const };
+    const list = vi.mocked(api.listDuelProblems).mockImplementation(async query => ({ items: query?.q || query?.difficulty || query?.offset ? [medium] : [problem, medium], total: 21 }));
+    const create = vi.spyOn(api, 'createDuel').mockResolvedValue(invited);
+    vi.mocked(api.getDuel).mockResolvedValue(invited);
+    open();
+    await userEvent.click(screen.getByRole('radio', { name: 'Выбрать соперника' }));
+    await userEvent.type(screen.getByRole('combobox', { name: 'Ник соперника' }), opponent.handle);
+    await userEvent.click(screen.getByRole('radio', { name: 'Выбрать задачу' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'A. Сумма векторов' }));
+    expect(screen.queryByRole('searchbox', { name: 'Найти задачу' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Изменить задачу' }));
+    const search = screen.getByRole('searchbox', { name: 'Найти задачу' });
+    expect(search).toHaveAttribute('placeholder', 'Название или номер задачи');
+    await userEvent.type(search, 'Матри');
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'Матри', offset: 0, limit: 10 }), expect.any(AbortSignal)));
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Сложность задачи' }), 'medium');
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'Матри', difficulty: 'medium', offset: 0, limit: 10 }), expect.any(AbortSignal)));
+    await userEvent.click(screen.getByRole('button', { name: '2' }));
+    await waitFor(() => expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'Матри', difficulty: 'medium', offset: 10, limit: 10 }), expect.any(AbortSignal)));
+    await userEvent.click(screen.getByRole('button', { name: 'Оставить выбранную задачу' }));
+    expect(screen.getByText('A. Сумма векторов')).toBeVisible();
+    expect(screen.getByText('Длительность: 1 час.')).toBeVisible();
+    expect(screen.queryByRole('searchbox', { name: 'Найти задачу' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Пригласить на дуэль' }));
+    expect(create).toHaveBeenCalledWith({ mode: 'invite', opponentHandle: opponent.handle, problemId: problem.id });
+  });
+
+  it('возврат к случайной задаче убирает прежний выбор из приглашения', async () => {
+    const create = vi.spyOn(api, 'createDuel').mockResolvedValue(invited);
+    vi.mocked(api.getDuel).mockResolvedValue(invited);
+    open();
+    await userEvent.click(screen.getByRole('radio', { name: 'Выбрать соперника' }));
+    await userEvent.type(screen.getByRole('combobox', { name: 'Ник соперника' }), opponent.handle);
+    await userEvent.click(screen.getByRole('radio', { name: 'Выбрать задачу' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'A. Сумма векторов' }));
+    await userEvent.click(screen.getByRole('radio', { name: 'Случайная задача' }));
+    expect(screen.getByText('Длительность: от 1 до 3 часов.')).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: 'Пригласить на дуэль' }));
+    expect(create).toHaveBeenCalledWith({ mode: 'invite', opponentHandle: opponent.handle });
+  });
+
+  it('повторяет поиск после ошибки и не отправляет приглашение со старой выбранной задачей', async () => {
+    const medium = { ...problem, id: 'medium', code: '002', title: 'Матрица', difficulty: 'medium' as const };
+    const list = vi.mocked(api.listDuelProblems).mockImplementation(async query => {
+      if (query?.q) throw new Error('Не удалось найти задачи.');
+      return { items: [problem], total: 1 };
+    });
+    const create = vi.spyOn(api, 'createDuel').mockResolvedValue(invited);
+    open();
+    await userEvent.click(screen.getByRole('radio', { name: 'Выбрать соперника' }));
+    await userEvent.type(screen.getByRole('combobox', { name: 'Ник соперника' }), opponent.handle);
+    await userEvent.click(screen.getByRole('radio', { name: 'Выбрать задачу' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'A. Сумма векторов' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Изменить задачу' }));
+    await userEvent.type(screen.getByRole('searchbox', { name: 'Найти задачу' }), 'Матрица');
+    expect(await screen.findByText('Не удалось найти задачи.')).toBeVisible();
+    expect(screen.getByText('A. Сумма векторов')).toBeVisible();
+    const retries = screen.getAllByRole('button', { name: /Повторить/ });
+    expect(retries).toHaveLength(1);
+    expect(retries[0]).toHaveAccessibleName('Повторить поиск');
+    list.mockResolvedValue({ items: [medium], total: 1 });
+    await userEvent.click(retries[0]);
+    expect(await screen.findByRole('button', { name: '002. Матрица' })).toBeVisible();
+    expect(create).not.toHaveBeenCalled();
+    expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'Матрица', offset: 0, limit: 10 }), expect.any(AbortSignal));
+    await userEvent.click(screen.getByRole('button', { name: '002. Матрица' }));
+    expect(screen.getByText('002. Матрица')).toBeVisible();
+    expect(screen.getByText('Длительность: 2 часа.')).toBeVisible();
   });
 
   it('показывает несколько дуэлей списком без автоматического перехода и не блокирует новую', async () => {
@@ -131,7 +218,7 @@ describe('Подбор дуэли', () => {
     open('/duels/new?request=request');
     expect(await screen.findByText('Дуэль завершена')).toBeVisible();
     expect(screen.queryByText('Комната дуэли')).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('link', { name: 'Еще одна дуэль' }));
+    await userEvent.click(screen.getByRole('link', { name: 'Новая дуэль' }));
     expect(await screen.findByRole('button', { name: 'Найти соперника' })).toBeVisible();
   });
 
@@ -232,7 +319,10 @@ describe('Уведомления', () => {
     vi.spyOn(api, 'getDuel').mockResolvedValue(invited);
     const accept = vi.spyOn(api, 'acceptDuel').mockResolvedValue(matched);
     open('/empty');
-    await userEvent.click(await screen.findByRole('button', { name: 'Уведомления: 1 непрочитанных' }));
+    const toggle = await screen.findByRole('button', { name: 'Уведомления: 1 непрочитанных' });
+    expect(toggle).toHaveAttribute('title', 'Уведомления');
+    expect(toggle).toHaveTextContent(/^1$/);
+    await userEvent.click(toggle);
     const panel = screen.getByRole('dialog', { name: 'Уведомления' });
     await userEvent.click(await within(panel).findByRole('button', { name: 'Принять дуэль' }));
     expect(accept).toHaveBeenCalledWith(invited.id);
@@ -270,7 +360,7 @@ describe('Уведомления', () => {
     const list = vi.spyOn(api, 'listNotifications').mockResolvedValue({ items: [], total: 0, unreadCount: 0 });
     const cache = open('/empty');
     await userEvent.click(await screen.findByRole('button', { name: 'Уведомления' }));
-    expect(await screen.findByText('Новых уведомлений нет.')).toBeVisible();
+    expect(await screen.findByText('Уведомлений пока нет.')).toBeVisible();
     list.mockRejectedValue(new Error('Нет связи.'));
     await act(async () => { await cache.invalidateQueries({ queryKey: ['notifications'] }); });
     expect(await screen.findByText('Нет связи.')).toBeVisible();

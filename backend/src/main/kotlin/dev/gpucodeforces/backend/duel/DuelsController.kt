@@ -6,6 +6,7 @@ import dev.gpucodeforces.backend.api.model.DuelMode
 import dev.gpucodeforces.backend.api.model.DuelStatus
 import dev.gpucodeforces.backend.api.model.DuelPage
 import dev.gpucodeforces.backend.api.model.DuelProblem
+import dev.gpucodeforces.backend.api.model.DuelProblemPage
 import dev.gpucodeforces.backend.auth.CurrentUser
 import dev.gpucodeforces.backend.user.UserRepository
 import dev.gpucodeforces.backend.problem.ProblemCatalog
@@ -20,9 +21,13 @@ import dev.gpucodeforces.backend.api.model.DuelRequest as DuelRequestApi
 
 @RestController
 class DuelsController(private val service: DuelService, private val views: DuelViews) : DuelsApi {
-    override fun listDuelProblems(): ResponseEntity<List<DuelProblem>> = ResponseEntity.ok(service.problems().map {
-        DuelProblem().id(it.problemId).title(it.title).difficulty(DuelProblem.DifficultyEnum.fromValue(it.difficulty))
-    })
+    override fun listDuelProblems(q: String?, difficulty: String?, offset: Int, limit: Int): ResponseEntity<DuelProblemPage> {
+        val page = service.problems(q, difficulty, offset, limit)
+        val items = page.items.map {
+            DuelProblem().id(it.problemId).code(it.code).title(it.title).difficulty(DuelProblem.DifficultyEnum.fromValue(it.difficulty))
+        }
+        return ResponseEntity.ok(DuelProblemPage(items, page.total))
+    }
 
     override fun listDuels(phase: String, offset: Int, limit: Int): ResponseEntity<DuelPage> {
         val page = service.list(phase, offset, limit, CurrentUser.resolve()!!)

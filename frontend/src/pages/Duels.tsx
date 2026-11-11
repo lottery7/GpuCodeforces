@@ -29,7 +29,7 @@ export default function Duels() {
           <td>{duel.problemTitle ?? 'Случайная задача'}{duel.difficulty && <div className="subline">{difficultyLabels[duel.difficulty]}</div>}</td>
           <td>{duel.surrenderedUserId ? 'Завершена сдачей' : duel.status === 'matched' ? history ? 'Завершена' : 'Идет' : ({ queued: 'Поиск', invited: 'Приглашение', declined: 'Отклонено', cancelled: 'Отменено', expired: 'Истек срок' })[duel.status]}</td>
           <td><time dateTime={duel.expiresAt}>{dateTime(duel.expiresAt)}</time></td>
-          <td><Link className="text-link" to={duel.contestId ? `/contest/${encodeURIComponent(duel.contestId)}` : `/duels/new?request=${encodeURIComponent(duel.id)}`}>{duel.contestId ? 'Открыть дуэль' : 'Открыть запрос'}</Link></td>
+          <td><Link className="text-link" to={duel.contestId ? `/contest/${encodeURIComponent(duel.contestId)}` : `/duels/new?request=${encodeURIComponent(duel.id)}`}>{duel.contestId ? 'Открыть дуэль' : duel.mode === 'invite' ? 'Открыть приглашение' : 'Открыть поиск'}</Link></td>
         </tr>)}</tbody>
       </table></div> : <Empty>{history ? 'Завершенных дуэлей пока нет.' : 'Текущих дуэлей нет. Найдите соперника или отправьте приглашение.'}</Empty>)}
       {duels.data && <Pagination total={duels.data.total} offset={offset} limit={limit} onChange={value => setParams({ ...(history ? { tab: 'history' } : {}), ...(value ? { offset: String(value) } : {}) })} />}

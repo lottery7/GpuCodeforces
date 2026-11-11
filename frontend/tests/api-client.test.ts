@@ -48,10 +48,14 @@ describe('API client', () => {
   });
 
   it('loads the duel bank and a paginated archive and submits surrender without a body', async () => {
-    const { requests, fetcher } = capture(request => request.method === 'POST' ? new Response(null, { status: 204 }) : Response.json(new URL(request.url).pathname.endsWith('/problems') ? [] : { items: [], total: 0 }));
+    const { requests, fetcher } = capture(request => request.method === 'POST' ? new Response(null, { status: 204 }) : Response.json({ items: [], total: 0 }));
     const api = createApi('http://localhost/api', fetcher);
-    await api.listDuelProblems();
+    const controller = new AbortController();
+    await api.listDuelProblems({ q: 'вектор + 001', difficulty: 'easy', offset: 10, limit: 10 }, controller.signal);
     expect(new URL(requests[0]!.url).pathname).toBe('/api/duels/problems');
+    expect(Object.fromEntries(new URL(requests[0]!.url).searchParams)).toEqual({ q: 'вектор + 001', difficulty: 'easy', offset: '10', limit: '10' });
+    controller.abort();
+    expect(requests[0]!.signal.aborted).toBe(true);
     await api.listDuels({ phase: 'finished', offset: 20, limit: 20 });
     expect(Object.fromEntries(new URL(requests[1]!.url).searchParams)).toEqual({ phase: 'finished', offset: '20', limit: '20' });
     await expect(api.surrenderContest('room')).resolves.toBeUndefined();

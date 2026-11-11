@@ -372,8 +372,8 @@ describe('Fixture HTTP API', () => {
   it('uses selected task difficulty for one, two or three hour duels', async () => {
     const owner = await login('alex_cuda');
     const opponent = await login('new_cuda');
-    const bank = (await request('/duels/problems', { cookie: owner })).body;
-    expect(bank.every(item => Object.keys(item).sort().join(',') === 'difficulty,id,title')).toBe(true);
+    const bank = (await request('/duels/problems', { cookie: owner })).body.items;
+    expect(bank.every(item => Object.keys(item).sort().join(',') === 'code,difficulty,id,title')).toBe(true);
     expect(bank.some(item => item.id === 'guess-vector')).toBe(false);
     expect((await request('/duels/problems')).status).toBe(401);
     for (const difficulty of ['easy', 'medium', 'hard']) {
@@ -385,6 +385,26 @@ describe('Fixture HTTP API', () => {
       expect(room.problemIds).toEqual([task.id]);
       expect(Date.parse(room.endAt) - Date.parse(room.startAt)).toBe(({ easy: 1, medium: 2, hard: 3 })[difficulty] * 3600000);
     }
+  });
+
+  it('searches published coding duel tasks by number or title with difficulty and pagination', async () => {
+    const owner = await login('alex_cuda');
+    const bank = (await request('/duels/problems?limit=100', { cookie: owner })).body;
+    expect(bank.total).toBe(bank.items.length);
+    expect(bank.items.some(item => ['segmented-reduction', 'guess-vector'].includes(item.id))).toBe(false);
+    expect((await request('/duels/problems?q=009', { cookie: owner })).body).toEqual({ items: [], total: 0 });
+    expect((await request('/duels/problems?q=011', { cookie: owner })).body).toEqual({ items: [], total: 0 });
+    expect((await request('/duels/problems?q=001', { cookie: owner })).body).toMatchObject({ total: 1, items: [{ id: 'vector-addition', code: '001' }] });
+    expect((await request('/duels/problems?q=MATRIX-MULTIPLICATION', { cookie: owner })).body).toMatchObject({ total: 1, items: [{ id: 'matrix-multiplication' }] });
+    const byTitle = await request(`/duels/problems?q=${encodeURIComponent('  УМНОЖЕНИЕ  ')}&difficulty=medium`, { cookie: owner });
+    expect(byTitle.body).toMatchObject({ total: 1, items: [{ id: 'matrix-multiplication', difficulty: 'medium' }] });
+    expect((await request(`/duels/problems?q=${encodeURIComponent('умножение')}&difficulty=easy`, { cookie: owner })).body).toEqual({ items: [], total: 0 });
+    const first = (await request('/duels/problems?limit=2', { cookie: owner })).body;
+    const second = (await request('/duels/problems?limit=2&offset=2', { cookie: owner })).body;
+    expect(first).toEqual({ items: bank.items.slice(0, 2), total: bank.total });
+    expect(second).toEqual({ items: bank.items.slice(2, 4), total: bank.total });
+    expect((await request('/duels/problems?offset=100', { cookie: owner })).body).toEqual({ items: [], total: bank.total });
+    for (const query of ['difficulty=unknown', 'offset=-1', 'limit=0', 'limit=101']) expect((await request(`/duels/problems?${query}`, { cookie: owner })).status).toBe(400);
   });
 
   it('ranks the fastest accepted code regardless of first acceptance and ends immediately on surrender', async () => {

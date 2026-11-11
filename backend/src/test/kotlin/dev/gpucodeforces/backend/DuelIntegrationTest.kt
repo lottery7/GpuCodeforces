@@ -3,7 +3,7 @@ package dev.gpucodeforces.backend
 import dev.gpucodeforces.backend.api.model.Contest
 import dev.gpucodeforces.backend.api.model.DuelPage
 import dev.gpucodeforces.backend.api.model.DuelStatus
-import dev.gpucodeforces.backend.api.model.DuelProblem
+import dev.gpucodeforces.backend.api.model.DuelProblemPage
 import dev.gpucodeforces.backend.api.model.NotificationPage
 import dev.gpucodeforces.backend.api.model.NotificationType
 import dev.gpucodeforces.backend.api.model.RegisterUserRequest
@@ -75,11 +75,11 @@ class DuelIntegrationTest {
         return Player(result.responseBody!!, result.responseCookies.getFirst("session")!!.value)
     }
 
-    private fun task(difficulty: String, problemId: String = "duel-${UUID.randomUUID()}", draft: Boolean = false, format: String = "standard"): ProblemVersion {
+    private fun task(difficulty: String, problemId: String = "duel-${UUID.randomUUID()}", draft: Boolean = false, format: String = "standard", code: String = "D", title: String = "Задача $difficulty"): ProblemVersion {
         val template = catalog.currentVersion("vector_add")!!
         if (!problems.existsById(problemId)) problems.save(Problem(problemId, source = "comparison"))
         val version = versions.save(ProblemVersion(
-            id = UUID.randomUUID(), problemId = problemId, code = "D", title = "Задача $difficulty", difficulty = difficulty, tags = emptyList(),
+            id = UUID.randomUUID(), problemId = problemId, code = code, title = title, difficulty = difficulty, tags = emptyList(),
             authors = emptyList(), draft = draft, statementMarkdown = "Условие $difficulty", starterCode = template.starterCode,
             judgeSpec = template.judgeSpec, contentHash = UUID.randomUUID().toString(), judgeHash = template.judgeHash, revision = null, format = format,
         ))
@@ -161,11 +161,9 @@ class DuelIntegrationTest {
         val recipient = player()
         val third = player()
         val selected = task("medium")
-        val draft = task("easy", draft = true)
-        val guess = task("easy", format = "guess")
-        val eligible = client.get().uri("/duels/problems").cookie("session", inviter.cookie).exchange().expectStatus().isOk
-            .expectBody(Array<DuelProblem>::class.java).returnResult().responseBody!!
-        assertThat(eligible.map { it.id }).contains(selected.problemId).doesNotContain(draft.problemId, guess.problemId)
+        val eligible = client.get().uri("/duels/problems?q=${selected.problemId}").cookie("session", inviter.cookie).exchange().expectStatus().isOk
+            .expectBody(DuelProblemPage::class.java).returnResult().responseBody!!
+        assertThat(eligible.items.map { it.id }).containsExactly(selected.problemId)
         val incoming = create(inviter, "invite", recipient.user.handle.uppercase(), selected.problemId)
         assertThat(create(inviter, "invite", recipient.user.handle, selected.problemId).id).isEqualTo(incoming.id)
         assertThat(notifications(recipient).total).isEqualTo(1)
@@ -193,6 +191,32 @@ class DuelIntegrationTest {
         val note = notifications(recipient).items.first { it.type == NotificationType.DUEL_INVITATION }
         client.put().uri("/notifications/${note.id}/read").cookie("session", third.cookie).exchange().expectStatus().isNotFound
         client.put().uri("/notifications/${note.id}/read").cookie("session", recipient.cookie).exchange().expectStatus().isNoContent
+    }
+
+    @Test
+    fun `problem chooser supports search difficulty and pagination without private or guessing tasks`() {
+        val viewer = player()
+        val token = UUID.randomUUID().toString().take(8)
+        val first = task("easy", "duel-$token-first", code = "${token}A", title = "Kernel $token Alpha")
+        val second = task("easy", "duel-$token-second", code = "${token}B", title = "Kernel $token Beta")
+        task("medium", "duel-$token-medium", code = "${token}C")
+        task("easy", "duel-$token-draft", draft = true, code = "${token}D")
+        task("easy", "duel-$token-guess", format = "guess", code = "${token}E")
+        val page = client.get().uri("/duels/problems?q=$token&difficulty=easy&offset=1&limit=1").cookie("session", viewer.cookie)
+            .exchange().expectStatus().isOk.expectBody(DuelProblemPage::class.java).returnResult().responseBody!!
+        assertThat(page.total).isEqualTo(2)
+        assertThat(page.items.map { it.id }).containsExactly(second.problemId)
+        assertThat(page.items.single().code).isEqualTo(second.code)
+        val byTitle = client.get().uri("/duels/problems?q={query}", "  kErNeL $token AlPhA  ").cookie("session", viewer.cookie)
+            .exchange().expectStatus().isOk.expectBody(DuelProblemPage::class.java).returnResult().responseBody!!
+        assertThat(byTitle.items.map { it.id }).containsExactly(first.problemId)
+        val byCode = client.get().uri("/duels/problems?q=${second.code.uppercase()}").cookie("session", viewer.cookie)
+            .exchange().expectStatus().isOk.expectBody(DuelProblemPage::class.java).returnResult().responseBody!!
+        assertThat(byCode.items.map { it.id }).containsExactly(second.problemId)
+        client.get().uri("/duels/problems?difficulty=unknown").cookie("session", viewer.cookie).exchange().expectStatus().isBadRequest
+        client.get().uri("/duels/problems?offset=-1").cookie("session", viewer.cookie).exchange().expectStatus().isBadRequest
+        client.get().uri("/duels/problems?limit=101").cookie("session", viewer.cookie).exchange().expectStatus().isBadRequest
+        client.get().uri("/duels/problems").exchange().expectStatus().isUnauthorized
     }
 
     @Test

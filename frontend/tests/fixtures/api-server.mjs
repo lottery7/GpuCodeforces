@@ -422,7 +422,13 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
       if (resource === 'duels') {
         expireDuels();
         const user = requireUser();
-        if (method === 'GET' && id === 'problems') return send(response, 200, codingPool().map(problem => ({ id: problem.id, title: problem.title, difficulty: problem.difficulty })));
+        if (method === 'GET' && id === 'problems') {
+          const difficulty = query.get('difficulty');
+          if (difficulty !== null && !['easy', 'medium', 'hard'].includes(difficulty)) throw new ApiError(400, 'Неизвестная сложность.');
+          const q = (query.get('q') ?? '').trim().toLowerCase();
+          const items = codingPool().filter(problem => (!difficulty || problem.difficulty === difficulty) && `${problem.code} ${problem.title} ${problem.id}`.toLowerCase().includes(q)).sort((a, b) => a.code.localeCompare(b.code) || a.title.localeCompare(b.title) || a.id.localeCompare(b.id)).map(problem => ({ id: problem.id, code: problem.code, title: problem.title, difficulty: problem.difficulty }));
+          return send(response, 200, page(items, query));
+        }
         if (method === 'GET' && !id) {
           const phase = query.get('phase') ?? 'active';
           if (!['active', 'finished', 'all'].includes(phase)) throw new ApiError(400, 'Неизвестный список дуэлей.');

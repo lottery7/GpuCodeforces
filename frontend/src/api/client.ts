@@ -1,6 +1,6 @@
 import createClient from 'openapi-fetch';
 import type { paths } from './schema';
-import type { ComparisonInput, ContestInput, ContestQuery, DuelInput, DuelQuery, DuelRequest, GuessInput, LoginInput, NotificationQuery, ProblemQuery, RegisterInput, SubmissionQuery, SubmitInput, UserQuery } from './types';
+import type { ComparisonInput, ContestInput, ContestQuery, DuelInput, DuelProblemQuery, DuelQuery, DuelRequest, GuessInput, LoginInput, NotificationQuery, ProblemQuery, RegisterInput, SubmissionQuery, SubmitInput, UserQuery } from './types';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -28,7 +28,7 @@ export function createApi(baseUrl = '/api', fetcher?: typeof fetch) {
   const http = createClient<paths>({ baseUrl, credentials: 'include', ...(fetcher ? { fetch: fetcher } : {}) });
   return {
     getRuntime: (signal?: AbortSignal) => result(http.GET('/runtime', { signal })),
-    listDuelProblems: (signal?: AbortSignal) => result(http.GET('/duels/problems', { signal })),
+    listDuelProblems: (query: DuelProblemQuery = {}, signal?: AbortSignal) => result(http.GET('/duels/problems', { params: { query }, signal })),
     listDuels: (query: DuelQuery = {}, signal?: AbortSignal) => result(http.GET('/duels', { params: { query }, signal })),
     createDuel: (body: DuelInput) => result(http.POST('/duels', { body })),
     getCurrentDuel: async (signal?: AbortSignal): Promise<DuelRequest | null> => await result(http.GET('/duels/current', { signal })) ?? null,

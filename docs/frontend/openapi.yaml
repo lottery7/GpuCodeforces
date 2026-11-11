@@ -30,12 +30,17 @@ paths:
     get:
       operationId: listDuelProblems
       security: [{session: []}]
+      parameters:
+        - {$ref: '#/components/parameters/Query'}
+        - {name: difficulty, in: query, schema: {type: string, enum: [easy, medium, hard]}}
+        - {$ref: '#/components/parameters/Offset'}
+        - {$ref: '#/components/parameters/Limit'}
       responses:
         '200':
-          description: Опубликованные задачи с отправкой кода для выбора в приглашении.
+          description: Опубликованные задачи с отправкой кода; поиск по названию, id и code без учета регистра, сортировка по code, названию и id.
           content:
             application/json:
-              schema: {type: array, items: {$ref: '#/components/schemas/DuelProblem'}}
+              schema: {$ref: '#/components/schemas/DuelProblemPage'}
         default: {$ref: '#/components/responses/Error'}
   /duels/current:
     get:
@@ -753,11 +758,18 @@ components:
         contestId: {type: string, nullable: true}
     DuelProblem:
       type: object
-      required: [id, title, difficulty]
+      required: [id, code, title, difficulty]
       properties:
         id: {type: string}
+        code: {type: string}
         title: {type: string}
         difficulty: {type: string, enum: [easy, medium, hard]}
+    DuelProblemPage:
+      type: object
+      required: [items, total]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/DuelProblem'}}
+        total: {type: integer}
     DuelPage:
       type: object
       required: [items, total]

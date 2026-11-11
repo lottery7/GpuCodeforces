@@ -27,6 +27,7 @@ import java.time.Instant
 import java.util.UUID
 
 data class DuelList(val items: List<DuelRequest>, val total: Int)
+data class DuelProblemList(val items: List<ProblemVersion>, val total: Int)
 
 @Service
 class DuelService(
@@ -41,7 +42,17 @@ class DuelService(
     private val gpu: GpuProperties,
     private val references: ReferenceMeasurements,
 ) {
-    fun problems(): List<ProblemVersion> = codingPool().sortedWith(compareBy<ProblemVersion> { it.code }.thenBy { it.title }.thenBy { it.problemId })
+    fun problems(query: String?, difficulty: String?, offset: Int, limit: Int): DuelProblemList {
+        if (difficulty != null && difficulty !in setOf("easy", "medium", "hard") || offset < 0 || limit !in 1..100) {
+            throw BadRequestException("Неверные параметры списка задач")
+        }
+        val term = query?.trim().orEmpty()
+        val rows = codingPool().filter { problem ->
+            (difficulty == null || problem.difficulty == difficulty) &&
+                (term.isEmpty() || problem.title.contains(term, true) || problem.problemId.contains(term, true) || problem.code.contains(term, true))
+        }.sortedWith(compareBy<ProblemVersion> { it.code }.thenBy { it.title }.thenBy { it.problemId })
+        return DuelProblemList(rows.drop(offset).take(limit), rows.size)
+    }
 
     @Transactional
     fun create(mode: String, opponentHandle: String?, problemId: String?, creator: User): DuelRequest {

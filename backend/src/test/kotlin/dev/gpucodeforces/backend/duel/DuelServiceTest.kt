@@ -89,8 +89,8 @@ class DuelServiceTest {
         given(notifications.save(any(Notification::class.java))).willAnswer { call -> (call.arguments[0] as Notification).also { messages += it } }
     }
 
-    private fun problem(id: String, difficulty: String = "easy", format: String = "standard", draft: Boolean = false) = ProblemVersion(
-        id = UUID.randomUUID(), problemId = id, code = "1", title = id, difficulty = difficulty, tags = emptyList(),
+    private fun problem(id: String, difficulty: String = "easy", format: String = "standard", draft: Boolean = false, code: String = "1", title: String = id) = ProblemVersion(
+        id = UUID.randomUUID(), problemId = id, code = code, title = title, difficulty = difficulty, tags = emptyList(),
         authors = emptyList(), draft = draft, statementMarkdown = "Условие", starterCode = "void solve() {}",
         judgeSpec = "{}", contentHash = "content", judgeHash = "judge", revision = null, format = format,
     )
@@ -174,11 +174,33 @@ class DuelServiceTest {
     @Test
     fun `only published coding tasks can be chosen and random requests cannot select a task`() {
         available = listOf(problem("draft", draft = true), problem("guess", format = "guess"), problem("coding"))
-        assertThat(service.problems().map { it.problemId }).containsExactly("coding")
+        assertThat(service.problems(null, null, 0, 20).items.map { it.problemId }).containsExactly("coding")
         assertThatThrownBy { service.create("invite", "bob", "draft", people[0]) }.isInstanceOf(BadRequestException::class.java)
         assertThatThrownBy { service.create("invite", "bob", "guess", people[0]) }.isInstanceOf(BadRequestException::class.java)
         assertThatThrownBy { service.create("random", null, "coding", people[0]) }.isInstanceOf(BadRequestException::class.java)
         assertThatThrownBy { service.create("invite", "alice", null, people[0]) }.isInstanceOf(BadRequestException::class.java)
+    }
+
+    @Test
+    fun `problem search filters before pagination and searches title id and code`() {
+        available = listOf(
+            problem("kernel-second", code = "B42", title = "Kernel B"),
+            problem("kernel-draft", draft = true, code = "A", title = "Kernel draft"),
+            problem("kernel-hard", "hard", code = "A", title = "Kernel hard"),
+            problem("kernel-first", code = "A", title = "Kernel A"),
+            problem("kernel-guess", format = "guess", code = "A", title = "Kernel guess"),
+        )
+        val page = service.problems("  kErNeL  ", "easy", 1, 1)
+        assertThat(page.total).isEqualTo(2)
+        assertThat(page.items.map { it.problemId }).containsExactly("kernel-second")
+        assertThat(service.problems("kernel-FIRST", null, 0, 20).items.map { it.problemId }).containsExactly("kernel-first")
+        assertThat(service.problems("Kernel B", null, 0, 20).items.map { it.problemId }).containsExactly("kernel-second")
+        assertThat(service.problems("b42", null, 0, 20).items.map { it.problemId }).containsExactly("kernel-second")
+        assertThat(service.problems("  ", null, 20, 20).items).isEmpty()
+        assertThat(service.problems(null, null, 0, 20).items.map { it.problemId }).containsExactly("kernel-first", "kernel-hard", "kernel-second")
+        assertThatThrownBy { service.problems(null, "unknown", 0, 20) }.isInstanceOf(BadRequestException::class.java)
+        assertThatThrownBy { service.problems(null, null, -1, 20) }.isInstanceOf(BadRequestException::class.java)
+        assertThatThrownBy { service.problems(null, null, 0, 101) }.isInstanceOf(BadRequestException::class.java)
     }
 
     @Test

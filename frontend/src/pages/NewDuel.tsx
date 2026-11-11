@@ -2,9 +2,9 @@ import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { api } from '../api/client';
-import type { DuelInput, DuelRequest, User } from '../api/types';
+import type { DuelInput, DuelProblem, DuelProblemQuery, DuelRequest, User } from '../api/types';
 import { useSession } from '../auth';
-import { ErrorMessage, LoginRequired, PageHeader, QueryState, UserLink } from '../ui';
+import { Empty, ErrorMessage, LoginRequired, PageHeader, Pagination, SearchInput, UserLink } from '../ui';
 import { difficultyLabels } from '../utils';
 
 function duration(difficulty: DuelRequest['difficulty']) {
@@ -31,39 +31,82 @@ function OpponentInput({ value, onChange, disabled }: { value: string; onChange:
     if (event.key === 'Enter' && opened && options.length) { event.preventDefault(); const person = options[active < 0 ? 0 : active]; if (person) select(person); }
   }
   return <div className="duel-opponent-picker" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setOpened(false); }}>
-    <label className="field"><span>Ник соперника</span><input role="combobox" aria-autocomplete="list" aria-expanded={opened && Boolean(value.trim())} aria-controls={id} aria-activedescendant={opened && active >= 0 && options[active] ? `${id}-${active}` : undefined} required autoComplete="off" value={value} disabled={disabled} onChange={event => { onChange(event.target.value); setOpened(true); setActive(-1); }} onFocus={() => setOpened(true)} onKeyDown={key} /></label>
+    <label className="field"><span>Ник соперника</span><input role="combobox" aria-autocomplete="list" aria-expanded={opened && Boolean(value.trim())} aria-controls={id} aria-activedescendant={opened && active >= 0 && options[active] ? `${id}-${active}` : undefined} required autoComplete="off" placeholder="Начните вводить ник" value={value} disabled={disabled} onChange={event => { onChange(event.target.value); setOpened(true); setActive(-1); }} onFocus={() => setOpened(true)} onKeyDown={key} /></label>
     {opened && value.trim() && <div className="duel-opponent-results">
       {!ready || users.isFetching ? <p role="status">Поиск...</p> : users.error ? <ErrorMessage error={users.error} /> : options.length ? <ul id={id} role="listbox" aria-label="Участники">{options.map((person, index) => <li role="option" aria-selected={active === index} id={`${id}-${index}`} key={person.id} onMouseDown={event => event.preventDefault()} onClick={() => select(person)}>{person.handle}</li>)}</ul> : <p className="small muted">Участник не найден.</p>}
     </div>}
   </div>;
 }
 
-function DuelForm({ onCreated }: { onCreated: (request: DuelRequest) => void }) {
+function ProblemPicker({ value, onChange, disabled }: { value: DuelProblem | null; onChange: (problem: DuelProblem) => void; disabled: boolean }) {
   const { user } = useSession();
+  const [editing, setEditing] = useState(!value);
+  const [q, setQuery] = useState('');
+  const [difficulty, setDifficulty] = useState<NonNullable<DuelProblemQuery['difficulty']> | ''>('');
+  const [offset, setOffset] = useState(0);
+  const edit = useRef<HTMLButtonElement>(null);
+  const search = useRef<HTMLDivElement>(null);
+  const limit = 10;
+  const query = { q: q || undefined, difficulty: difficulty || undefined, offset, limit };
+  const problems = useQuery({ queryKey: ['duel-problem-pool', user?.id, query], queryFn: ({ signal }) => api.listDuelProblems(query, signal), enabled: editing && !disabled });
+  useEffect(() => { if (editing) search.current?.querySelector('input')?.focus(); else edit.current?.focus(); }, [editing]);
+  function select(problem: DuelProblem) { onChange(problem); setEditing(false); }
+  return <div className="duel-problem-picker">
+    {value && <div className="duel-selected-problem" aria-label="Выбранная задача">
+      <div><strong>{value.code}. {value.title}</strong><span className="small muted">{difficultyLabels[value.difficulty]}</span></div>
+      <button type="button" className="text-link" ref={edit} disabled={disabled} onClick={() => setEditing(current => !current)}>{editing ? 'Оставить выбранную задачу' : 'Изменить задачу'}</button>
+    </div>}
+    {editing && <div className="duel-problem-search">
+      <div className="toolbar" ref={search}>
+        <SearchInput value={q} onChange={value => { setQuery(value); setOffset(0); }} label="Найти задачу" placeholder="Название или номер задачи" />
+        <select aria-label="Сложность задачи" value={difficulty} disabled={disabled} onChange={event => { const value = event.target.value; setDifficulty(value === 'easy' || value === 'medium' || value === 'hard' ? value : ''); setOffset(0); }}>
+          <option value="">Любая сложность</option>{Object.entries(difficultyLabels).map(([value, title]) => <option key={value} value={value}>{title}</option>)}
+        </select>
+        {(q || difficulty) && <button type="button" className="text-link" disabled={disabled} onClick={() => { setQuery(''); setDifficulty(''); setOffset(0); }}>Сбросить фильтры</button>}
+      </div>
+      {problems.isPending ? <p role="status">Ищем задачи...</p> : <>
+        <ErrorMessage error={problems.error} />
+        {problems.data && (problems.data.items.length ? <ul className="duel-problem-results" aria-label="Найденные задачи">{problems.data.items.map(problem => <li key={problem.id}>
+          <button type="button" className={`duel-problem-option${problem.id === value?.id ? ' selected' : ''}`} aria-label={`${problem.code}. ${problem.title}`} disabled={disabled} onClick={() => select(problem)}>
+            <span>{problem.code}. {problem.title}</span><span className="small muted">{difficultyLabels[problem.difficulty]}</span>
+          </button>
+        </li>)}</ul> : <Empty>{q || difficulty ? 'Задачи не найдены. Измените запрос или сбросьте фильтры.' : 'Пока нет задач для дуэли.'}</Empty>)}
+        {problems.data && <Pagination total={problems.data.total} offset={offset} limit={limit} onChange={setOffset} />}
+      </>}
+      {problems.error && <button type="button" className="text-link" onClick={() => void problems.refetch()}>Повторить поиск</button>}
+    </div>}
+  </div>;
+}
+
+function DuelForm({ onCreated }: { onCreated: (request: DuelRequest) => void }) {
   const [mode, setMode] = useState<DuelInput['mode']>('random');
   const [handle, setHandle] = useState('');
-  const [problemId, setProblemId] = useState('');
-  const pool = useQuery({ queryKey: ['duel-problem-pool', user?.id], queryFn: ({ signal }) => api.listDuelProblems(signal), enabled: mode === 'invite' });
-  const problems = pool.data ?? [];
-  const selected = mode === 'invite' ? problems.find(problem => problem.id === problemId) : undefined;
+  const [taskMode, setTaskMode] = useState<'random' | 'specific'>('random');
+  const [selected, setSelected] = useState<DuelProblem | null>(null);
+  const needsProblem = mode === 'invite' && taskMode === 'specific';
   const create = useMutation({ mutationFn: (body: DuelInput) => api.createDuel(body), onSuccess: onCreated });
+  const blocked = create.isPending || mode === 'invite' && (!handle.trim() || needsProblem && !selected);
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (create.isPending || mode === 'invite' && !handle.trim()) return;
-    create.mutate({ mode, ...(mode === 'invite' ? { opponentHandle: handle.trim(), ...(problemId ? { problemId } : {}) } : {}) });
+    if (blocked) return;
+    create.mutate({ mode, ...(mode === 'invite' ? { opponentHandle: handle.trim(), ...(needsProblem && selected ? { problemId: selected.id } : {}) } : {}) });
   }
   return <form className="panel duel-search-form" onSubmit={submit}>
-    <fieldset disabled={create.isPending} className="duel-mode"><legend>С кем сыграть</legend>
+    <fieldset disabled={create.isPending} className="duel-mode"><legend>Соперник</legend>
       <label className="duel-mode-option"><input type="radio" name="duel-mode" checked={mode === 'random'} onChange={() => setMode('random')} /><span>Случайный соперник</span></label>
-      <label className="duel-mode-option"><input type="radio" name="duel-mode" checked={mode === 'invite'} onChange={() => setMode('invite')} /><span>Пригласить по нику</span></label>
+      <label className="duel-mode-option"><input type="radio" name="duel-mode" checked={mode === 'invite'} onChange={() => setMode('invite')} /><span>Выбрать соперника</span></label>
     </fieldset>
     {mode === 'invite' ? <>
       <OpponentInput value={handle} onChange={setHandle} disabled={create.isPending} />
-      <QueryState query={pool}><label className="field"><span>Задача</span><select aria-label="Задача дуэли" value={problemId} disabled={create.isPending} onChange={event => setProblemId(event.target.value)}><option value="">Случайная задача</option>{problems.map(problem => <option key={problem.id} value={problem.id}>{problem.title} - {difficultyLabels[problem.difficulty]}</option>)}</select></label></QueryState>
-    </> : <p className="muted">Задача будет выбрана случайно после подбора соперника.</p>}
-    <p className="small muted">Длительность: {duration(selected?.difficulty)}.</p>
+      <fieldset disabled={create.isPending} className="duel-mode"><legend>Задача</legend>
+        <label className="duel-mode-option"><input type="radio" name="duel-task-mode" checked={taskMode === 'random'} onChange={() => setTaskMode('random')} /><span>Случайная задача</span></label>
+        <label className="duel-mode-option"><input type="radio" name="duel-task-mode" checked={taskMode === 'specific'} onChange={() => setTaskMode('specific')} /><span>Выбрать задачу</span></label>
+      </fieldset>
+      {needsProblem && <ProblemPicker value={selected} onChange={setSelected} disabled={create.isPending} />}
+    </> : <p className="muted">Задача выбирается случайно.</p>}
+    <p className="small muted">Длительность: {duration(needsProblem ? selected?.difficulty : undefined)}.</p>
     <ErrorMessage error={create.error} reveal />
-    <button className="btn primary" disabled={create.isPending || mode === 'invite' && (!handle.trim() || pool.isPending || Boolean(pool.error))}>{create.isPending ? 'Отправляем...' : mode === 'random' ? 'Найти соперника' : 'Отправить приглашение'}</button>
+    <button className="btn primary" disabled={blocked}>{create.isPending ? mode === 'random' ? 'Начинаем поиск...' : 'Отправляем приглашение...' : mode === 'random' ? 'Найти соперника' : 'Пригласить на дуэль'}</button>
   </form>;
 }
 
@@ -101,15 +144,15 @@ export default function NewDuel() {
   const recipient = request?.opponent?.id === user.id;
   const ended = request?.status === 'matched' && Date.parse(request.expiresAt) <= Date.now();
   return <div className="duels-page">
-    <PageHeader title="Новая дуэль" description="Два участника и одна общая задача." actions={<Link className="text-link" to="/duels">Мои дуэли</Link>} />
+    <PageHeader title={request ? 'Дуэль' : 'Новая дуэль'} actions={<Link className="text-link" to="/duels">Мои дуэли</Link>} />
     {id && query.isPending && !request ? <p role="status">Загрузка дуэли...</p> : id && query.error && !request ? <><ErrorMessage error={query.error} /><button className="btn secondary" onClick={() => void query.refetch()}>Повторить</button></> : request ? <section className="panel duel-waiting" aria-label="Состояние дуэли">
-      <h2 aria-live="polite">{ended ? 'Дуэль завершена' : ({ queued: 'Ищем соперника', invited: 'Ожидаем ответ на приглашение', matched: 'Соперник найден', declined: 'Приглашение отклонено', cancelled: 'Поиск или приглашение отменены', expired: 'Время ожидания истекло' })[request.status]}</h2>
+      <h2 aria-live="polite">{ended ? 'Дуэль завершена' : ({ queued: 'Поиск соперника', invited: recipient ? 'Приглашение на дуэль' : 'Приглашение отправлено', matched: 'Соперник найден', declined: 'Приглашение отклонено', cancelled: request.mode === 'random' ? 'Поиск отменен' : 'Приглашение отменено', expired: 'Время ожидания истекло' })[request.status]}</h2>
       {request.mode === 'invite' && <p>{recipient ? <><UserLink user={request.creator} /> приглашает вас на дуэль.</> : request.opponent && <>Соперник: <UserLink user={request.opponent} />.</>}</p>}
       {request.problemTitle && <p>Задача: {request.problemTitle}.</p>}
       <p className="small muted">Длительность: {duration(request.difficulty)}.</p>
       <ErrorMessage error={query.error || action.error} reveal />
       <div className="duel-request-actions">{request.status === 'invited' && recipient ? <><button className="btn primary" disabled={action.isPending} onClick={() => action.mutate('accept')}>Принять дуэль</button><button className="btn secondary" disabled={action.isPending} onClick={() => action.mutate('decline')}>Отклонить</button></> : pending && request.creator.id === user.id ? <button className="btn secondary" disabled={action.isPending} onClick={() => action.mutate('cancel')}>{action.isPending ? 'Отменяем...' : request.status === 'queued' ? 'Отменить поиск' : 'Отменить приглашение'}</button> : null}
-        <Link className="btn secondary" to="/duels/new" onClick={() => action.reset()}>Еще одна дуэль</Link>
+        <Link className="btn secondary" to="/duels/new" onClick={() => action.reset()}>Новая дуэль</Link>
         {request.contestId && <Link className="btn primary" to={`/contest/${encodeURIComponent(request.contestId)}`}>Открыть дуэль</Link>}
       </div>
     </section> : <DuelForm key={user.id} onCreated={keepRequest} />}
