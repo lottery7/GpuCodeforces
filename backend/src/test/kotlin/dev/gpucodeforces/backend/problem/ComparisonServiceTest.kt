@@ -1,0 +1,208 @@
+package dev.gpucodeforces.backend.problem
+
+import dev.gpucodeforces.backend.common.BadRequestException
+import dev.gpucodeforces.backend.common.NotFoundApiException
+import dev.gpucodeforces.backend.contest.Contest
+import dev.gpucodeforces.backend.contest.ContestRepository
+import dev.gpucodeforces.backend.processor.ProcessorCatalog
+import dev.gpucodeforces.backend.processor.ProcessorProperties
+import dev.gpucodeforces.judge.api.ProblemSpec
+import dev.gpucodeforces.backend.submission.Submission
+import dev.gpucodeforces.backend.submission.SubmissionRepository
+import dev.gpucodeforces.backend.submission.SubmissionStatus
+import dev.gpucodeforces.backend.submission.MeasurementData
+import dev.gpucodeforces.backend.submission.MeasuredTest
+import dev.gpucodeforces.backend.user.User
+import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
+import org.junit.jupiter.api.Test
+import org.mockito.ArgumentMatchers.any
+import org.mockito.BDDMockito.given
+import org.mockito.Mockito.mock
+import tools.jackson.databind.json.JsonMapper
+import tools.jackson.module.kotlin.KotlinModule
+import java.math.BigDecimal
+import java.nio.file.Path
+import java.time.Instant
+import java.util.Optional
+import java.util.UUID
+
+class ComparisonServiceTest {
+    private val submissions = mock(SubmissionRepository::class.java)
+    private val versions = mock(ProblemVersionRepository::class.java)
+    private val problems = mock(ProblemRepository::class.java)
+    private val contests = mock(ContestRepository::class.java)
+    private val mapper = JsonMapper.builder().addModule(KotlinModule.Builder().build()).build()
+    private val processors = ProcessorCatalog(ProcessorProperties(enabled = listOf("gpu-cuda", "rtl")))
+    private val author = User("author", "author@example.com", "hash")
+    private val sample = ProblemPackageReader(mapper).read(Path.of("../judge/problems/examples/vector_add"))
+    private val service = ComparisonService(submissions, versions, problems, contests, processors, mapper)
+
+    init {
+        given(problems.save(any(Problem::class.java))).willAnswer { it.getArgument<Problem>(0) }
+        given(versions.save(any(ProblemVersion::class.java))).willAnswer { it.getArgument<ProblemVersion>(0) }
+    }
+
+    private fun version(
+        judgeHash: String = sample.judgeHash,
+        draft: Boolean = false,
+        format: String = ProblemFormatData.STANDARD,
+        judgeSpec: String = mapper.writeValueAsString(sample.spec),
+        data: ProblemFormatData = ProblemFormatData(format = format),
+    ) = ProblemVersion(
+        UUID.randomUUID(), sample.id, sample.frontMatter.code, sample.frontMatter.title,
+        sample.frontMatter.difficulty, sample.frontMatter.tags, sample.frontMatter.authors,
+        draft, sample.statementMarkdown, listOf("gpu-cuda"), sample.starters, judgeSpec, sample.contentHash,
+        judgeHash, null, format = format, formatData = mapper.writeValueAsString(data),
+    ).also { given(versions.findById(it.id)).willReturn(Optional.of(it)) }
+
+    private fun submission(
+        source: ProblemVersion,
+        userId: UUID = author.id,
+        contestId: UUID? = null,
+        processor: String = "gpu-cuda",
+        language: String = "cuda",
+        score: BigDecimal? = BigDecimal("1.2"),
+        status: SubmissionStatus = SubmissionStatus.ACCEPTED,
+        problemId: String = source.problemId,
+        guessChoice: String? = null,
+    ) = Submission(
+        UUID.randomUUID(), userId, problemId, source.id, contestId, "void solve() {}",
+        "GPU environment", source.judgeHash, processor, language, null, guessChoice = guessChoice,
+    ).also {
+        it.score = score
+        it.status = status
+        given(submissions.findForUpdate(it.id)).willReturn(it)
+    }
+
+    private fun create(first: Submission, second: Submission, explanation: String = "Причина разницы") =
+        service.create(sample.id, first.id.toString(), second.id.toString(), explanation, author)
+
+    @Test
+    fun `publishes owned historical code for a new benchmark without reusing earlier measured times`() {
+        val firstVersion = version()
+        val secondVersion = version()
+        val first = submission(firstVersion)
+        val second = submission(secondVersion, score = BigDecimal("2.4"))
+
+        val result = create(first, second, "  Причина разницы  ")
+        val data = mapper.readValue(result.formatData, ProblemFormatData::class.java)
+
+        assertThat(result.problemId).startsWith("comparison-")
+        assertThat(result.format).isEqualTo(ProblemFormatData.GUESS)
+        assertThat(result.draft).isFalse()
+        assertThat(result.authors).containsExactly(author.handle)
+        assertThat(result.statementMarkdown).isEqualTo(firstVersion.statementMarkdown)
+        // the guess declares the one processor and language both were judged on
+        val spec = mapper.readValue(result.judgeSpec, ProblemSpec::class.java)
+        assertThat(spec.declaredProcessors().map { it.id to it.languages }).containsExactly("gpu-cuda" to listOf("cuda"))
+        assertThat(result.processors).containsExactly("gpu-cuda")
+        assertThat(data.firstCode).isEqualTo(first.code)
+        assertThat(data.secondCode).isEqualTo(second.code)
+        assertThat(data.firstTimeMs).isNull()
+        assertThat(data.secondTimeMs).isNull()
+        assertThat(data.baselineTimeMs).isNull()
+        assertThat(data.explanation).isEqualTo("Причина разницы")
+    }
+
+    @Test
+    fun `does not expose or publish another users submission`() {
+        val version = version()
+        val own = submission(version)
+        val foreign = submission(version, userId = UUID.randomUUID())
+
+        assertThatThrownBy { create(own, foreign) }.isInstanceOf(NotFoundApiException::class.java)
+    }
+
+    @Test
+    fun `rejects duplicate submissions and missing explanation`() {
+        val version = version()
+        val first = submission(version)
+        val second = submission(version)
+
+        assertThatThrownBy { create(first, first) }.isInstanceOf(BadRequestException::class.java)
+        assertThatThrownBy { create(first, second, "  ") }.isInstanceOf(BadRequestException::class.java)
+    }
+
+    @Test
+    fun `requires accepted positive scores of this problem on one processor and language of the platform`() {
+        val version = version()
+        val first = submission(version)
+        val invalid = listOf(
+            submission(version, status = SubmissionStatus.WRONG_ANSWER),
+            submission(version, score = null),
+            submission(version, score = BigDecimal.ZERO),
+            submission(version, processor = "riscv-rvv", language = "c"),
+            submission(version, processor = "rtl", language = "systemverilog"),
+            submission(version, problemId = "other-problem"),
+            submission(version, guessChoice = "first"),
+        )
+
+        invalid.forEach { second ->
+            assertThatThrownBy { create(first, second) }.isInstanceOf(BadRequestException::class.java)
+        }
+    }
+
+    @Test
+    fun `rejects different judge configurations even if the submissions are accepted`() {
+        val first = submission(version())
+        val second = submission(version(judgeHash = "different-hash"))
+
+        assertThatThrownBy { create(first, second) }.isInstanceOf(BadRequestException::class.java)
+    }
+
+    @Test
+    fun `checks actual judge specs and source visibility`() {
+        val first = submission(version())
+        val changedSpec = mapper.writeValueAsString(sample.spec.copy(version = "different-version"))
+        val incompatible = listOf(
+            submission(version(judgeSpec = changedSpec)),
+            submission(version(draft = true)),
+            submission(version(format = ProblemFormatData.GUESS)),
+        )
+
+        incompatible.forEach { second ->
+            assertThatThrownBy { create(first, second) }.isInstanceOf(BadRequestException::class.java)
+        }
+    }
+
+    @Test
+    fun `contest code becomes publishable only after the contest ends`() {
+        val now = Instant.now()
+        val contest = Contest(UUID.randomUUID(), "Контест", now.minusSeconds(60), now.plusSeconds(3600), "gpu-cuda")
+        given(contests.findById(contest.id)).willReturn(Optional.of(contest))
+        val version = version()
+        val first = submission(version)
+        val second = submission(version, contestId = contest.id)
+
+        assertThatThrownBy { create(first, second) }.isInstanceOf(BadRequestException::class.java)
+
+        contest.endAt = now.minusSeconds(1)
+        assertThat(create(first, second).format).isEqualTo(ProblemFormatData.GUESS)
+    }
+
+    @Test
+    fun `rejects mixing legacy maximum with geometric mean and synthetic with real measurements`() {
+        val definition = BenchmarkDefinition("Векторы длиной 1 и 4", BenchmarkDefinition.GEOMETRIC_MEAN)
+        val geometric = version(format = "optimization", data = ProblemFormatData(format = "optimization", benchmark = definition))
+        val first = submission(geometric)
+        val legacy = submission(version(format = "optimization"))
+
+        assertThatThrownBy { create(first, legacy) }.isInstanceOf(BadRequestException::class.java).hasMessageContaining("метрики")
+
+        val second = submission(geometric)
+        fun measurement(time: BigDecimal, synthetic: Boolean) = mapper.writeValueAsString(
+            MeasurementData("geometric_mean", "wall", "GPU", "nvcc", synthetic, listOf(MeasuredTest(time, 1))),
+        )
+        first.measurement = measurement(first.score!!, false)
+        second.measurement = measurement(second.score!!, true)
+        assertThatThrownBy { create(first, second) }.isInstanceOf(BadRequestException::class.java)
+
+        first.measurement = measurement(first.score!!, true)
+        val published = mapper.readValue(create(first, second).formatData, ProblemFormatData::class.java)
+        assertThat(published.benchmark).isEqualTo(definition)
+        assertThat(published.benchmarkSynthetic).isNull()
+        assertThat(published.firstTimeMs).isNull()
+        assertThat(published.secondTimeMs).isNull()
+    }
+}

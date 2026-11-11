@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useParams, useSearchParams } from 'react-router';
 import { api } from '../api/client';
+import DuelBoard from '../components/DuelBoard';
 import type { Problem } from '../api/types';
 import { useSession } from '../auth';
-import { useProcessors } from '../processors';
+import { GPU_CUDA, useProcessors } from '../processors';
 import { Empty, ErrorMessage, Markdown, PageHeader, Status, Tabs, UserLink } from '../ui';
-import { dateTime, difficultyLabels, phaseOf, problemPath, solveTime, statusLabels } from '../utils';
+import { canJoinContest, dateTime, difficultyLabels, formatLabels, phaseOf, problemPath, solveTime, statusLabels } from '../utils';
 
 function countdown(value: string, now: number) {
   const seconds = Math.max(0, Math.ceil((Date.parse(value) - now) / 1000));
@@ -29,8 +30,9 @@ function taskLabel(index: number) {
 function PersonalStatus({ problem }: { problem: Problem }) {
   // in a contest a problem shows the contest's processor only
   const best = problem.processors[0]?.bestSubmissionId ?? null;
-  const accepted = best !== null;
-  const mainId = accepted ? best : problem.lastSubmissionId;
+  // an answer to a guess has no score: solved is enough
+  const accepted = problem.format === 'guess' ? problem.solved : best !== null;
+  const mainId = accepted && problem.format !== 'guess' ? best : problem.lastSubmissionId;
   if (!mainId) return <span className="muted">Не решена</span>;
   const old = !accepted && problem.lastStatus === 'accepted';
   return <>
@@ -47,6 +49,7 @@ export default function Contest() {
   const queryClient = useQueryClient();
   const catalog = useProcessors();
   const [now, setNow] = useState(Date.now());
+  const runtime = useQuery({ queryKey: ['runtime'], queryFn: ({ signal }) => api.getRuntime(signal), staleTime: 300000 });
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
@@ -82,6 +85,7 @@ export default function Contest() {
     void queryClient.invalidateQueries({ queryKey: ['contest', id] });
     void queryClient.invalidateQueries({ queryKey: ['contest-tasks', id] });
     void queryClient.invalidateQueries({ queryKey: ['standings', id] });
+    void queryClient.invalidateQueries({ queryKey: ['duel-gpu', id] });
   }, [id, item, phase, queryClient]);
   const join = useMutation({
     mutationFn: () => api.registerForContest(id),
@@ -100,8 +104,8 @@ export default function Contest() {
 
   const base = `/contest/${encodeURIComponent(id)}`;
   const actions = <>
-    {phase !== 'finished' && (item.registered ? <span className="success">{phase === 'upcoming' ? 'Вы зарегистрированы' : 'Вы участвуете'}</span> : user ? <button className="btn secondary" disabled={join.isPending} onClick={() => join.mutate()}>{join.isPending ? 'Регистрация...' : 'Зарегистрироваться'}</button> : <Link className="btn secondary" to={`/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`}>Зарегистрироваться</Link>)}
-    {author && phase === 'upcoming' && <Link className="btn secondary" to={`${base}/edit`}>Изменить</Link>}
+    {phase !== 'finished' && (item.registered ? <span className="success">{phase === 'upcoming' ? 'Вы зарегистрированы' : 'Вы участвуете'}</span> : !canJoinContest(item, user?.id) ? <span className="muted">Дуэль по приглашению</span> : user ? <button className="btn secondary" disabled={join.isPending} onClick={() => join.mutate()}>{join.isPending ? 'Регистрация...' : item.format === 'duel' ? 'Принять дуэль' : 'Зарегистрироваться'}</button> : <Link className="btn secondary" to={`/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`}>Зарегистрироваться</Link>)}
+    {author && phase === 'upcoming' && item.format !== 'duel' && <Link className="btn secondary" to={`${base}/edit`}>Изменить</Link>}
   </>;
   const columns = tasks.data ?? [];
 
@@ -111,10 +115,11 @@ export default function Contest() {
     <div className="toolbar small contest-meta">
       <span className="muted">{dateTime(item.startAt)} - {dateTime(item.endAt)} МСК</span>
       <span>{phase === 'finished' ? 'Завершен' : <>{phase === 'upcoming' ? 'До начала' : 'До конца'} <time>{countdown(phase === 'upcoming' ? item.startAt : item.endAt, now)}</time></>}</span>
-      <span className="muted">Процессор: {catalog.title(item.processor)}{catalog.find(item.processor) && <> · {catalog.find(item.processor)?.model}</>}</span>
+      <span className="muted">Процессор: {catalog.title(item.processor)}{catalog.find(item.processor) && <> · {item.processor === GPU_CUDA && runtime.data?.gpuName ? runtime.data.gpuName : catalog.find(item.processor)?.model}</>}</span>
       <span className="muted">Авторы: {item.authors.map((person, index) => <span key={person.id}>{index > 0 && ', '}<UserLink user={person} /></span>)}</span>
     </div>
     {join.error && <ErrorMessage error={join.error} />}
+    {item.format === 'duel' && <DuelBoard contest={item} commonProblem={tasks.data?.[0]} finished={phase === 'finished'} />}
     <Tabs selected={selected} items={[{ id: 'tasks', label: 'Задачи', to: `${base}?tab=tasks` }, { id: 'standings', label: 'Таблица', to: `${base}?tab=standings` }, { id: 'rules', label: 'Правила', to: `${base}?tab=rules` }]} />
     {selected === 'rules' ? item.rulesMarkdown ? <Markdown>{item.rulesMarkdown}</Markdown> : <Empty>Правила пока недоступны.</Empty> : phase === 'upcoming' && (selected === 'standings' || !author) ? <Empty>{selected === 'standings' ? 'Таблица появится после начала.' : `Задачи откроются ${dateTime(item.startAt)} МСК.`}</Empty> : <>
       {tasks.isPending && <p className="loading" role="status">Загрузка задач...</p>}
@@ -123,7 +128,7 @@ export default function Contest() {
         {phase === 'finished' && <p className="notice">Контест завершен. На странице задачи можно перейти к решению в практике.</p>}
         {tasks.data.length ? <div className="table-wrap"><table className="data-table" aria-label="Задачи соревнования"><thead><tr><th>Задача</th><th>Сложность</th>{user && <th>Ваш статус</th>}</tr></thead><tbody>{tasks.data.map((problem, index) => <tr key={problem.id}>
           <td><Link to={problemPath(problem.id, id)}>{taskLabel(index)}. {problem.title}</Link></td>
-          <td>{difficultyLabels[problem.difficulty]}</td>
+          <td>{difficultyLabels[problem.difficulty]}<div className="subline">{formatLabels[problem.format ?? 'standard']}</div></td>
           {user && <td><PersonalStatus problem={problem} /></td>}
         </tr>)}</tbody></table></div> : <Empty>В контесте пока нет задач.</Empty>}
       </>}

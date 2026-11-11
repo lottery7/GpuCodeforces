@@ -24,7 +24,7 @@
 | `QUEUED` | `queued` |
 | `COMPILING`, `PREPARING` | `compiling` |
 | `TESTING` (с `progress`) | `checking`, `passedTests`/`totalTests` |
-| `ACCEPTED` | `accepted`, `score` (значение и тип) и `metrics` из результата |
+| `ACCEPTED` | `accepted`, `score` (значение и тип) по метрике задачи — максимум или геометрическое среднее по тестам — и `metrics` из результата |
 | `WRONG_ANSWER` / `TIME_LIMIT_EXCEEDED` / `MEMORY_LIMIT_EXCEEDED` / `RUNTIME_ERROR` | `wrong_answer` / `time_limit` / `memory_limit` / `runtime_error` |
 | `COMPILATION_ERROR`, `POLICY_VIOLATION` | `compile_error` |
 | `INTERNAL_ERROR`, `CANCELLED` | `system_error` |
@@ -50,6 +50,16 @@
 Принятый score сравним только в одной конфигурации проверки и на одном процессоре: тот же `judge_hash` версии
 задачи (содержимое `problem.json` + `problem.py`) и тот же процессор. Версии эмуляторов зафиксированы и в
 сравнимость не входят. Практика и каждый контест считаются отдельно.
+
+Для задач с benchmark в конфигурацию также входит определение метрики и набора входов.
+У оптимизации в нее также входят исходные решения. Рекорды `gpu-cuda` ограничены отпечатком текущей среды:
+после смены GPU или переключения между mock и GPU прежние времена не используются для ускорения.
+Рекорды эмуляторов отпечатком среды не ограничены: их версии зафиксированы в образах судьи.
+Фактические замеры каждого теста сохраняются в `Submission.measurement`; клиент получает только
+сводку метрики, режима, числа тестов и модели процессора. `wall` означает весь вызов решения,
+а не только время ядер. Схемы и формулы: [formats.md](formats.md).
+Эталоны и варианты угадывания автоматически проходят тот же judge отдельными заданиями:
+[reference-measurements.md](reference-measurements.md).
 
 - Банк задач: `solved`, `last*` — для пользователя и контекста; `solvedCount` — по всем контекстам; по каждому
   процессору задачи — `bestScore` пользователя и `recordScore` (лучший сравнимый score контекста). Фильтр

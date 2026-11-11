@@ -42,6 +42,13 @@ into `PROBLEMS_DIRECTORY`, pulls it every minute and imports `PROBLEMS_PATH`; wi
 is empty. The package format is described (in Russian) in
 [docs/backend/problem-package.md](docs/backend/problem-package.md).
 
+Supported formats are ordinary CUDA tasks, optimization of a supplied solution and guessing which of two
+solutions is faster. Duels match a random opponent or start after accepting an invitation; the shared task is selected by topic. Package metadata, participation
+and scoring are described in [docs/backend/formats.md](docs/backend/formats.md).
+Baseline and guessing variants are measured automatically by the judge. Hardware or test changes
+trigger fresh measurements; packages do not contain manually entered times. See
+[reference measurements](docs/backend/reference-measurements.md).
+
 ```sh
 PROBLEMS_GIT_URL=https://github.com/lottery7/GpuCodeforcesProblems.git PROBLEMS_DIRECTORY=build/problems   PROBLEMS_PATH=problems ./gradlew :backend:bootRun
 ```
@@ -71,7 +78,7 @@ repository, so add a new CI job there too.
 ## Running the whole system
 
 ```sh
-docker compose --profile app --profile mock up -d --wait --build   # no GPU: mock executor
+JUDGE_MODE=mock docker compose --profile app --profile mock up -d --wait --build   # no GPU: mock executor
 docker compose --profile app --profile gpu up -d --wait --build    # real executor on an NVIDIA GPU
 ```
 

@@ -49,6 +49,7 @@ class ProblemPackage(
     val spec: ProblemSpec,
     val contentHash: String,
     val judgeHash: String,
+    val format: ProblemFormatData = ProblemFormatData(),
 )
 
 /**
@@ -70,10 +71,13 @@ class ProblemPackageReader(jsonMapper: JsonMapper) {
         val statementFile = readFile(directory, STATEMENT_FILE)
         val specFile = readFile(directory, SPEC_FILE)
         val generator = readFile(directory, GENERATOR_FILE)
+        val formatFile = directory.resolve(FORMAT_FILE).takeIf { Files.isRegularFile(it) }?.let { Files.readString(it) }
 
         val (frontMatter, statement) = parseStatement(statementFile)
         val spec = parseSpec(id, specFile, generator)
+        val format = readFormat(directory, formatFile, spec)
         val starters = readStarters(directory, spec)
+        if (format.format == ProblemFormatData.OPTIMIZATION) checkBaselines(directory, spec, starters)
         return ProblemPackage(
             id = id,
             frontMatter = frontMatter,
@@ -81,9 +85,93 @@ class ProblemPackageReader(jsonMapper: JsonMapper) {
             starters = starters,
             spec = spec.copy(version = sha256(specFile, generator).take(VERSION_LENGTH)),
             // The generated starters count too: a better template has to reach problems already in the bank.
-            contentHash = sha256(statementFile, specFile, generator, *starterHashParts(starters).toTypedArray()),
-            judgeHash = sha256(specFile, generator),
+            contentHash = if (formatFile == null) {
+                sha256(statementFile, specFile, generator, *starterHashParts(starters).toTypedArray())
+            } else {
+                sha256(
+                    statementFile, specFile, generator, *starterHashParts(starters).toTypedArray(), formatFile, format.firstCode.orEmpty(),
+                    format.secondCode.orEmpty(),
+                )
+            },
+            judgeHash = when {
+                format.format == ProblemFormatData.GUESS -> sha256(specFile, generator, formatFile!!, format.firstCode!!, format.secondCode!!)
+                format.format == ProblemFormatData.OPTIMIZATION -> sha256(
+                    specFile, generator, *baselines(spec, starters).toTypedArray(), format.benchmark?.let(specMapper::writeValueAsString).orEmpty(),
+                )
+                else -> sha256(specFile, generator)
+            },
+            format = format,
         )
+    }
+
+    private fun readFormat(directory: Path, source: String?, spec: ProblemSpec): ProblemFormatData {
+        if (source == null) return ProblemFormatData()
+        val format = try {
+            val tree = specMapper.readTree(source) as? ObjectNode ?: fail("$FORMAT_FILE должен содержать объект")
+            listOf("baselineTimeMs", "firstTimeMs", "secondTimeMs").firstOrNull(tree::has)?.let {
+                fail("$it нельзя задавать в $FORMAT_FILE: время измеряет платформа")
+            }
+            if (tree.has("benchmarkSynthetic")) fail("источник измерений задаёт платформа")
+            specMapper.treeToValue(tree, ProblemFormatData::class.java)
+        } catch (exception: JacksonException) {
+            fail("неверный $FORMAT_FILE: ${exception.originalMessage}")
+        }
+        if (format.format !in ProblemFormatData.FORMATS) fail("неизвестный format в $FORMAT_FILE")
+        if (format.firstCode != null || format.secondCode != null) fail("варианты кода задаются файлами first и second с расширением языка")
+        format.benchmark?.let { benchmark ->
+            if (benchmark.inputDescription.isBlank() || benchmark.inputDescription.length > 4000) fail("benchmark.inputDescription должен быть непустым, до 4000 символов")
+            if (benchmark.aggregation !in BenchmarkDefinition.AGGREGATIONS) fail("неизвестный benchmark.aggregation")
+            if (format.format == ProblemFormatData.STANDARD && benchmark.aggregation != BenchmarkDefinition.MAX) {
+                fail("обычные задачи используют benchmark.aggregation=max")
+            }
+        }
+        return when (format.format) {
+            ProblemFormatData.GUESS -> {
+                if (format.explanation.isBlank() || format.explanation.length > 4000) fail("explanation должен быть непустым, до 4000 символов")
+                // both variants run on the one processor and language of the problem
+                val processor = spec.declaredProcessors().singleOrNull()?.takeIf { it.languages.size == 1 }
+                    ?: fail("угадывание сравнивает варианты на одном процессоре и одном языке: в problem.json нужен ровно один процессор с одним языком")
+                val extension = Processors.get(processor.id).language(processor.languages.single())!!.extension
+                val first = readFile(directory, "first$extension")
+                val second = readFile(directory, "second$extension")
+                val limit = SpecValidator.Limits().maxSourceBytes
+                if (listOf(first, second).any { it.isBlank() || it.toByteArray().size > limit || it.contains('\u0000') }) {
+                    fail("варианты кода должны быть непустыми, без нулевых байт, не больше $limit байт")
+                }
+                format.copy(firstCode = first, secondCode = second)
+            }
+            else -> format
+        }
+    }
+
+    /**
+     * An optimization measures its baseline on every processor: the starter of the processor's first language, which
+     * the package must provide itself (its own file, or `starter.cu` for CUDA), not the empty one built from the signature.
+     */
+    private fun checkBaselines(directory: Path, spec: ProblemSpec, starters: Map<String, Map<String, String>>) {
+        val limit = SpecValidator.Limits().maxSourceBytes
+        for (processor in spec.declaredProcessors()) {
+            val language = processor.languages.first()
+            val name = starterFile(processor.id, Processors.get(processor.id).language(language)!!.extension)
+            val own = Files.isRegularFile(directory.resolve(name)) || language == Languages.CUDA && Files.isRegularFile(directory.resolve(LEGACY_STARTER_FILE))
+            val expected = if (language == Languages.CUDA) "$LEGACY_STARTER_FILE или $name" else name
+            if (!own) fail("для оптимизации нужен рабочий шаблон $expected: с него измеряется исходный результат на процессоре ${processor.id}")
+            val code = starters.getValue(processor.id).getValue(language)
+            if (code.isBlank() || code.toByteArray().size > limit || code.contains('\u0000')) {
+                fail("шаблон ${if (language == Languages.CUDA) LEGACY_STARTER_FILE else name} пустой, содержит нулевые байты или больше $limit байт")
+            }
+        }
+    }
+
+    /**
+     * The baseline sources of an optimization, in the order of the processors. A package on the real GPU alone hashes
+     * as before processors existed, so it gets no new version for them.
+     */
+    private fun baselines(spec: ProblemSpec, starters: Map<String, Map<String, String>>): List<String> {
+        val processors = spec.declaredProcessors()
+        val single = processors.singleOrNull()?.takeIf { it.id == Processors.GPU_CUDA }
+        if (single != null) return listOf(starters.getValue(single.id).getValue(single.languages.first()))
+        return processors.flatMap { listOf(it.id, starters.getValue(it.id).getValue(it.languages.first())) }
     }
 
     /**
@@ -224,8 +312,12 @@ class ProblemPackageReader(jsonMapper: JsonMapper) {
         const val STATEMENT_FILE = "statement.md"
         const val SPEC_FILE = "problem.json"
         const val GENERATOR_FILE = "problem.py"
-        /** The starter of CUDA before processors existed; still read for `gpu-cuda` and `cuda-sim`. */
+        /**
+         * The starter of CUDA before processors existed: still read for `gpu-cuda` and `cuda-sim`, and the code an
+         * optimization starts from.
+         */
         const val LEGACY_STARTER_FILE = "starter.cu"
+        const val FORMAT_FILE = "format.json"
 
         fun starterFile(processor: String, extension: String) = "starter.$processor$extension"
         val DIFFICULTIES = listOf("easy", "medium", "hard")

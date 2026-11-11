@@ -17,6 +17,18 @@ function capture(handler: (request: Request) => Response | Promise<Response>) {
 }
 
 describe('API client', () => {
+  it('keeps an empty duel queue as null and sends duel and notification actions', async () => {
+    const { requests, fetcher } = capture(request => new URL(request.url).pathname.endsWith('/current') || request.method === 'PUT'
+      ? new Response(null, { status: 204 }) : Response.json({ id: 'duel' }, { status: 201 }));
+    const api = createApi('http://localhost/api', fetcher);
+    await expect(api.getCurrentDuel()).resolves.toBeNull();
+    await api.createDuel({ mode: 'invite', opponentHandle: 'new_cuda', topics: ['Память'], processor: 'gpu-cuda' });
+    expect(new URL(requests[1]!.url).pathname).toBe('/api/duels');
+    expect(await requests[1]!.json()).toEqual({ mode: 'invite', opponentHandle: 'new_cuda', topics: ['Память'], processor: 'gpu-cuda' });
+    await expect(api.readNotification('note')).resolves.toBeUndefined();
+    expect(new URL(requests[2]!.url).pathname).toBe('/api/notifications/note/read');
+  });
+
   it('uses generated response types and includes session credentials on every request', async () => {
     type Client = ReturnType<typeof createApi>;
     expectTypeOf<ReturnType<Client['session']>>().toEqualTypeOf<Promise<User>>();
@@ -94,7 +106,7 @@ describe('API client', () => {
   it('loads every problem beyond the 100 item limit and keeps the server order', async () => {
     const problems: Problem[] = Array.from({ length: 237 }, (_, index) => ({
       id: `problem-${index}`, code: String(index).padStart(3, '0'), title: `Problem ${index}`,
-      difficulty: 'easy', tags: [], solved: false, solvedCount: 0,
+      difficulty: 'easy', format: 'standard', tags: [], solved: false, solvedCount: 0,
       lastSubmissionId: null, lastStatus: null, processors: [{ id: 'gpu-cuda', languages: ['cuda'], bestSubmissionId: null, bestScore: null, recordScore: null }],
     }));
     const { requests, fetcher } = capture(async request => {

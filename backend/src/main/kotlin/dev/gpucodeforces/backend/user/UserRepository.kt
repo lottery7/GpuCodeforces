@@ -1,11 +1,19 @@
 package dev.gpucodeforces.backend.user
 
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Lock
+import jakarta.persistence.LockModeType
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import java.util.UUID
 
 interface UserRepository : JpaRepository<User, UUID> {
+    fun findByHandleIgnoreCase(handle: String): User?
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT u FROM User u WHERE u.id = :id")
+    fun findForUpdate(id: UUID): User?
+
     fun findByHandleIgnoreCaseOrEmailIgnoreCase(handle: String, email: String): User?
 
     fun existsByHandleIgnoreCase(handle: String): Boolean

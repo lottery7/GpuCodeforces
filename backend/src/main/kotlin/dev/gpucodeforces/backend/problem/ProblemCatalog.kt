@@ -27,6 +27,8 @@ class ProblemCatalog(
     fun spec(version: ProblemVersion): ProblemSpec =
         specs.computeIfAbsent(version.id) { jsonMapper.readValue(version.judgeSpec, ProblemSpec::class.java) }
 
+    fun format(version: ProblemVersion): ProblemFormatData = jsonMapper.readValue(version.formatData, ProblemFormatData::class.java)
+
     /** Contests take only published problems from the bank; returns the versions in the given order. */
     fun publishedVersions(problemIds: Collection<String>): List<ProblemVersion> = problemIds.map { id ->
         currentVersion(id)?.takeUnless { it.draft } ?: throw BadRequestException("Задача $id не найдена в банке")

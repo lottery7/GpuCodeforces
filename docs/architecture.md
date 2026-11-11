@@ -45,7 +45,78 @@ flowchart TB
 Служебные обмены RabbitMQ: `judge.heartbeats` (executor → gateway, мониторинг живых исполнителей),
 `judge.control` (отмена посылки), `judge.jobs.dead` (задание упало 5 раз — gateway публикует `INTERNAL_ERROR`).
 
+## Дуэли
+
+Поиск соперника и приглашения хранятся отдельно от начавшейся комнаты. Общая блокировка PostgreSQL
+сериализует подбор, принятие и отмену. Уведомления доступны только своему пользователю.
+
+```mermaid
+sequenceDiagram
+  participant A as Инициатор
+  participant B as backend
+  participant DB as PostgreSQL
+  participant C as Соперник
+  A->>B: POST /api/duels (темы и способ поиска)
+  B->>DB: Записать поиск или приглашение
+  alt Случайный соперник
+    C->>B: POST /api/duels (случайный поиск)
+    B->>DB: Найти совместимый поиск под блокировкой
+  else Приглашение по нику
+    C->>B: GET /api/notifications
+    C->>B: POST /api/duels/{id}/accept
+  end
+  B->>DB: Выбрать задачу, создать комнату и две регистрации
+  B->>DB: Уведомления о начале обоим участникам
+  B-->>A: matched и contestId
+  B-->>C: matched и contestId
+```
+
 ## Путь посылки
+
+Обычные задачи и оптимизация используют путь через judge. Исходный код оптимизации и оба варианта
+угадывания заранее проверяются и измеряются отдельными заданиями judge. Ответ угадывания
+проверяется по готовому поколению замеров и сохраняет неизменяемый снимок результата.
+Начавшаяся дуэль использует тот же контест; оба участника уже зарегистрированы при подборе.
+Правила форматов: [backend/formats.md](backend/formats.md).
+
+```mermaid
+sequenceDiagram
+  participant U as Браузер
+  participant B as backend
+  participant DB as PostgreSQL
+  U->>B: GET /api/problems/{id}
+  B-->>U: Два кода без ответа и времен
+  U->>B: POST /api/problems/{id}/guess
+  B->>DB: Проверить готовность замеров и контекст
+  B->>DB: Сохранить ответ и снимок времен текущего поколения
+  DB-->>B: Посылка accepted или wrong_answer
+  B-->>U: Свой ответ, времена и объяснение
+  U->>B: POST /api/problems/{id}/comparisons
+  B->>DB: Проверить две свои посылки и сохранить задачу guess
+  B-->>U: Новая задача в банке
+```
+
+```mermaid
+sequenceDiagram
+  participant B as backend
+  participant DB as PostgreSQL
+  participant G as judge-gateway
+  participant E as judge-executor
+  B->>G: GET /api/v1/executors
+  G-->>B: Живые исполнители (для gpu-cuda - GPU и драйвер)
+  B->>DB: Найти задания версии и отпечатка среды
+  B->>DB: Создать недостающие задания исходных кодов
+  loop Каждый исходный код
+    B->>G: POST /api/v1/submissions с reference ID
+    G->>E: Код, процессор и полные тесты
+    E-->>B: События judge через RabbitMQ
+    B->>DB: Сохранить проверенный замер и оборудование
+  end
+  B->>DB: Все варианты готовы - открыть поколение
+  Note over B,DB: Новые тесты, процессор или GPU создают другие задания
+```
+
+Подробности восстановления и актуальности: [reference-measurements.md](backend/reference-measurements.md).
 
 ```mermaid
 sequenceDiagram
@@ -132,6 +203,9 @@ classDiagram
     Instant startAt
     Instant endAt
     String processor
+    String format
+    UUID challengerId
+    UUID opponentId
     Instant ratingAppliedAt
     phaseAt(now) ContestPhase
   }
@@ -139,6 +213,20 @@ classDiagram
     Int position
   }
   class ContestRegistration
+  class DuelRequest {
+    UUID id
+    String mode
+    String processor
+    String status
+    String[] topics
+    Instant expiresAt
+  }
+  class ActiveDuel
+  class Notification {
+    String type
+    Instant createdAt
+    Instant readAt
+  }
   class RatingHistory {
     String processor
     Int rank
@@ -147,6 +235,7 @@ classDiagram
   }
   class Problem {
     String id
+    String source
     Instant createdAt
   }
   class ProblemVersion {
@@ -158,6 +247,8 @@ classDiagram
     String statementMarkdown
     List~String~ processors
     Map starters
+    String format
+    JSON formatData
     String judgeSpec
     String contentHash
     String judgeHash
@@ -166,15 +257,20 @@ classDiagram
   class Submission {
     UUID id
     String code
+    String guessChoice
+    String guessBenchmarkKey
+    JSON guessResult
     SubmissionStatus status
     String processor
     String language
     BigDecimal score
     ScoreType scoreType
     Map metrics
+    JSON measurement
     Int passedTests
     Int totalTests
     String judgeHash
+    String benchmarkEnvironmentKey
     String jobId
     Int eventAttempt
     Int eventSeq
@@ -185,8 +281,30 @@ classDiagram
     String processor
     List tests
   }
+  class ReferenceJob {
+    UUID id
+    UUID problemVersionId
+    String environmentKey
+    String role
+    String processor
+    String language
+    String status
+    Int generation
+    BigDecimal score
+    ScoreType scoreType
+    JSON measurement
+    String jobId
+  }
+  ProblemVersion "1" -- "*" ReferenceJob
   Session "*" --> "1" User
   User "1" *-- "*" UserRating : ratings
+  DuelRequest "*" --> "1" User : creator
+  DuelRequest "*" --> "0..1" User : opponent
+  DuelRequest "*" --> "0..1" Contest
+  ActiveDuel "0..1" --> "1" User
+  ActiveDuel "*" --> "0..1" DuelRequest
+  Notification "*" --> "1" User
+  Notification "*" --> "1" DuelRequest
   Contest "*" --> "*" User : authors
   ContestRegistration "*" --> "1" Contest
   ContestRegistration "*" --> "1" User
@@ -224,6 +342,7 @@ classDiagram
     class ProblemsController
     class ProblemService
     class ProblemCatalog
+    class ComparisonService
     class ProblemSyncService {
       sync() SyncResult
     }
@@ -244,7 +363,16 @@ classDiagram
     class ContestsController
     class ContestService
   }
+  namespace duel {
+    class DuelsController
+    class DuelService
+  }
+  namespace notification {
+    class NotificationsController
+    class NotificationService
+  }
   namespace submission {
+    class GuessService
     class SubmissionsController
     class SubmissionService {
       submit() Submission
@@ -265,6 +393,14 @@ classDiagram
       onEvent(Message)
     }
   }
+  namespace benchmark {
+    class ReferenceMeasurements {
+      refresh()
+      view(ProblemVersion) ReferenceMeasurementView
+      apply(JudgeEvent) Boolean
+    }
+    class ReferenceEnvironmentMonitor
+  }
   namespace rating {
     class ContestRatingFinalizer {
       finalizeDueContests()
@@ -277,6 +413,9 @@ classDiagram
     class GroovyConsole
   }
   SessionController ..> SessionIssuer
+  DuelsController ..> DuelService
+  NotificationsController ..> NotificationService
+  DuelService ..> ProblemCatalog
   UsersController ..> UserService
   UsersController ..> ProfileService
   UsersController ..> SessionIssuer
@@ -286,6 +425,16 @@ classDiagram
   ProblemsController ..> SubmissionStats
   ProblemsController ..> ExampleChecks
   ProblemsController ..> ProblemEnvironments
+  ProblemsController ..> GuessService
+  ProblemsController ..> ComparisonService
+  ProblemsController ..> ReferenceMeasurements
+  GuessService ..> ReferenceMeasurements
+  ReferenceMeasurements ..> ReferenceEnvironmentMonitor
+  ReferenceMeasurements ..> JudgeGateway
+  ReferenceMeasurements ..> ProblemCatalog
+  GuessService ..> ProblemService
+  GuessService ..> ProblemCatalog
+  GuessService ..> SubmissionService
   ProblemService ..> ProblemCatalog
   ProblemService ..> ContestService
   ProblemService ..> ProcessorCatalog
@@ -303,6 +452,8 @@ classDiagram
   SubmissionService ..> ContestService
   SubmissionService ..> SubmissionStats
   SubmissionService ..> JudgeGateway
+  SubmissionService ..> ReferenceMeasurements
+  JudgeEventListener ..> ReferenceMeasurements
   ExampleChecks ..> ProblemCatalog
   ExampleChecks ..> JudgeGateway
   JudgeEventListener ..> SubmissionService

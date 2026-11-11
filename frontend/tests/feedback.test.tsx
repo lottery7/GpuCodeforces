@@ -17,9 +17,9 @@ vi.mock('../src/components/CodeEditor', () => ({
 
 const starter = 'void solve() {}';
 const problem: ProblemDetail = {
-  id: 'vector-add', code: '100', title: 'Сложение векторов', difficulty: 'easy', tags: [],
+  id: 'vector-add', code: '100', title: 'Сложение векторов', difficulty: 'easy', format: 'standard', tags: [],
   solved: false, solvedCount: 0, lastSubmissionId: null, lastStatus: null, processors: [{ id: 'gpu-cuda', languages: ['cuda'], bestSubmissionId: null, bestScore: null, recordScore: null }],
-   statementMarkdown: 'Сложите два вектора.', memoryLimitMb: 1024,
+  versionId: 'vector-add-v1', statementMarkdown: 'Сложите два вектора.', memoryLimitMb: 1024,
   processorDetails: [{ id: 'gpu-cuda', starters: { cuda: 'void solve() {}' }, limit: { value: 2000, type: 'TIME_MS' }, environmentMarkdown: 'NVIDIA A100' }],
 };
 

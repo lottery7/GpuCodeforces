@@ -114,7 +114,7 @@ describe('Fixture HTTP API', () => {
     expect(visible.rulesMarkdown).toContain('Сложение векторов');
     expect((await request('/problems?context=weekly-13', { cookie: author })).body.total).toBe(3);
     expect((await request('/contests/weekly-13/standings', { cookie: author })).body).toEqual([]);
-    expect((await request('/problems')).body.total).toBe(8);
+    expect((await request('/problems')).body.total).toBe(10);
   });
 
   it('allows removing the creator while keeping at least one author', async () => {
@@ -219,7 +219,7 @@ describe('Fixture HTTP API', () => {
     const contests = (await request('/contests?q=12&phase=live')).body;
     expect(contests.map(contest => contest.id)).toEqual(['weekly-12']);
     const paginated = (await request('/problems?offset=1&limit=2')).body;
-    expect(paginated.total).toBe(8);
+    expect(paginated.total).toBe(10);
     expect(paginated.items).toHaveLength(2);
   });
 
@@ -283,4 +283,99 @@ describe('Fixture HTTP API', () => {
     expect(created.body.processor).toBe('rtl');
     expect((await request('/contests?processor=rtl')).body.map(item => item.id)).toEqual([created.body.id]);
   }, 7000);
+  it('keeps guesses immutable, restores the attempt and hides the answer from other users', async () => {
+    const owner = await login('new_cuda');
+    const other = await login('alex_cuda');
+    const detail = (await request('/problems/guess-vector', { cookie: owner })).body;
+    expect(detail).toMatchObject({ format: 'guess', guessSubmissionId: null });
+    expect(detail.firstCode).toContain('void solve');
+    expect(detail).not.toHaveProperty('firstTimeMs');
+    const benchmarkKey = detail.processors[0].referenceMeasurement.key;
+    const guess = await request('/problems/guess-vector/guess', { method: 'POST', body: { choice: 'first', benchmarkKey }, cookie: owner });
+    expect(guess.status).toBe(200);
+    expect(guess.body).toMatchObject({ status: 'accepted', score: null, guessResult: { choice: 'first', correctChoice: 'first', firstScore: { type: 'TIME_MS' } } });
+    expect((await request('/problems/guess-vector', { cookie: owner })).body.guessSubmissionId).toBe(guess.body.id);
+    const repeated = await request('/problems/guess-vector/guess', { method: 'POST', body: { choice: 'first', benchmarkKey }, cookie: owner });
+    expect(repeated.body.id).toBe(guess.body.id);
+    expect((await request('/problems/guess-vector/guess', { method: 'POST', body: { choice: 'second', benchmarkKey }, cookie: owner })).status).toBe(400);
+    expect((await request(`/submissions/${guess.body.id}`, { cookie: other })).body).not.toHaveProperty('guessResult');
+    expect((await request('/problems?format=guess', { cookie: owner })).body.items.every(item => item.format === 'guess')).toBe(true);
+    expect((await request('/submissions', { method: 'POST', body: { problemId: 'guess-vector', code: 'void solve() {}', processor: 'gpu-cuda', language: 'cuda' }, cookie: owner })).status).toBe(400);
+  });
+
+  it('matches compatible random searches and chooses one common task after matching', async () => {
+    const owner = await login('alex_cuda');
+    const opponent = await login('new_cuda');
+    const outsider = await login('author_cuda');
+    const queued = await request('/duels', { method: 'POST', body: { mode: 'random', topics: ['Память'], processor: 'gpu-cuda' }, cookie: owner });
+    expect(queued.status).toBe(201);
+    expect(queued.body).toMatchObject({ status: 'queued', contestId: null });
+    expect(queued.body).not.toHaveProperty('problemId');
+    const matched = await request('/duels', { method: 'POST', body: { mode: 'random', topics: ['Матрицы'], processor: 'gpu-cuda' }, cookie: opponent });
+    expect(matched.status).toBe(201);
+    expect(matched.body.status).toBe('matched');
+    const current = (await request('/duels/current', { cookie: owner })).body;
+    expect(current.contestId).toBe(matched.body.contestId);
+    const room = (await request(`/contests/${current.contestId}`, { cookie: owner })).body;
+    expect(room).toMatchObject({ format: 'duel', registered: true, problemCount: 1 });
+    expect((await request(`/contests/${room.id}`, { cookie: opponent })).body.registered).toBe(true);
+    const task = (await request(`/problems/${room.problemIds[0]}?context=${room.id}`, { cookie: owner })).body;
+    expect(task.tags).toContain('Матрицы'); expect(task.tags).toContain('Память');
+    expect((await request(`/contests/${room.id}/registration`, { method: 'PUT', cookie: outsider })).status).toBe(403);
+    expect((await request(`/duels/${queued.body.id}`, { cookie: outsider })).status).toBe(403);
+  });
+
+  it('delivers a private persisted invitation and starts a duel only after acceptance', async () => {
+    const owner = await login('alex_cuda');
+    const opponent = await login('new_cuda');
+    const outsider = await login('author_cuda');
+    const created = await request('/duels', { method: 'POST', body: { mode: 'invite', opponentHandle: 'new_cuda', topics: ['Массивы'], processor: 'gpu-cuda' }, cookie: owner });
+    expect(created.body).toMatchObject({ status: 'invited', contestId: null });
+    expect((await request('/duels/current', { cookie: opponent })).status).toBe(204);
+    const notes = (await request('/notifications', { cookie: opponent })).body;
+    expect(notes.unreadCount).toBe(1);
+    expect(notes.items[0]).toMatchObject({ type: 'duel_invitation', duelRequestId: created.body.id, duelStatus: 'invited' });
+    expect((await request('/notifications', { cookie: outsider })).body.items).toEqual([]);
+    expect((await request(`/notifications/${notes.items[0].id}/read`, { method: 'PUT', cookie: outsider })).status).toBe(404);
+    expect((await request(`/notifications/${notes.items[0].id}/read`, { method: 'PUT', cookie: opponent })).status).toBe(204);
+    expect((await request('/notifications', { cookie: opponent })).body.unreadCount).toBe(0);
+    expect((await request(`/duels/${created.body.id}/accept`, { method: 'POST', cookie: owner })).status).toBe(403);
+    const accepted = await request(`/duels/${created.body.id}/accept`, { method: 'POST', cookie: opponent });
+    expect(accepted.body.status).toBe('matched');
+    expect((await request('/duels/current', { cookie: owner })).body.contestId).toBe(accepted.body.contestId);
+    expect((await request('/notifications', { cookie: owner })).body.items[0]).toMatchObject({ type: 'duel_started', contestId: accepted.body.contestId });
+  });
+
+  it('persists declined and cancelled invitations and prevents accepting stale invitations', async () => {
+    const owner = await login('alex_cuda');
+    const opponent = await login('new_cuda');
+    const body = { mode: 'invite', opponentHandle: 'new_cuda', topics: [], processor: 'gpu-cuda' };
+    const first = (await request('/duels', { method: 'POST', body, cookie: owner })).body;
+    expect((await request(`/duels/${first.id}/decline`, { method: 'POST', cookie: opponent })).body.status).toBe('declined');
+    expect((await request('/duels/current', { cookie: owner })).status).toBe(204);
+    expect((await request('/notifications', { cookie: owner })).body.items[0]).toMatchObject({ type: 'duel_declined', duelStatus: 'declined' });
+    const second = (await request('/duels', { method: 'POST', body, cookie: owner })).body;
+    expect((await request(`/duels/${second.id}/cancel`, { method: 'POST', cookie: owner })).body.status).toBe('cancelled');
+    expect((await request(`/duels/${second.id}/accept`, { method: 'POST', cookie: opponent })).status).toBe(400);
+    const notifications = (await request('/notifications', { cookie: opponent })).body.items;
+    expect(notifications.find(item => item.type === 'duel_invitation' && item.duelRequestId === second.id).duelStatus).toBe('cancelled');
+    expect(notifications[0].type).toBe('duel_cancelled');
+    expect((await request('/runtime')).body).toEqual({ executionMode: 'mock', gpuName: null });
+  });
+
+  it('publishes a comparison from two own accepted submissions without publishing measurements', async () => {
+    const cookie = await login('alex_cuda');
+    const queued = await request('/submissions', { method: 'POST', body: { problemId: 'vector-addition', code: 'void solve() {}', processor: 'gpu-cuda', language: 'cuda' }, cookie });
+    await waitForStatus(queued.body.id, 'accepted', cookie);
+    const created = await request('/problems/vector-addition/comparisons', { method: 'POST', body: { firstSubmissionId: '1042', secondSubmissionId: queued.body.id, explanation: 'Разные размеры блока.' }, cookie });
+    expect(created.status).toBe(201);
+    expect(created.body.format).toBe('guess');
+    const detail = (await request(`/problems/${created.body.id}`)).body;
+    expect(detail.firstCode).toContain('void solve');
+    expect(detail.secondCode).toBe('void solve() {}');
+    expect(detail).not.toHaveProperty('firstTimeMs');
+    expect(detail).not.toHaveProperty('explanation');
+    const other = await login('new_cuda');
+    expect((await request('/problems/vector-addition/comparisons', { method: 'POST', body: { firstSubmissionId: '1042', secondSubmissionId: queued.body.id, explanation: 'Чужие посылки.' }, cookie: other })).status).toBe(400);
+  });
 });

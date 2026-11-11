@@ -24,6 +24,7 @@ spring:
 platform:
   judge:
     gateway-url: ${JUDGE_GATEWAY_URL:http://localhost:8090}
+    execution-mode: ${JUDGE_MODE:gpu}
   admin:
     # Comma-separated handles of administrators (Groovy console, problem import).
     handles: ${ADMIN_HANDLES:}

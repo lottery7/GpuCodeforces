@@ -4,6 +4,9 @@ import dev.gpucodeforces.backend.processor.KnownTest
 import dev.gpucodeforces.judge.api.CSignature
 import dev.gpucodeforces.judge.api.CudaSignature
 import dev.gpucodeforces.judge.api.MemorySpace
+import dev.gpucodeforces.backend.api.model.Benchmark
+import dev.gpucodeforces.backend.api.model.BenchmarkAggregation
+import dev.gpucodeforces.backend.api.model.MeasurementTiming
 import dev.gpucodeforces.judge.api.ProblemSpec
 import dev.gpucodeforces.judge.api.ProcessorSpec
 import dev.gpucodeforces.judge.api.Processors
@@ -90,7 +93,7 @@ fun environmentMarkdown(spec: ProblemSpec, processor: ProcessorSpec, model: Stri
 private fun gpuRows(spec: ProblemSpec): List<String> {
     val timing = when (spec.timing.effectiveMode) {
         TimingMode.WALL -> "весь вызов `solve` до завершения запущенной им работы на GPU"
-        TimingMode.GPU_KERNELS -> "суммарное время ядер, запущенных `solve`"
+        TimingMode.GPU_KERNELS -> "время выполнения ядер, запущенных `solve`, без двойного подсчёта пересекающихся запусков"
     }
     val memory = spec.signature.arrays.joinToString(", ") { "${it.name}: ${if (it.memory == MemorySpace.HOST) "память CPU" else "память GPU"}" }
     return listOf(
@@ -118,4 +121,20 @@ private fun testsMarkdown(tests: List<KnownTest>?): String {
         "${index + 1}. `${test.name}`${if (test.sample) " (пример)" else ""} — $kind"
     }
     return (listOf("Тесты этого процессора:", "") + lines).joinToString("\n")
+}
+
+/**
+ * How results of a format are compared on [processor]: the aggregation over the measured tests, and on the real GPU
+ * also how a test is timed. [model] is hidden in the test mode, where nothing runs.
+ */
+fun benchmark(spec: ProblemSpec, data: ProblemFormatData, processor: String, model: String?, synthetic: Boolean): Benchmark {
+    val gpu = processor == Processors.GPU_CUDA
+    return Benchmark()
+        .inputDescription(data.benchmark?.inputDescription ?: "Набор тестов задачи")
+        .aggregation(BenchmarkAggregation.fromValue(data.aggregation()))
+        .timingMode(if (gpu) MeasurementTiming.fromValue(spec.timing.effectiveMode.name.lowercase()) else null)
+        .warmupRuns(if (gpu) spec.timing.warmupRuns else null)
+        .maxRuns(if (gpu) spec.timing.maxRuns else null)
+        .model(model.takeUnless { synthetic })
+        .synthetic(synthetic)
 }

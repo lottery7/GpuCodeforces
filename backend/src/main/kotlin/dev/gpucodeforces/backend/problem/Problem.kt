@@ -20,6 +20,8 @@ class Problem(
     var currentVersionId: UUID? = null,
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: Instant = Instant.now(),
+    @Column(nullable = false)
+    val source: String = "package",
 ) {
     override fun equals(other: Any?) = this === other || (other is Problem && id == other.id)
 
@@ -66,6 +68,11 @@ class ProblemVersion(
     @Column(name = "judge_hash", nullable = false)
     val judgeHash: String,
     val revision: String?,
+    @Column(nullable = false)
+    val format: String = ProblemFormatData.STANDARD,
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "format_data", nullable = false)
+    val formatData: String = "{}",
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: Instant = Instant.now(),
 ) {

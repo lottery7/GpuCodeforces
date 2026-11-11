@@ -15,7 +15,7 @@ vi.mock('../src/auth', () => ({ useSession: () => ({ user: session.user, isLoadi
 const author: User = { id: 'author', handle: 'contest_author', ratings: {} };
 const participant: User = { ...author, id: 'participant', handle: 'new_cuda' };
 const problem: Problem = {
-  id: 'vector-add', code: '100', title: 'Сложение векторов', difficulty: 'easy', tags: ['Массивы'],
+  id: 'vector-add', code: '100', title: 'Сложение векторов', difficulty: 'easy', format: 'standard', tags: ['Массивы'],
   solved: false, solvedCount: 0, lastSubmissionId: null, lastStatus: null, processors: [{ id: 'gpu-cuda', languages: ['cuda'], bestSubmissionId: null, bestScore: null, recordScore: null }],
   
 };
@@ -23,7 +23,7 @@ const problem: Problem = {
 function contest(phase: 'upcoming' | 'live' | 'finished'): ContestRecord {
   const now = Date.now();
   return {
-    id: 'cuda-round', title: 'CUDA Round', startAt: new Date(now + (phase === 'upcoming' ? 3600000 : -7200000)).toISOString(),
+    id: 'cuda-round', title: 'CUDA Round', format: 'standard', startAt: new Date(now + (phase === 'upcoming' ? 3600000 : -7200000)).toISOString(),
     endAt: new Date(now + (phase === 'finished' ? -3600000 : 7200000)).toISOString(), authors: [author],
     problemIds: [problem.id], problemCount: 1, registered: false, processor: 'gpu-cuda',
   };

@@ -203,6 +203,7 @@ services:
       JUDGE_GATEWAY_URL: http://judge-gateway:8090
       # processors offered on the platform; the same list as the gateway's
       PROCESSORS: ${JUDGE_PROCESSORS:-gpu-cuda}
+      JUDGE_MODE: ${JUDGE_MODE:-gpu}
       # the model shown for gpu-cuda
       GPU_NAME: ${JUDGE_GPU_NAME:-NVIDIA GeForce RTX 3060}
       # the problem bank follows the problem repository (cloned into the volume, pulled every minute)

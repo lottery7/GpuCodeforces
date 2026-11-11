@@ -4,7 +4,8 @@ info:
   version: 0.1.0
   description: |
     Предлагаемый контракт MVP. Все даты в UTC. Посылка проверяется на процессоре (реальная GPU или эмулятор) и
-    получает score с типом (Score): меньше - лучше, сравнимы только score одного процессора.
+    получает score с типом (Score): меньше - лучше, сравнимы только score одного процессора. Форматы (оптимизация,
+    угадывание) и дуэли работают на любом процессоре; метрика сравнения указана в benchmark процессора.
     Только публичные задачи; подготовка задач и API воркера находятся вне этого контракта.
     Сессия в HttpOnly cookie с Secure и SameSite=Lax. Запросы с телом используют
     application/json; для изменяющих запросов сервер проверяет Origin. Фронт и API на одном origin.
@@ -17,6 +18,131 @@ servers:
   - url: /api
 security: [{}, {session: []}]
 paths:
+  /runtime:
+    get:
+      operationId: getRuntime
+      responses:
+        '200':
+          description: Режим проверки решений.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RuntimeInfo'}
+        default: {$ref: '#/components/responses/Error'}
+  /duels/topics:
+    get:
+      operationId: listDuelTopics
+      parameters:
+        - {name: processor, in: query, schema: {type: string}, description: 'Только задачи этого процессора; без него - любого процессора платформы.'}
+      responses:
+        '200':
+          description: Темы опубликованных задач с отправкой кода.
+          content:
+            application/json:
+              schema: {type: array, items: {type: string}}
+        default: {$ref: '#/components/responses/Error'}
+  /duels/current:
+    get:
+      operationId: getCurrentDuel
+      security: [{session: []}]
+      responses:
+        '200':
+          description: Свой поиск, исходящее приглашение или начавшаяся дуэль.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DuelRequest'}
+        '204': {description: Активного запроса или дуэли нет.}
+        default: {$ref: '#/components/responses/Error'}
+  /duels:
+    post:
+      operationId: createDuel
+      security: [{session: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateDuelRequest'}
+      responses:
+        '201':
+          description: Запрос создан; при подборе соперника дуэль уже началась.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DuelRequest'}
+        default: {$ref: '#/components/responses/Error'}
+  /duels/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      operationId: getDuel
+      security: [{session: []}]
+      responses:
+        '200':
+          description: Текущее состояние; доступно только участникам запроса.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DuelRequest'}
+        default: {$ref: '#/components/responses/Error'}
+  /duels/{id}/accept:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      operationId: acceptDuel
+      security: [{session: []}]
+      responses:
+        '200':
+          description: Текущее состояние; доступно только участникам запроса.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DuelRequest'}
+        default: {$ref: '#/components/responses/Error'}
+  /duels/{id}/decline:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      operationId: declineDuel
+      security: [{session: []}]
+      responses:
+        '200':
+          description: Текущее состояние; доступно только участникам запроса.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DuelRequest'}
+        default: {$ref: '#/components/responses/Error'}
+  /duels/{id}/cancel:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      operationId: cancelDuel
+      security: [{session: []}]
+      responses:
+        '200':
+          description: Текущее состояние; доступно только участникам запроса.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DuelRequest'}
+        default: {$ref: '#/components/responses/Error'}
+  /notifications:
+    get:
+      operationId: listNotifications
+      security: [{session: []}]
+      parameters:
+        - {$ref: '#/components/parameters/Offset'}
+        - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: Новые первыми; счетчик всех непрочитанных уведомлений.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/NotificationPage'}
+        default: {$ref: '#/components/responses/Error'}
+  /notifications/{id}/read:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    put:
+      operationId: readNotification
+      security: [{session: []}]
+      responses:
+        '204': {description: Уведомление прочитано.}
+        default: {$ref: '#/components/responses/Error'}
   /session:
     get:
       operationId: getCurrentUser
@@ -159,6 +285,7 @@ paths:
         - {$ref: '#/components/parameters/Context'}
         - {$ref: '#/components/parameters/Query'}
         - {name: difficulty, in: query, schema: {type: string, enum: [easy, medium, hard]}}
+        - {name: format, in: query, schema: {type: string, enum: [standard, optimization, guess]}}
         - {name: tag, in: query, schema: {type: string}}
         - {name: solved, in: query, schema: {type: boolean}}
         - {name: processor, in: query, description: Только задачи этого процессора., schema: {type: string}}
@@ -199,11 +326,79 @@ paths:
                     required: [statementMarkdown, memoryLimitMb, processorDetails]
                     properties:
                       statementMarkdown: {type: string, description: 'Условие с сигнатурой, примерами, ограничениями входа и допусками.'}
+                      versionId: {type: string, description: ID неизменяемой версии задачи.}
+                      firstCode: {type: string, nullable: true, description: Первый вариант для угадывания; без score и ответа.}
+                      secondCode: {type: string, nullable: true, description: Второй вариант для угадывания; без score и ответа.}
+                      guessSubmissionId: {type: string, nullable: true, description: 'Своя попытка угадывания этой версии, контекста и активных условий измерения; null до ответа.'}
                       memoryLimitMb: {type: integer}
                       processorDetails:
                         type: array
                         description: По каждому процессору из processors, в том же порядке.
                         items: {$ref: '#/components/schemas/ProblemProcessorDetail'}
+        default: {$ref: '#/components/responses/Error'}
+  /problems/{id}/comparisons:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      operationId: createComparison
+      summary: Создать угадывание из своих принятых решений
+      description: |
+        Публикует новую задачу guess с двумя своими кодами. Посылки должны быть разными,
+        принятыми и относиться к одной публичной задаче, конфигурации проверки и GPU платформы.
+        Посылки текущего контеста использовать нельзя. Времена и объяснение открываются после ответа.
+      security: [{session: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              title: CreateComparisonRequest
+              type: object
+              required: [firstSubmissionId, secondSubmissionId, explanation]
+              properties:
+                firstSubmissionId: {type: string}
+                secondSubmissionId: {type: string}
+                explanation: {type: string, minLength: 1, maxLength: 4000}
+      responses:
+        '201':
+          description: Новая задача доступна в банке.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        default: {$ref: '#/components/responses/Error'}
+  /problems/{id}/guess:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    post:
+      operationId: submitGuess
+      summary: Угадать более быстрый код
+      description: |
+        Одна попытка на пользователя, версию задачи, условия измерения и контекст. Повтор того же выбора возвращает
+        сохраненную посылку; изменить ответ нельзя. В контесте нужны регистрация и текущая фаза live.
+        Ответ проверяет backend по готовым эталонным измерениям. До состояния ready возвращается 503.
+        Результат и объяснение доступны только автору попытки; сохраненные времена не меняются при смене окружения.
+        benchmarkKey должен совпадать с текущим referenceMeasurement.key; устаревшие условия возвращают 400 без сохранения попытки.
+      security: [{session: []}]
+      parameters:
+        - {$ref: '#/components/parameters/Context'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              title: SubmitGuessRequest
+              type: object
+              required: [choice, benchmarkKey]
+              properties:
+                choice: {$ref: '#/components/schemas/GuessChoice'}
+                benchmarkKey: {type: string, minLength: 1, description: Ключ эталонного измерения из актуального GET задачи.}
+      responses:
+        '200':
+          description: Сохраненный ответ; score равен null, guessResult содержит разбор.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Submission'}
+        '503': {$ref: '#/components/responses/Error'}
         default: {$ref: '#/components/responses/Error'}
   /problems/{id}/example:
     parameters:
@@ -212,7 +407,7 @@ paths:
       operationId: checkExample
       security: [{session: []}]
       summary: Проверить решение на примере из условия
-      description: Ждет результата; не создает посылку и не меняет рекорды.
+      description: Ждет результата; не создает посылку и не меняет рекорды. Недоступно для формата guess.
       parameters:
         - {$ref: '#/components/parameters/Context'}
       requestBody:
@@ -370,7 +565,7 @@ paths:
             schema: {$ref: '#/components/schemas/ContestInput'}
       responses:
         '201':
-          description: Контест создан; авторство не регистрирует для участия
+          description: Контест создан; авторство не регистрирует для участия. Дуэли создаются через /duels.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Contest'}
@@ -391,7 +586,7 @@ paths:
     put:
       operationId: updateContest
       summary: Изменить контест до начала
-      description: Только текущим авторам. Список authorIds заменяется целиком; создателя можно убрать, если остается другой автор.
+      description: Только текущим авторам обычного контеста. Список authorIds заменяется целиком; создателя можно убрать, если остается другой автор. Дуэли через этот маршрут не редактируются.
       security: [{session: []}]
       requestBody:
         required: true
@@ -411,7 +606,7 @@ paths:
     put:
       operationId: registerForContest
       summary: Зарегистрироваться в контесте
-      description: До завершения контеста. Повторный запрос имеет тот же результат.
+      description: До завершения контеста. Повторный запрос имеет тот же результат. В дуэль может вступить только указанный соперник или уже зарегистрированный инициатор.
       security: [{session: []}]
       responses:
         '204': {description: Пользователь зарегистрирован}
@@ -425,8 +620,8 @@ paths:
       description: |
         Сначала число решенных задач, затем меньшее суммарное время сдачи. Задача решена, если принята хотя бы одна
         посылка (верный ответ в пределах лимита score на процессоре контеста); время сдачи задачи — от начала
-        контеста до первой принятой посылки. Сам score и неверные попытки на место не влияют. Равные результаты
-        имеют одинаковое место. До начала список пуст.
+        контеста до первой принятой посылки. Сам score и неверные попытки на место не влияют. Правильный ответ guess
+        считается принятой посылкой без прогона. Равные результаты имеют одинаковое место. До начала список пуст.
       responses:
         '200':
           description: Только результаты этого контеста; обновление обычным GET
@@ -522,6 +717,111 @@ components:
             properties:
               message: {type: string}
   schemas:
+    DuelMode:
+      type: string
+      enum: [random, invite]
+    DuelStatus:
+      type: string
+      enum: [queued, invited, matched, declined, cancelled, expired]
+    CreateDuelRequest:
+      type: object
+      required: [mode, topics, processor]
+      properties:
+        mode: {$ref: '#/components/schemas/DuelMode'}
+        processor: {type: string, description: 'Процессор дуэли; задача подбирается из тех, что можно сдавать на нем.'}
+        opponentHandle: {type: string, minLength: 1, maxLength: 32}
+        topics: {type: array, uniqueItems: true, maxItems: 20, items: {type: string}}
+    DuelRequest:
+      type: object
+      required: [id, mode, status, creator, opponent, topics, createdAt, expiresAt, contestId, processor]
+      properties:
+        id: {type: string}
+        mode: {$ref: '#/components/schemas/DuelMode'}
+        processor: {type: string}
+        status: {$ref: '#/components/schemas/DuelStatus'}
+        creator: {$ref: '#/components/schemas/User'}
+        opponent:
+          allOf:
+            - {$ref: '#/components/schemas/User'}
+          nullable: true
+        topics: {type: array, items: {type: string}}
+        createdAt: {type: string, format: date-time}
+        expiresAt: {type: string, format: date-time}
+        contestId: {type: string, nullable: true}
+    NotificationType:
+      type: string
+      enum: [duel_invitation, duel_started, duel_declined, duel_cancelled]
+    Notification:
+      type: object
+      required: [id, type, message, duelRequestId, duelStatus, contestId, createdAt, readAt]
+      properties:
+        id: {type: string}
+        type: {$ref: '#/components/schemas/NotificationType'}
+        message: {type: string}
+        duelRequestId: {type: string}
+        duelStatus: {$ref: '#/components/schemas/DuelStatus'}
+        contestId: {type: string, nullable: true}
+        createdAt: {type: string, format: date-time}
+        readAt: {type: string, format: date-time, nullable: true}
+    NotificationPage:
+      type: object
+      required: [items, total, unreadCount]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/Notification'}}
+        total: {type: integer}
+        unreadCount: {type: integer}
+    ExecutionMode:
+      type: string
+      enum: [gpu, mock]
+    RuntimeInfo:
+      type: object
+      required: [executionMode, gpuName]
+      properties:
+        executionMode: {$ref: '#/components/schemas/ExecutionMode'}
+        gpuName: {type: string, nullable: true}
+    BenchmarkAggregation:
+      type: string
+      enum: [max, geometric_mean]
+    MeasurementTiming:
+      type: string
+      enum: [wall, gpu_kernels]
+    ReferenceMeasurementStatus:
+      type: string
+      enum: [pending, running, ready, failed]
+    ReferenceMeasurement:
+      type: object
+      required: [status]
+      properties:
+        key: {type: string, nullable: true, description: Ключ версии задачи и условий измерения; меняется при смене окружения.}
+        status: {$ref: '#/components/schemas/ReferenceMeasurementStatus'}
+        measuredAt: {type: string, format: date-time, nullable: true}
+        diagnostic: {type: string, nullable: true, description: Краткая причина ошибки эталонного измерения.}
+    Benchmark:
+      type: object
+      description: Как сравниваются результаты формата на процессоре. timingMode, warmupRuns и maxRuns есть только у gpu-cuda.
+      required: [inputDescription, aggregation, timingMode, warmupRuns, maxRuns, model, synthetic]
+      properties:
+        inputDescription: {type: string}
+        aggregation: {$ref: '#/components/schemas/BenchmarkAggregation'}
+        timingMode:
+          allOf: [{$ref: '#/components/schemas/MeasurementTiming'}]
+          nullable: true
+        warmupRuns: {type: integer, nullable: true}
+        maxRuns: {type: integer, nullable: true}
+        model: {type: string, nullable: true, description: 'Модель процессора (у gpu-cuda - GPU); null в тестовом режиме.'}
+        synthetic: {type: boolean}
+    MeasurementSummary:
+      type: object
+      required: [aggregation, timingMode, model, synthetic, testCount]
+      properties:
+        aggregation: {$ref: '#/components/schemas/BenchmarkAggregation'}
+        timingMode:
+          allOf: [{$ref: '#/components/schemas/MeasurementTiming'}]
+          nullable: true
+          description: Только у gpu-cuda.
+        model: {type: string, nullable: true}
+        synthetic: {type: boolean}
+        testCount: {type: integer, description: Число замерных тестов в итоговом score.}
     Score:
       type: object
       description: Результат на процессоре; меньше - лучше. Единица выводится из type.
@@ -584,6 +884,14 @@ components:
         recordScore:
           allOf: [{$ref: '#/components/schemas/Score'}]
           nullable: true
+        baselineScore:
+          allOf: [{$ref: '#/components/schemas/Score'}]
+          nullable: true
+          description: 'Оптимизация: автоматически измеренный score исходного решения на этом процессоре; только при referenceMeasurement.status=ready.'
+        referenceMeasurement:
+          allOf: [{$ref: '#/components/schemas/ReferenceMeasurement'}]
+          nullable: true
+          description: Эталонный замер формата на этом процессоре; null у обычных задач.
     ProblemProcessorDetail:
       type: object
       required: [id, starters, limit, environmentMarkdown]
@@ -595,6 +903,7 @@ components:
           additionalProperties: {type: string}
         limit: {$ref: '#/components/schemas/Score'}
         environmentMarkdown: {type: string, description: 'Процессор, модель, лимит, правила замера и тесты процессора.'}
+        benchmark: {$ref: '#/components/schemas/Benchmark'}
     Problem:
       type: object
       description: |
@@ -606,6 +915,7 @@ components:
         code: {type: string, description: Номер задачи в банке.}
         title: {type: string}
         difficulty: {type: string, enum: [easy, medium, hard]}
+        format: {type: string, enum: [standard, optimization, guess], default: standard}
         tags: {type: array, items: {type: string}}
         solved: {type: boolean, description: 'В практике учитывает решение в любом контексте, в контесте - только в нем; без userId и сессии false.'}
         solvedCount: {type: integer, description: Число участников с solved=true.}
@@ -619,6 +929,7 @@ components:
         id: {type: string}
         problemId: {type: string}
         problemTitle: {type: string}
+        format: {type: string, enum: [standard, optimization, guess], default: standard}
         user: {$ref: '#/components/schemas/User'}
         contestId: {type: string, nullable: true, description: null - практика.}
         contestTitle: {type: string, nullable: true}
@@ -642,14 +953,36 @@ components:
           description: 'В детали посылки; дополнительные числа результата (например cycles и cells у rtl).'
           additionalProperties: {type: number}
         environmentMarkdown: {type: string, description: В детали посылки; сохраненное оборудование и методика замера.}
+        measurement: {$ref: '#/components/schemas/MeasurementSummary'}
         code: {type: string, description: 'Только автору в GET /submissions/{id}.'}
         diagnostic: {type: string, description: 'Только автору в GET /submissions/{id}.'}
+        guessResult:
+          allOf:
+            - {$ref: '#/components/schemas/GuessResult'}
+          description: Только автору попытки guess в детали и ответе submitGuess. В списках отсутствует.
+    GuessChoice:
+      type: string
+      enum: [first, second, equal]
+    GuessResult:
+      type: object
+      required: [choice, correctChoice, firstScore, secondScore, explanation]
+      properties:
+        benchmarkKey: {type: string, description: Сохраненный ключ условий измерения этой попытки.}
+        synthetic: {type: boolean, description: Сохраненная пометка тестовых результатов этой попытки.}
+        choice: {$ref: '#/components/schemas/GuessChoice'}
+        correctChoice: {$ref: '#/components/schemas/GuessChoice'}
+        firstScore: {$ref: '#/components/schemas/Score'}
+        secondScore: {$ref: '#/components/schemas/Score'}
+        explanation: {type: string}
     Contest:
       type: object
       required: [id, title, startAt, endAt, authors, problemIds, problemCount, registered, processor]
       properties:
         id: {type: string}
         title: {type: string}
+        format: {type: string, enum: [standard, duel], default: standard}
+        challengerId: {type: string, nullable: true, description: Инициатор дуэли; null у обычного контеста.}
+        opponentId: {type: string, nullable: true, description: Приглашенный соперник; null у обычного контеста.}
         startAt: {type: string, format: date-time}
         endAt: {type: string, format: date-time}
         authors: {type: array, items: {$ref: '#/components/schemas/User'}}
@@ -661,11 +994,13 @@ components:
     ContestInput:
       type: object
       description: |
-        startAt в будущем, endAt позже startAt. Только публичные задачи, которые можно сдавать на processor;
-        их порядок задает problemIds.
+        Обычный контест; startAt в будущем, endAt позже startAt. Только публичные задачи, которые можно сдавать на
+        processor; их порядок задает problemIds. Для дуэли используйте POST /duels.
       required: [title, startAt, endAt, authorIds, problemIds, processor]
       properties:
         title: {type: string, minLength: 1, maxLength: 100}
+        format: {type: string, enum: [standard, duel], default: standard}
+        opponentId: {type: string, nullable: true, deprecated: true, description: Поле старого формата; дуэли создаются через /duels.}
         startAt: {type: string, format: date-time}
         endAt: {type: string, format: date-time}
         authorIds: {type: array, minItems: 1, uniqueItems: true, items: {type: string}}

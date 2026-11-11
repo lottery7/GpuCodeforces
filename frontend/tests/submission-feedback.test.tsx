@@ -13,7 +13,7 @@ vi.mock('../src/auth', () => ({ useSession: () => ({ user: owner, isLoading: fal
 vi.mock('../src/components/CodeEditor', () => ({ default: () => <div>Исходный код</div> }));
 
 const record: SubmissionRecord = {
-  id: '42', problemId: 'vector-add', problemTitle: 'Сложение векторов', user: owner,
+  id: '42', problemId: 'vector-add', problemTitle: 'Сложение векторов', format: 'standard', user: owner,
   contestId: null, contestTitle: null, createdAt: '2026-01-01T10:00:00Z', status: 'system_error',
   processor: 'gpu-cuda', language: 'cuda', score: null, comparable: false, code: 'void solve() {}', diagnostic: 'GPU недоступна.\n'.repeat(100),
 };

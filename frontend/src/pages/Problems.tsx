@@ -5,7 +5,7 @@ import type { ProblemQuery } from '../api/types';
 import { useSession } from '../auth';
 import { useProcessors } from '../processors';
 import { Empty, PageHeader, Pagination, QueryState, ScoreValue, SearchInput } from '../ui';
-import { difficultyLabels, problemPath } from '../utils';
+import { difficultyLabels, formatLabels, problemPath } from '../utils';
 
 const limit = 20;
 
@@ -17,10 +17,12 @@ export default function Problems() {
   const sort = params.get('sort') || 'code';
   const status = params.get('status') || '';
   const processor = params.get('processor') || '';
+  const format = params.get('format') || '';
   const catalog = useProcessors();
   const offset = Math.max(0, Number.parseInt(params.get('offset') || '0', 10) || 0);
   const query: ProblemQuery = {
     context: 'practice',
+    format: format === 'standard' || format === 'optimization' || format === 'guess' ? format : undefined,
     q: params.get('q') || undefined,
     difficulty: difficulty === 'easy' || difficulty === 'medium' || difficulty === 'hard' ? difficulty : undefined,
     tag: params.get('tag') || undefined,
@@ -44,7 +46,7 @@ export default function Problems() {
     setParams(next, { replace: true });
   }
   const personal = Boolean(user || target);
-  const hasFilters = Boolean(params.get('q') || difficulty || params.get('tag') || status || processor);
+  const hasFilters = Boolean(params.get('q') || difficulty || params.get('tag') || status || processor || format);
   const scores = Boolean(processor);
   return <>
     <PageHeader title={target ? 'Задачи участника' : 'Задачи'} />
@@ -57,6 +59,9 @@ export default function Problems() {
       }}>
         <option value="">Все процессоры</option>
         {catalog.processors.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
+      </select>
+      <select aria-label="Формат задачи" value={format} onChange={event => patch({ format: event.target.value })}>
+        <option value="">Все форматы</option>{Object.entries(formatLabels).map(([value, title]) => <option key={value} value={value}>{title}</option>)}
       </select>
       <select aria-label="Сложность" value={difficulty} onChange={event => patch({ difficulty: event.target.value })}>
         <option value="">Сложность</option>
@@ -78,12 +83,13 @@ export default function Problems() {
             <thead><tr><th aria-label="Решена" /><th><button className="text-link" onClick={() => patch({ sort: 'code' })}>Задача</button></th><th><button className="text-link" onClick={() => patch({ sort: 'difficulty' })}>Сложность</button></th><th>Решили</th>{scores && <th>Рекорд</th>}{scores && personal && <th><button className="text-link" onClick={() => patch({ sort: 'bestScore' })}>Личный рекорд</button></th>}</tr></thead>
             <tbody>{problems.data.items.map(problem => {
               const onProcessor = problem.processors.find(item => item.id === processor);
+              const guess = problem.format === 'guess';
               return <tr key={problem.id}>
                 <td>{problem.solved && <span className="accepted" aria-label="Решена">✓</span>}</td>
                 <td><Link className="task-link" to={problemPath(problem.id, 'practice', undefined, onProcessor ? { processor: onProcessor.id, language: onProcessor.languages[0] ?? '' } : undefined)}>{problem.code}. {problem.title}</Link><div className="subline">{problem.tags.map((tag, index) => <span key={tag}>{index > 0 && ' / '}<button className="text-link tag" onClick={() => patch({ tag })}>{tag}</button></span>)}{!processor && problem.processors.length > 0 && <span className="muted"> · {problem.processors.map(item => catalog.title(item.id)).join(', ')}</span>}</div></td>
-                <td>{difficultyLabels[problem.difficulty]}</td><td>{problem.solvedCount}</td>
-                {scores && <td><ScoreValue score={onProcessor?.recordScore} /></td>}
-                {scores && personal && <td className="mono">{onProcessor?.bestSubmissionId ? <Link to={`/submission/${encodeURIComponent(onProcessor.bestSubmissionId)}`}><ScoreValue score={onProcessor.bestScore} /></Link> : <ScoreValue score={onProcessor?.bestScore} />}</td>}
+                <td>{difficultyLabels[problem.difficulty]}<div className="subline">{formatLabels[problem.format ?? 'standard']}</div></td><td>{problem.solvedCount}</td>
+                {scores && <td>{guess ? '-' : <ScoreValue score={onProcessor?.recordScore} />}</td>}
+                {scores && personal && <td className="mono">{guess ? problem.solved ? '+' : '-' : onProcessor?.bestSubmissionId ? <Link to={`/submission/${encodeURIComponent(onProcessor.bestSubmissionId)}`}><ScoreValue score={onProcessor.bestScore} /></Link> : <ScoreValue score={onProcessor?.bestScore} />}</td>}
               </tr>;
             })}</tbody>
           </table>

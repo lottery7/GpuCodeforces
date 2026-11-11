@@ -12,7 +12,7 @@ import org.testcontainers.junit.jupiter.Testcontainers
 import org.testcontainers.postgresql.PostgreSQLContainer
 import java.math.BigDecimal
 
-/** V8 on a database with data from before processors: everything becomes gpu-cuda and nothing is lost. */
+/** V14 on a database with data from before processors: everything becomes gpu-cuda and nothing is lost. */
 @Tag("integration")
 @Testcontainers
 class ProcessorsMigrationIntegrationTest {
@@ -25,10 +25,10 @@ class ProcessorsMigrationIntegrationTest {
 
     @Test
     fun `existing submissions, contests, problems and ratings move to gpu-cuda`() {
-        migrateTo("7")
+        migrateTo("13")
         jdbc.execute(BEFORE)
 
-        migrateTo("8")
+        migrateTo("14")
 
         val submission = jdbc.queryForMap("SELECT processor, language, score, score_type, previous_best_score, metrics::text AS metrics FROM gpucodeforces.submissions WHERE id = '00000000-0000-0000-0000-000000000005'")
         assertThat(submission["processor"]).isEqualTo("gpu-cuda")

@@ -18,13 +18,13 @@ vi.mock('../src/components/CodeEditor', () => ({
 const owner: User = { id: 'owner', handle: 'cuda_user', ratings: {} };
 const starter = 'void solve() {}';
 const problem: ProblemDetail = {
-  id: 'vector-add', code: '100', title: 'Сложение векторов', difficulty: 'easy', tags: ['Массивы'],
+  id: 'vector-add', code: '100', title: 'Сложение векторов', difficulty: 'easy', format: 'standard', tags: ['Массивы'],
   solved: false, solvedCount: 0, lastSubmissionId: null, lastStatus: null, processors: [{ id: 'gpu-cuda', languages: ['cuda'], bestSubmissionId: null, bestScore: null, recordScore: null }],
-   statementMarkdown: 'Сложите два вектора.', memoryLimitMb: 1024,
+  versionId: 'vector-add-v1', statementMarkdown: 'Сложите два вектора.', memoryLimitMb: 1024,
   processorDetails: [{ id: 'gpu-cuda', starters: { cuda: 'void solve() {}' }, limit: { value: 2000, type: 'TIME_MS' }, environmentMarkdown: 'NVIDIA A100' }],
 };
 const record: SubmissionRecord = {
-  id: '42', problemId: problem.id, problemTitle: problem.title, user: owner,
+  id: '42', problemId: problem.id, problemTitle: problem.title, format: 'standard', user: owner,
   contestId: 'finished-contest', contestTitle: 'Прошедшее соревнование', createdAt: '2026-01-01T10:00:00Z',
   status: 'measurement_error', processor: 'gpu-cuda', language: 'cuda', score: null, comparable: false, code: 'void solve() {}', diagnostic: 'GPU недоступна.',
 };
@@ -58,7 +58,7 @@ describe('Решение задачи', () => {
   it('обновляет лидеров на границе окончания контеста и останавливает опрос', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T10:00:00Z'));
-    const contest: Contest = { id: 'round', title: 'Контест', startAt: '2026-01-01T09:00:00Z', endAt: '2026-01-01T10:00:02Z', authors: [owner], problemIds: [problem.id], problemCount: 1, registered: true, processor: 'gpu-cuda' };
+    const contest: Contest = { id: 'round', title: 'Контест', format: 'standard', startAt: '2026-01-01T09:00:00Z', endAt: '2026-01-01T10:00:02Z', authors: [owner], problemIds: [problem.id], problemCount: 1, registered: true, processor: 'gpu-cuda' };
     vi.spyOn(api, 'getProblem').mockResolvedValue(problem);
     const getContest = vi.spyOn(api, 'getContest').mockResolvedValue(contest);
     const leaders = vi.spyOn(api, 'problemLeaders').mockResolvedValue([]);

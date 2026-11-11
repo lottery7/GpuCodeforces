@@ -78,3 +78,25 @@ CREATE TABLE gpucodeforces.processor_tests (
     updated_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (judge_hash, processor)
 );
+
+-- Formats on every processor (docs/backend/formats.md). A reference job measures one solution on one processor in one
+-- language, and its result is a score of that processor; the jobs so far measured CUDA on the real GPU.
+ALTER TABLE gpucodeforces.reference_jobs
+    ADD COLUMN processor TEXT NOT NULL DEFAULT 'gpu-cuda',
+    ADD COLUMN language TEXT NOT NULL DEFAULT 'cuda',
+    ADD COLUMN score_type TEXT;
+ALTER TABLE gpucodeforces.reference_jobs RENAME COLUMN time_ms TO score;
+UPDATE gpucodeforces.reference_jobs SET score_type = 'TIME_MS' WHERE score IS NOT NULL;
+ALTER TABLE gpucodeforces.reference_jobs
+    ALTER COLUMN processor DROP DEFAULT,
+    ALTER COLUMN language DROP DEFAULT;
+
+-- An answer to a guess keeps the scores of both variants with their type; the answers so far compared GPU times.
+UPDATE gpucodeforces.submissions
+SET guess_result = guess_result || jsonb_build_object(
+    'firstScore', guess_result -> 'firstTimeMs', 'secondScore', guess_result -> 'secondTimeMs', 'scoreType', 'TIME_MS')
+WHERE guess_result IS NOT NULL AND guess_result ? 'firstTimeMs';
+
+-- A duel runs on one processor, like any contest.
+ALTER TABLE gpucodeforces.duel_requests ADD COLUMN processor TEXT NOT NULL DEFAULT 'gpu-cuda';
+ALTER TABLE gpucodeforces.duel_requests ALTER COLUMN processor DROP DEFAULT;

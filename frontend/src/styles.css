@@ -483,3 +483,12 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
 }
+.guess-workspace { display: grid; gap: 20px; }
+.guess-codes, .duel-players { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.guess-pane { min-width: 0; }
+.guess-choices { display: flex; flex-wrap: wrap; gap: 20px; margin: 16px 0; }
+.guess-result, .duel-board, .comparison-builder { margin: 20px 0; }
+.duel-board { padding: 16px; }
+.duel-board h2 { margin-top: 0; font-size: 16px; }
+.duel-players > div { padding: 12px; background: var(--bg); border: 1px solid var(--border); }
+@media (max-width: 720px) { .guess-codes, .duel-players { grid-template-columns: 1fr; } }

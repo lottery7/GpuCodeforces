@@ -3,6 +3,12 @@ package dev.gpucodeforces.backend.submission
 import dev.gpucodeforces.backend.api.SubmissionsApi
 import dev.gpucodeforces.backend.api.model.ListSubmissions200Response
 import dev.gpucodeforces.backend.api.model.SubmitSolutionRequest
+import dev.gpucodeforces.backend.api.model.GuessChoice
+import dev.gpucodeforces.backend.api.model.GuessResult
+import dev.gpucodeforces.backend.api.model.MeasurementSummary
+import dev.gpucodeforces.backend.api.model.BenchmarkAggregation
+import dev.gpucodeforces.backend.api.model.MeasurementTiming
+import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
 import dev.gpucodeforces.backend.auth.CurrentUser
 import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.common.UnauthorizedException
@@ -21,6 +27,7 @@ import org.springframework.stereotype.Component
 import org.springframework.web.bind.annotation.RestController
 import dev.gpucodeforces.judge.api.Processors
 import java.math.BigDecimal
+import tools.jackson.databind.json.JsonMapper
 import java.time.ZoneOffset
 import java.util.UUID
 import dev.gpucodeforces.backend.api.model.Submission as SubmissionApiModel
@@ -75,12 +82,15 @@ class SubmissionViews(
     private val contestService: ContestService,
     private val contestRepository: ContestRepository,
     private val userRepository: UserRepository,
+    private val jsonMapper: JsonMapper,
+    private val references: ReferenceMeasurements,
 ) {
     fun summaries(rows: List<SubmissionRow>): List<SubmissionApiModel> {
         val versions = problemCatalog.versions(rows.map { it.problemVersionId }.toSet())
         val users = userRepository.findAllById(rows.map { it.userId }.toSet()).associateBy { it.id }
         val contests = contestRepository.findAllById(rows.mapNotNull { it.contestId }.toSet()).associateBy { it.id }
         val comparableHashes = mutableMapOf<Pair<String, UUID?>, String?>()
+        val gpuEnvironmentKey = references.environmentKey(Processors.GPU_CUDA)
         return rows.map { row ->
             val contest = row.contestId?.let { contests.getValue(it) }
             // Accepted results are comparable while the context still judges this problem the same way.
@@ -98,9 +108,10 @@ class SubmissionViews(
                 row.language,
                 // The judge sets a score and its type together, and SubmissionService stores them so.
                 row.score?.let { scoreApiModel(it, row.scoreType!!) },
-                // Scores are compared within a processor, so the processor needs no check here.
-                row.status == SubmissionStatus.ACCEPTED && row.judgeHash == contextHash,
-            )
+                // Scores are compared within a processor; on the real GPU also within the current environment.
+                row.status == SubmissionStatus.ACCEPTED && row.score != null && row.judgeHash == contextHash &&
+                    (row.processor != Processors.GPU_CUDA || gpuEnvironmentKey != null && row.benchmarkEnvironmentKey == gpuEnvironmentKey),
+            ).format(SubmissionApiModel.FormatEnum.fromValue(versions.getValue(row.problemVersionId).format))
         }
     }
 
@@ -112,7 +123,26 @@ class SubmissionViews(
             .previousBestScore(submission.previousBestScore?.let { scoreApiModel(it, Processors.get(submission.processor).scoreType) })
             .metrics(submission.metrics.mapValues { BigDecimal.valueOf(it.value) })
             .environmentMarkdown(submission.environmentMarkdown)
-        return if (viewer?.id == submission.userId) summary.code(submission.code).diagnostic(submission.diagnostic) else summary
+        submission.measurement?.let { source ->
+            val measured = jsonMapper.readValue(source, MeasurementData::class.java)
+            summary.measurement(
+                MeasurementSummary().aggregation(BenchmarkAggregation.fromValue(measured.aggregation))
+                    .timingMode(measured.timingMode?.let(MeasurementTiming::fromValue))
+                    .model(measured.model.takeUnless { measured.synthetic })
+                    .synthetic(measured.synthetic)
+                    .testCount(measured.tests.size),
+            )
+        }
+        if (viewer?.id != submission.userId) return summary
+        summary.code(submission.code).diagnostic(submission.diagnostic)
+        submission.guessChoice?.let { choice ->
+            val data = submission.guessResult?.let { jsonMapper.readValue(it, GuessSnapshot::class.java) } ?: return summary
+            summary.guessResult(GuessResult(
+                GuessChoice.fromValue(choice), GuessChoice.fromValue(data.correctChoice()),
+                scoreApiModel(data.firstScore, data.scoreType), scoreApiModel(data.secondScore, data.scoreType), data.explanation,
+            ).benchmarkKey(data.benchmarkKey).synthetic(data.synthetic))
+        }
+        return summary
     }
 
     private fun contextJudgeHash(problemId: String, contestId: UUID?): String? = if (contestId == null) {

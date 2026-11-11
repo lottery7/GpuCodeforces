@@ -81,6 +81,8 @@ class Submission(
     val previousBestScore: BigDecimal?,
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: Instant = Instant.now(),
+    @Column(name = "guess_choice")
+    val guessChoice: String? = null,
 ) {
     @Column(nullable = false)
     var status: SubmissionStatus = SubmissionStatus.QUEUED
@@ -95,6 +97,20 @@ class Submission(
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(nullable = false)
     var metrics: Map<String, Double> = emptyMap()
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "measurement")
+    var measurement: String? = null
+
+    @Column(name = "benchmark_environment_key")
+    var benchmarkEnvironmentKey: String? = null
+
+    @Column(name = "guess_benchmark_key")
+    var guessBenchmarkKey: String? = null
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "guess_result")
+    var guessResult: String? = null
 
     @Column(name = "passed_tests", nullable = false)
     var passedTests: Int = 0
@@ -131,7 +147,10 @@ class Submission(
 
     override fun hashCode() = id.hashCode()
 
-    fun toRow() = SubmissionRow(id, userId, problemId, problemVersionId, contestId, status, score, scoreType, judgeHash, processor, language, createdAt)
+    fun toRow() = SubmissionRow(
+        id, userId, problemId, problemVersionId, contestId, status, score, scoreType, judgeHash, processor, language, createdAt,
+        benchmarkEnvironmentKey,
+    )
 
     companion object {
         const val RECHECK_SEPARATOR = ".r"
@@ -151,9 +170,15 @@ class SubmissionRow(
     val processor: String,
     val language: String,
     val createdAt: Instant,
+    val benchmarkEnvironmentKey: String? = null,
 )
 
 interface SubmissionRepository : JpaRepository<Submission, UUID> {
+    @Query("SELECT s FROM Submission s WHERE s.userId = :userId AND s.problemVersionId = :versionId " +
+        "AND s.guessChoice IS NOT NULL AND ((:contestId IS NULL AND s.contestId IS NULL) OR s.contestId = :contestId) " +
+        "AND ((:benchmarkKey IS NULL AND s.guessBenchmarkKey IS NULL) OR s.guessBenchmarkKey = :benchmarkKey)")
+    fun findGuess(userId: UUID, versionId: UUID, contestId: UUID?, benchmarkKey: String? = null): Submission?
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT s FROM Submission s WHERE s.id = :id")
     fun findForUpdate(id: UUID): Submission?
@@ -171,7 +196,7 @@ interface SubmissionRepository : JpaRepository<Submission, UUID> {
         """
         SELECT new dev.gpucodeforces.backend.submission.SubmissionRow(
             s.id, s.userId, s.problemId, s.problemVersionId, s.contestId, s.status, s.score, s.scoreType, s.judgeHash, s.processor,
-            s.language, s.createdAt)
+            s.language, s.createdAt, s.benchmarkEnvironmentKey)
         FROM Submission s
         WHERE s.userId = :userId
           AND (:problemId IS NULL OR s.problemId = :problemId)

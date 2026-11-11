@@ -88,6 +88,7 @@ class ContestService(
     @Transactional
     fun update(id: String, input: ContestInputApi, currentUser: User): Contest {
         val contest = get(id)
+        if (contest.format == "duel") throw ForbiddenException("Дуэль нельзя редактировать")
         if (contest.authors.none { it.id == currentUser.id }) {
             throw ForbiddenException("Изменять контест могут только его авторы")
         }
@@ -112,7 +113,11 @@ class ContestService(
 
     @Transactional
     fun register(id: String, currentUser: User) {
-        val contest = get(id)
+        val found = get(id)
+        val contest = if (found.format == "duel") contestRepository.findForUpdate(found.id)!! else found
+        if (contest.format == "duel" && currentUser.id != contest.challengerId && currentUser.id != contest.opponentId) {
+            throw ForbiddenException("В дуэли участвуют только приглашённые участники")
+        }
         if (contest.phaseAt(Instant.now()) == ContestPhase.FINISHED) {
             throw BadRequestException("Контест уже завершён")
         }
@@ -148,8 +153,10 @@ class ContestService(
     fun buildRulesMarkdown(contest: Contest, problems: List<ContestProblem>, viewer: User?): String {
         val processor = Processors.get(contest.processor)
         val header = "## Правила\n\n" +
+            (if (contest.format == "duel") "Дуэль двух участников. " else "") +
             "Все посылки проверяются на процессоре ${processor.title} (`${processor.id}`, модель — ${processorCatalog.model(processor.id)}). " +
             "Задача решена, если принята хотя бы одна посылка: верный ответ на всех тестах и ${processor.scoreType.limitName()} задачи соблюдён. " +
+            "Правильный ответ в угадывании считается принятой посылкой. " +
             "Место определяется числом решённых задач, затем меньшим суммарным временем сдачи. Время сдачи задачи — " +
             "от начала контеста до отправки первой принятой посылки; длительность проверки, score посылки " +
             "и неверные попытки на место не влияют. Равные результаты делят место."
@@ -165,6 +172,8 @@ class ContestService(
 
     private fun validate(input: ContestInputApi) {
         processorCatalog.require(input.processor)
+        val format = input.format?.value ?: "standard"
+        if (format != "standard" || input.opponentId != null) throw BadRequestException("Для дуэли используйте поиск соперника")
         val now = Instant.now()
         if (!input.startAt.toInstant().isAfter(now)) throw BadRequestException("Начало контеста должно быть в будущем")
         if (!input.endAt.toInstant().isAfter(input.startAt.toInstant())) {

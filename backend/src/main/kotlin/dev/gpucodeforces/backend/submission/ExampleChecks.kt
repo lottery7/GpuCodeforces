@@ -4,6 +4,7 @@ import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.common.ServiceUnavailableException
 import dev.gpucodeforces.backend.problem.ContextProblem
 import dev.gpucodeforces.backend.problem.ProblemCatalog
+import dev.gpucodeforces.backend.problem.ProblemFormatData
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.judge.api.JudgeResult
 import dev.gpucodeforces.judge.api.SubmissionRequest
@@ -36,6 +37,7 @@ class ExampleChecks(
 
     /** [processor] and [language] are checked by the caller (ProblemService.requireTarget). */
     fun check(problem: ContextProblem, processor: String, language: String, code: String, author: User): ExampleOutcome {
+        if (problem.version.format == ProblemFormatData.GUESS) throw BadRequestException("Проверка примера недоступна для угадывания")
         SubmissionService.validateSource(code)
         if (!runningUsers.add(author.id)) throw BadRequestException("Дождитесь окончания предыдущей проверки примера")
         val judgeId = "$EXAMPLE_PREFIX${UUID.randomUUID()}"
