@@ -13,6 +13,12 @@
   const difficultyClass = d => d === 'easy' ? 'difficulty-easy' : d === 'medium' ? 'difficulty-medium' : d === 'hard' ? 'difficulty-hard' : '';
   const difficultyTag = d => `<span class="difficulty ${difficultyClass(d)}">${escape(difficultyNames[d] || d)}</span>`;
   const view = {previewOpen: false, listState: 'filled', outcome: 'accepted', runOutcome: 'accepted', connection: 'online', contestValues: {}, authorQuery: '', contestPicker: {q: '', difficulty: 'all', tag: 'all', visibility: 'all', selectedOnly: false}, runs: {}, undo: {}, formMessages: {}, authMode: 'login', authReturn: ''};
+  const navIcons = {
+    '/problems': '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6v4H9z"/><path d="M4 7h16v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1z"/><path d="M9 12h6M9 16h6"/></svg>',
+    '/contests': '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>',
+    '/submissions': '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4Z"/></svg>',
+    '/rating': '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l3-3 3 3 4-6"/></svg>'
+  };
   const jobs = new Map();
   let toastTimer;
   let lastPhase;
@@ -129,7 +135,7 @@
     const current = M.user();
     const entries = [['/problems', 'Задачи'], ['/contests', 'Соревнования'], ['/submissions', 'Посылки'], ['/rating', 'Рейтинг']];
     const active = target => path === target || (target === '/problems' && path.startsWith('/problem/')) || (target === '/submissions' && path.startsWith('/submission/')) || (target === '/contests' && (path.startsWith('/contest/') || path.startsWith('/contests/')));
-    const navigation = entries.map(([target, label]) => `<a href="#${target}" ${active(target) ? 'class="active" aria-current="page"' : ''}>${label}</a>`).join('');
+    const navigation = entries.map(([target, label]) => `<a href="#${target}" ${active(target) ? 'class="active" aria-current="page"' : ''}><span class="nav-icon" aria-hidden="true">${navIcons[target] || ''}</span><span>${label}</span></a>`).join('');
     const account = current ? link('/profile', current.handle) : '<button class="text-link" data-action="signin">Войти</button>';
     const footer = new URLSearchParams(location.search).get('presentation') === '1' ? '' : `<footer class="site-footer"><details class="prototype-tools" ${view.previewOpen ? 'open' : ''}><summary>Состояния шаблонов</summary>${prototypePanel(path)}</details></footer>`;
     return `<header class="site-header"><div class="header-inner">${link('/', 'GPU Forces', 'brand')}<nav class="main-nav" aria-label="Основная навигация">${navigation}</nav><div class="account">${account}</div><details class="mobile-nav"><summary>Меню</summary><nav aria-label="Мобильная навигация">${navigation}${account}</nav></details></div></header><main class="container" id="content" tabindex="-1">${view.connection === 'offline' ? '<div class="error" role="alert">Связь потеряна. Новые отправки недоступны; показаны последние полученные результаты. <button class="text-link" data-action="reconnect">Подключиться снова</button></div>' : ''}${content}</main>${footer}`;
@@ -147,7 +153,7 @@
     return `<div class="prototype-panel"><label>Участник<select data-preview="user" aria-label="Режим участника">${personas.map(([id, label]) => option(id, label, role)).join('')}</select></label>${supportsList ? `<label>Список<select data-preview="list" aria-label="Состояние списка">${[['filled', 'Заполнен'], ['loading', 'Загрузка'], ['empty', 'Пусто'], ['error', 'Ошибка']].map(([id, label]) => option(id, label, view.listState)).join('')}</select></label>` : ''}<label>Новая посылка<select data-preview="outcome" aria-label="Результат новой посылки">${[['accepted', 'Принято'], ['faster', 'Быстрее рекорда'], ['slower', 'Медленнее рекорда'], ...Object.entries(statusNames).filter(([key]) => !pending.includes(key) && key !== 'accepted'), ['stale', 'Старый профиль']].map(([id, label]) => option(id, label, view.outcome)).join('')}</select></label><label>Проверка примера<select data-preview="run" aria-label="Результат проверки примера">${[['accepted', 'Успех'], ['wrong', 'Неверный ответ'], ['compile', 'Ошибка компиляции']].map(([id, label]) => option(id, label, view.runOutcome)).join('')}</select></label><label>Соединение<select data-preview="connection" aria-label="Состояние соединения">${[['online', 'Есть связь'], ['offline', 'Нет связи']].map(([id, label]) => option(id, label, view.connection)).join('')}</select></label>${contestId && M.contest(contestId) ? `<label>Фаза соревнования<select data-preview="phase" aria-label="Фаза соревнования" data-id="${contestId}">${[['upcoming', 'До начала'], ['live', 'Идет'], ['finished', 'Завершено']].map(([id, label]) => option(id, label, M.phase(contestId))).join('')}</select></label>` : ''}${selectedSubmission ? `<label>Состояние посылки<select data-preview="submission" aria-label="Состояние посылки" data-id="${selectedSubmission.id}">${Object.entries(statusNames).map(([id, label]) => option(id, label, selectedSubmission.status)).join('')}</select></label>` : ''}</div>`;
   }
 
-  function bank(params) {
+  function bank(params, showStats = true) {
     const target = params.get('user') ? M.findUser(params.get('user')) : M.user();
     const q = params.get('q') || '';
     const difficulty = params.get('difficulty') || 'all';
@@ -165,7 +171,27 @@
     const headLink = (label, value) => link(url('/problems', {...Object.fromEntries(params), sort: value, page: null}), label, '');
     const rows = visible.map(problem => `<tr><td>${problem.solved ? '<span class="accepted" aria-label="Решена">✓</span>' : ''}</td><td>${link('/problem/' + problem.id, problem.code + '. ' + problem.title, 'task-link')}<div class="subline">${problem.tags.map(value => link(url('/problems', {...Object.fromEntries(params), tag: value, page: null}), value, 'tag')).join(' / ')}</div></td><td>${difficultyTag(problem.difficulty)}</td><td>${M.users().filter(user => M.solved(problem.id, user.id)).length}</td>${target ? `<td class="mono">${problem.personal ? link('/submission/' + problem.personal.id, time(problem.personal.timeMs), '') : '-'}</td>` : ''}</tr>`).join('');
     const table = rows ? `<div class="panel table-wrap"><table class="data-table problem-table${target ? '' : ' guest'}"><thead><tr><th scope="col" aria-label="Решена"></th><th scope="col">${headLink('Задача', 'code')}</th><th scope="col">${headLink('Сложность', 'difficulty')}</th><th scope="col">Решили</th>${target ? `<th scope="col">${headLink('Личный рекорд, мс', 'time')}</th>` : ''}</tr></thead><tbody>${rows}</tbody></table></div>${pagination(items.length, params)}` : '<div class="empty">Задачи не найдены. Измените запрос или сбросьте фильтры.</div>';
-    return `${header(target && params.has('user') ? 'Задачи: ' + target.handle : 'Задачи')}<div class="toolbar"><div class="search"><input type="search" id="problem-search" data-query="q" aria-label="Найти задачу" placeholder="Название или номер задачи" value="${escape(q)}"></div><select data-filter="difficulty" aria-label="Сложность">${options([['all', 'Сложность'], ...Object.entries(difficultyNames)], difficulty)}</select>${target ? `<select data-filter="status" aria-label="Статус решения">${options([['all', 'Статус'], ['solved', 'Решена'], ['unsolved', 'Не решена']], status)}</select>` : ''}<select data-filter="tag" aria-label="Тема">${options([['all', 'Тема'], ...allTags.map(value => [value, value])], tag)}</select>${hasFilters ? link(url('/problems', {user: params.get('user')}), 'Сбросить', 'filter-reset') : ''}</div>${listState(table, 'В банке пока нет задач.')}`;
+    const totalCount = M.problems().length;
+    const solvedCount = target ? M.problems().filter(problem => M.solved(problem.id, target.id)).length : 0;
+    const percent = totalCount ? Math.round(solvedCount / totalCount * 100) : 0;
+    const streak = target ? M.streak(target.id) : 0;
+    const cards = showStats ? `<div class="progress-cards">
+      <section class="panel progress-card">
+        <span class="progress-card-label">Решено задач</span>
+        <span class="progress-card-value"><strong>${solvedCount}</strong><span class="muted"> из ${totalCount}</span></span>
+        <div class="progress-track" role="progressbar" aria-valuenow="${percent}" aria-valuemin="0" aria-valuemax="100" aria-label="Прогресс решения задач"><div class="progress-fill" style="width:${percent}%"></div></div>
+        <span class="progress-card-caption small muted">${percent}% задач из пула</span>
+      </section>
+      <section class="panel progress-card streak-card">
+        <span class="progress-card-label"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3 1.072-2.143 2.5-3.5 3.5-3.5S15 7 16 8s.5 1.5.5 2.5c0 1.38-.5 2.5-.5 2.5s1-1 1.5-2.5c.5 1.5 1 3 1 4.5A6 6 0 1 1 9 11c.5.5 1 1.5 1 2.5 0 .64-.042 1.073-.5 1z"/></svg>Серия</span>
+        <span class="progress-card-value"><strong>${streak}</strong><span class="muted"> дн.</span></span>
+        <span class="progress-card-caption small muted">дней подряд с принятым решением${target ? '' : ' (войдите, чтобы считать)'}</span>
+      </section>
+    </div>` : '';
+    const toolbar = `<div class="toolbar"><div class="search"><input type="search" id="problem-search" data-query="q" aria-label="Найти задачу" placeholder="Название или номер задачи" value="${escape(q)}"></div><select data-filter="difficulty" aria-label="Сложность">${options([['all', 'Сложность'], ...Object.entries(difficultyNames)], difficulty)}</select>${target ? `<select data-filter="status" aria-label="Статус решения">${options([['all', 'Статус'], ['solved', 'Решена'], ['unsolved', 'Не решена']], status)}</select>` : ''}<select data-filter="tag" aria-label="Тема">${options([['all', 'Тема'], ...allTags.map(value => [value, value])], tag)}</select>${hasFilters ? link(url('/problems', {user: params.get('user')}), 'Сбросить', 'filter-reset') : ''}</div>`;
+    const list = listState(table, 'В банке пока нет задач.');
+    const body = showStats ? `<div class="problems-layout"><div class="problems-main">${toolbar}${list}</div><aside class="progress-stack">${cards}</aside></div>` : `<div class="problems-main">${toolbar}${list}</div>`;
+    return `${header(target && params.has('user') ? 'Задачи: ' + target.handle : 'Задачи')}${body}`;
   }
 
   function submissionTable(items, {inProblem = false, showUser = false} = {}) {
@@ -338,7 +364,7 @@
     const path = current.path;
     let content;
     if (path === '/') content = mainPage();
-    else if (path === '/auth') content = bank(new URLSearchParams());
+    else if (path === '/auth') content = bank(new URLSearchParams(), false);
     else if (path === '/problems') content = bank(current.params);
     else if (path === '/submissions') content = submissions(current.params);
     else if (path.startsWith('/problem/')) content = problemScreen(decodeURIComponent(path.split('/')[2]), current.params);
@@ -614,6 +640,10 @@
     else if (action === 'reset-code') {const {problem, context} = currentProblem(); view.undo[runKey(problem.id, context)] = M.resetDraft(problem.id, context); render();}
     else if (action === 'undo-reset') {const {problem, context} = currentProblem(); const key = runKey(problem.id, context); M.restoreDraft(problem.id, context, view.undo[key]); delete view.undo[key]; render();}
     else if (action === 'retry-list') {view.listState = 'filled'; render();}
+    else if (action === 'reset-contests-filter') {
+      const phase = route().params.get('phase') || 'now';
+      navigate(url('/contests', {phase: phase === 'now' ? null : phase}));
+    }
     else if (action === 'reconnect') {view.connection = 'online'; render();}
     else if (action === 'join-contest') {
       if (!M.user()) {requestLogin(location.hash.slice(1)); return;}

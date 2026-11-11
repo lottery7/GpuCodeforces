@@ -90,24 +90,30 @@
   }
 
   function contests(ctx) {
-    const requested = param(ctx, 'tabs', param(ctx, 'tab', 'live'));
-    const selected = ['live', 'upcoming', 'finished', 'mine'].includes(requested) ? requested : 'live';
-    const mine = selected === 'mine';
+    const requested = param(ctx, 'phase', 'now');
+    const filter = ['now', 'upcoming', 'live', 'finished', 'all'].includes(requested) ? requested : 'now';
     const query = param(ctx, 'q');
     const normalizedQuery = query.trim().toLowerCase();
-    const listPath = tab => `/contests?${new URLSearchParams({tabs: tab, ...(query ? {q: query} : {})})}`;
     const createPath = ctx.user ? '/contests/new' : '/auth?return=%2Fcontests%2Fnew';
     const heading = ctx.header('Соревнования', '', ctx.link(createPath, 'Создать контест', 'btn primary'));
-    const entries = [['live', 'Текущие', listPath('live')], ['upcoming', 'Будущие', listPath('upcoming')], ['finished', 'Завершенные', listPath('finished')]];
-    if (ctx.user || mine) entries.push(['mine', 'Мои', listPath('mine')]);
-    const nav = tabs(ctx, entries, selected, 'Список соревнований');
-    if (mine && !ctx.user) return `${heading}${nav}${empty('Войдите в аккаунт', 'Здесь будут контесты, в которых вы указаны автором.', ctx.link(`/auth?return=${encodeURIComponent(listPath('mine'))}`, 'Войти', 'btn primary'))}`;
-    const search = `<div class="toolbar"><div class="search"><input type="search" id="contest-search" data-query="q" aria-label="Найти соревнование" placeholder="Название контеста" value="${ctx.escape(query)}"></div>${query ? ctx.link(`/contests?tabs=${selected}`, 'Сбросить', 'filter-reset') : ''}</div>`;
-    const items = ctx.M.contests().filter(item => (mine ? (item.authorIds || [item.ownerId]).includes(ctx.user.id) : ctx.M.phase(item.id) === selected) && item.title.toLowerCase().includes(normalizedQuery)).sort((a, b) => selected === 'finished' ? new Date(b.endAt) - new Date(a.endAt) : mine ? new Date(b.startAt) - new Date(a.startAt) : new Date(a.startAt) - new Date(b.startAt));
-    if (!items.length) return `${heading}${nav}${search}${ctx.renderList(empty(normalizedQuery ? 'Соревнования не найдены' : mine ? 'У вас пока нет контестов' : 'Соревнований нет', normalizedQuery ? 'Измените запрос или выберите другую вкладку.' : mine ? 'Создайте первый контест.' : selected === 'live' ? 'Сейчас нет активных соревнований.' : selected === 'upcoming' ? 'Новые соревнования еще не объявлены.' : 'Завершенных соревнований пока нет.'), 'Соревнований пока нет.')}`;
     const phases = {upcoming: 'До начала', live: 'Идет', finished: 'Завершен'};
-    const rows = items.map(contest => `<tr><td>${ctx.link(`/contest/${encodeURIComponent(contest.id)}`, contest.title)}</td><td><time datetime="${ctx.escape(contest.startAt)}">${date(contest.startAt)}</time></td><td>${duration(contest)}</td><td>${contest.problemIds.length}</td>${mine ? `<td>${phases[ctx.M.phase(contest.id)]}</td>` : selected !== 'finished' ? `<td>${registration(ctx, contest, selected)}</td>` : ''}</tr>`);
-    return `${heading}${nav}${search}${ctx.renderList(table(['Название', 'Начало, МСК', 'Длительность', 'Задачи', ...(mine ? ['Статус'] : selected !== 'finished' ? ['Участие'] : [])], rows, 'Список соревнований', 'contest-list'), 'Соревнований пока нет.')}`;
+    const matches = {now: ['upcoming', 'live'], upcoming: ['upcoming'], live: ['live'], finished: ['finished'], all: ['upcoming', 'live', 'finished']};
+    const compare = filter === 'finished' ? (a, b) => new Date(b.startAt) - new Date(a.startAt) : (a, b) => new Date(a.startAt) - new Date(b.startAt);
+    const isMine = contest => !!ctx.user && Array.isArray(contest.authorIds) && contest.authorIds.includes(ctx.user.id);
+    const items = ctx.M.contests().filter(contest => matches[filter].includes(ctx.M.phase(contest.id)) && contest.title.toLowerCase().includes(normalizedQuery)).sort(compare);
+    const mine = ctx.user ? items.filter(isMine) : [];
+    const rest = ctx.user ? items.filter(contest => !isMine(contest)) : items;
+    const toolbar = `<div class="toolbar"><div class="search"><input type="search" id="contest-search" data-query="q" aria-label="Найти соревнование" placeholder="Название контеста" value="${ctx.escape(query)}"></div><select data-filter="phase" aria-label="Показать соревнования">${[['now', 'Текущие и будущие'], ['upcoming', 'Будущие'], ['live', 'Текущие'], ['finished', 'Завершенные'], ['all', 'Все']].map(([value, label]) => `<option value="${value}" ${value === filter ? 'selected' : ''}>${ctx.escape(label)}</option>`).join('')}</select><button type="button" class="text-link filter-reset" data-action="reset-contests-filter"${query ? '' : ' hidden'}>Сбросить</button></div>`;
+    if (!items.length) return `${heading}${toolbar}${ctx.renderList(empty(normalizedQuery ? 'Соревнования не найдены' : 'Соревнований пока нет', normalizedQuery ? 'Измените запрос или фильтр.' : 'Соревнований пока нет.'), 'Соревнований пока нет.')}`;
+    const headings = ['Название', 'Начало, МСК', 'Длительность', 'Задачи', 'Статус', 'Участие'];
+    const row = contest => {
+      const phase = ctx.M.phase(contest.id);
+      const participation = phase === 'finished' ? '<span class="muted">—</span>' : registration(ctx, contest, phase);
+      return `<tr><td>${ctx.link(`/contest/${encodeURIComponent(contest.id)}`, contest.title)}</td><td><time datetime="${ctx.escape(contest.startAt)}">${date(contest.startAt)}</time></td><td>${duration(contest)}</td><td>${contest.problemIds.length}</td><td>${phases[phase]}</td><td>${participation}</td></tr>`;
+    };
+    const group = (label, list) => list.length ? `<tr class="contest-group"><td colspan="${headings.length}">${ctx.escape(label)}</td></tr>${list.map(row).join('')}` : '';
+    const body = group(ctx.user ? 'Мои соревнования' : '', mine) + group('Все соревнования', rest);
+    return `${heading}${toolbar}${ctx.renderList(table(headings, [body], 'Список соревнований', 'contest-list'), 'Соревнований пока нет.')}`;
   }
 
   function moscowInput(value) {

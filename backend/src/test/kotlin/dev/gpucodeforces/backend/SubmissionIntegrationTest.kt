@@ -176,6 +176,9 @@ class SubmissionIntegrationTest {
 
         val bank = client.get().uri("/problems").cookie("session", aliceCookie).exchange()
             .expectBody(ListProblems200Response::class.java).returnResult().responseBody!!
+        assertThat(bank.solvedCount).isEqualTo(1)
+        assertThat(bank.totalCount).isEqualTo(bank.items.size)
+        assertThat(bank.streak).isEqualTo(1)
         val vectorAdd = bank.items.single { it.id == "vector_add" }
         assertThat(vectorAdd.solved).isTrue()
         assertThat(vectorAdd.solvedCount).isEqualTo(1)

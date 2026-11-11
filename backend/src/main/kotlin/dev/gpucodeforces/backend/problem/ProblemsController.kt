@@ -48,13 +48,23 @@ class ProblemsController(
         val problemContext = problemService.context(context, viewer)
         val pool = problemService.problems(problemContext, viewer)
         val tags = pool.flatMap { it.version.tags }.distinct().sorted()
+        val solvedCount = subject?.id?.let { submissionStats.solvedProblemCount(it) } ?: 0
         val filtered = problemService.filter(pool, q, difficulty, tag)
         val results = submissionStats.problemResults(scope(problemContext, filtered), subject?.id)
         val items = filtered
             .map { it.version.toApiModel(results.getValue(it.version.problemId)) }
             .filter { solved == null || it.solved == solved }
             .let { if (problemContext == ProblemContext.Practice) sorted(it, sort) else it }
-        return ResponseEntity.ok(ListProblems200Response(items.drop(offset).take(limit), items.size, tags))
+        return ResponseEntity.ok(
+            ListProblems200Response(
+                items.drop(offset).take(limit),
+                items.size,
+                tags,
+                solvedCount,
+                pool.size,
+                subject?.id?.let { submissionStats.streak(it) } ?: 0,
+            ),
+        )
     }
 
     override fun getProblem(id: String, context: String): ResponseEntity<GetProblem200Response> {

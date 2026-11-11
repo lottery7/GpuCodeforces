@@ -164,16 +164,19 @@ paths:
         - {$ref: '#/components/parameters/Limit'}
       responses:
         '200':
-          description: Сортировка по возрастанию; без времени задачи идут последними. tags содержит темы доступного пула до фильтрации.
+          description: Сортировка по возрастанию; без времени задачи идут последними. tags содержит темы доступного пула до фильтрации. Прогресс и серия в practice-контексте.
           content:
             application/json:
               schema:
                 type: object
-                required: [items, total, tags]
+                required: [items, total, tags, solvedCount, totalCount, streak]
                 properties:
                   items: {type: array, items: {$ref: '#/components/schemas/Problem'}}
-                  total: {type: integer}
+                  total: {type: integer, description: Число задач после фильтрации; для пагинации.}
                   tags: {type: array, items: {type: string}}
+                  solvedCount: {type: integer, description: 'Число разных решенных задач из пула (до фильтрации) тем же пользователем, чьи результаты показаны.'}
+                  totalCount: {type: integer, description: Размер пула задач без фильтрации; для прогресса.}
+                  streak: {type: integer, description: 'Текущая серия подряд идущих дней (по UTC) с хотя бы одной принятой посылкой того же пользователя; для гостя 0.'}
         default: {$ref: '#/components/responses/Error'}
   /problems/{id}:
     parameters:

@@ -259,6 +259,24 @@
     const expected=findProblem(problemId,contestId)?.benchmark;
     return !!expected&&state.submissions.some(item=>item.userId===userId&&item.problemId===problemId&&(!contestId||item.contestId===contestId)&&['accepted','measurement-error'].includes(item.status)&&item.totalTests>0&&item.passedTests===item.totalTests&&item.testVersion===expected.testVersion);
   }
+  function dayStreak(userId=state.sessionId) {
+    if (!userId) return 0;
+    const days = new Set();
+    state.submissions.forEach(item => {
+      if (item.userId !== userId) return;
+      if (item.status !== 'accepted' && !(item.status === 'measurement-error' && item.passedTests === item.totalTests)) return;
+      days.add(new Date(item.createdAt).toISOString().slice(0, 10));
+    });
+    if (!days.size) return 0;
+    let streak = 0;
+    const cursor = new Date();
+    cursor.setUTCHours(0, 0, 0, 0);
+    while (days.has(cursor.toISOString().slice(0, 10))) {
+      streak += 1;
+      cursor.setUTCDate(cursor.getUTCDate() - 1);
+    }
+    return streak;
+  }
   function best(problemId,options={}) {
     const userId=options.userId===undefined?state.sessionId:options.userId;
     const contestId=options.contestId===undefined?null:options.contestId;
@@ -394,6 +412,7 @@
     standings:contestId=>copy(standings(contestId)),
     canCompare,
     solved:hasSolved,
+    streak:(userId)=>dayStreak(userId),
     draft,
     saveDraft,
     resetDraft(problemId,context='practice'){const snapshot=draft(problemId,context);saveDraft(problemId,context,findProblem(problemId,context==='practice'?null:context)?.starter||'');return snapshot;},
