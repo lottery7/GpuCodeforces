@@ -77,7 +77,7 @@ export default function Contests() {
   const rows = (group: Contest[]) => group.map(contest => <tr key={contest.id}>
     <td><Link to={`/contest/${encodeURIComponent(contest.id)}`}>{contest.title}</Link></td>
     <td><time dateTime={contest.startAt}>{dateTime(contest.startAt)}</time></td>
-    <td>{duration(contest)}</td><td>{contest.problemCount}</td>
+    <td className="num">{duration(contest)}</td><td className="num">{contest.problemCount}</td>
     <td>{phaseStatus[phaseOf(contest)]}</td>
     <td className="contest-registration">{registration(contest)}{join.variables === contest.id && <ErrorMessage error={join.error} reveal />}</td>
   </tr>);
@@ -94,7 +94,7 @@ export default function Contests() {
     {contests.isPending && <p className="loading" role="status">Загрузка соревнований...</p>}
     {contests.error && <div><ErrorMessage error={contests.error} /><button className="text-link" onClick={() => void contests.refetch()}>Повторить</button></div>}
     {contests.data && (sorted.length ? <div className="table-wrap"><table className="data-table contest-list" aria-label="Список соревнований">
-      <thead><tr><th>Название</th><th>Начало, МСК</th><th>Длительность</th><th>Задачи</th><th>Статус</th><th>Участие</th></tr></thead>
+      <thead><tr><th>Название</th><th>Начало, МСК</th><th className="num">Длительность</th><th className="num">Задачи</th><th>Статус</th><th>Участие</th></tr></thead>
       <tbody>
         {user && mine.length > 0 && <tr className="contest-group"><td colSpan={6}>Мои соревнования</td></tr>}
         {user && mine.length > 0 && rows(mine)}

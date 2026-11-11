@@ -133,8 +133,8 @@ function Leaders({ problemId, context, finished }: { problemId: string; context:
     refetchInterval: finished ? false : 5000,
   });
   return <QueryState query={leaders}>{leaders.data && (leaders.data.length ? <div className="panel table-wrap"><table className="data-table" aria-label="Лидеры задачи">
-    <thead><tr><th>Место</th><th>Участник</th><th>Лучшее время, мс</th><th>Посылка</th></tr></thead>
-    <tbody>{leaders.data.map(item => <tr key={item.user.id} className={item.user.id === user?.id ? 'own-row' : undefined}><td>{item.rank}</td><td><UserLink user={item.user} /></td><td className="mono"><TimeValue value={item.timeMs} /></td><td><Link to={`/submission/${encodeURIComponent(item.submissionId)}`}>#{item.submissionId}</Link></td></tr>)}</tbody>
+    <thead><tr><th className="num">Место</th><th>Участник</th><th className="num">Лучшее время, мс</th><th className="num">Посылка</th></tr></thead>
+    <tbody>{leaders.data.map(item => <tr key={item.user.id} className={item.user.id === user?.id ? 'own-row' : undefined}><td className="num">{item.rank}</td><td><UserLink user={item.user} /></td><td className="num mono"><TimeValue value={item.timeMs} /></td><td className="num"><Link to={`/submission/${encodeURIComponent(item.submissionId)}`}>#{item.submissionId}</Link></td></tr>)}</tbody>
   </table></div> : <Empty>Принятых решений в этой конфигурации пока нет.</Empty>)}</QueryState>;
 }
 

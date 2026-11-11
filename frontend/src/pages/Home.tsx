@@ -106,8 +106,8 @@ export default function Home() {
         <section className="panel">
           <h2>{ratingTitle}</h2>
           <QueryState query={rating}>
-            {ratingRows.length ? <div className="table-wrap"><table className="data-table" aria-label="Рейтинг участников"><thead><tr><th>Место</th><th>Участник</th><th>Рейтинг</th></tr></thead><tbody>{ratingRows.map(person => <tr key={person.id} className={person.id === user?.id ? 'own-row' : undefined}>
-              <td>{person.rank ?? '-'}</td><td><UserLink user={person} />{person.id === user?.id && <span className="small muted"> вы</span>}</td><td>{person.rating ?? '-'}</td>
+            {ratingRows.length ? <div className="table-wrap"><table className="data-table" aria-label="Рейтинг участников"><thead><tr><th className="num">Место</th><th>Участник</th><th className="num">Рейтинг</th></tr></thead><tbody>{ratingRows.map(person => <tr key={person.id} className={person.id === user?.id ? 'own-row' : undefined}>
+              <td className="num">{person.rank ?? '-'}</td><td><UserLink user={person} />{person.id === user?.id && <span className="small muted"> вы</span>}</td><td className="num mono">{person.rating ?? '-'}</td>
             </tr>)}</tbody></table></div> : <p className="muted">Рейтингов пока нет.</p>}
           </QueryState>
         </section>

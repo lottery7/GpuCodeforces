@@ -69,9 +69,9 @@ export default function Profile() {
             {recent.data && (recent.data.items.length ? <SubmissionTable items={recent.data.items} /> : <Empty><p>Посылок пока нет.</p>{own && <Link className="btn secondary" to="/problems">Выбрать задачу</Link>}</Empty>)}
           </QueryState>
           <h2>Соревнования</h2>
-          {data.contests.length ? <div className="table-wrap"><table className="data-table" aria-label="История соревнований участника"><thead><tr><th>Соревнование</th><th>Статус</th><th>Место</th><th>Изменение рейтинга</th><th>Рейтинг после контеста</th></tr></thead><tbody>{data.contests.map(contest => <tr key={contest.id}>
+          {data.contests.length ? <div className="table-wrap"><table className="data-table" aria-label="История соревнований участника"><thead><tr><th>Соревнование</th><th>Статус</th><th className="num">Место</th><th className="num">Изменение рейтинга</th><th className="num">Рейтинг после контеста</th></tr></thead><tbody>{data.contests.map(contest => <tr key={contest.id}>
             <td><Link to={`/contest/${encodeURIComponent(contest.id)}${contest.phase === 'upcoming' ? '' : '?tab=standings'}`}>{contest.title}</Link></td>
-            <td>{phases[contest.phase]}</td><td>{contest.rank ?? '-'}</td><td><RatingDelta value={contest.ratingDelta} /></td><td>{contest.ratingAfter ?? '-'}</td>
+            <td>{phases[contest.phase]}</td><td className="num">{contest.rank ?? '-'}</td><td className="num"><RatingDelta value={contest.ratingDelta} /></td><td className="num">{contest.ratingAfter ?? '-'}</td>
           </tr>)}</tbody></table></div> : <Empty>Еще не участвовал в соревнованиях.</Empty>}
         </section>
       </>}

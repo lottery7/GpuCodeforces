@@ -129,9 +129,9 @@ export default function Contest() {
         <p className="small muted">{phase === 'finished' ? 'Итоговая таблица.' : 'Результаты обновляются после проверки посылок.'}</p>
         {standings.isPending && <p className="loading" role="status">Загрузка таблицы...</p>}
         {standings.error && <div><ErrorMessage error={standings.error} /><button className="text-link" onClick={() => void standings.refetch()}>Повторить</button></div>}
-        {standings.data && (standings.data.length ? <div className="table-wrap"><table className="data-table" aria-label="Таблица контеста"><thead><tr><th>Место</th><th>Участник</th><th>Решено</th><th>Время</th>{columns.map((problem, index) => <th key={problem.id}><Link title={problem.title} to={problemPath(problem.id, id)}>{taskLabel(index)}</Link></th>)}</tr></thead><tbody>{standings.data.map(row => <tr key={row.user.id} className={row.user.id === user?.id ? 'own-row' : undefined}>
-          <td>{row.rank}</td><td><UserLink user={row.user} />{row.user.id === user?.id && <span className="small muted"> вы</span>}</td><td>{row.solved}</td><td className="mono">{solveTime(row.totalSeconds)}</td>
-          {columns.map(problem => <td key={problem.id} className="mono">{row.times[problem.id] === undefined ? '-' : solveTime(row.times[problem.id])}</td>)}
+        {standings.data && (standings.data.length ? <div className="table-wrap"><table className="data-table" aria-label="Таблица контеста"><thead><tr><th className="num">Место</th><th>Участник</th><th className="num">Решено</th><th className="num">Время</th>{columns.map((problem, index) => <th key={problem.id}><Link title={problem.title} to={problemPath(problem.id, id)}>{taskLabel(index)}</Link></th>)}</tr></thead><tbody>{standings.data.map(row => <tr key={row.user.id} className={row.user.id === user?.id ? 'own-row' : undefined}>
+          <td className="num">{row.rank}</td><td><UserLink user={row.user} />{row.user.id === user?.id && <span className="small muted"> вы</span>}</td><td className="num">{row.solved}</td><td className="num mono">{solveTime(row.totalSeconds)}</td>
+          {columns.map(problem => <td key={problem.id} className="num mono">{row.times[problem.id] === undefined ? '-' : solveTime(row.times[problem.id])}</td>)}
         </tr>)}</tbody></table></div> : <Empty>Результатов пока нет.</Empty>)}
       </>}
     </>}

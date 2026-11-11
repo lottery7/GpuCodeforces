@@ -11,13 +11,13 @@ const limit = 20;
 
 export function SubmissionTable({ items, inProblem = false, showUser = false }: { items: Submission[]; inProblem?: boolean; showUser?: boolean }) {
   return <div className="panel table-wrap"><table className="data-table" aria-label="История посылок">
-    <thead><tr><th>Посылка</th>{!inProblem && <th>Задача</th>}{showUser && <th>Участник</th>}<th>Вердикт</th><th>Время GPU, мс</th><th>Отправлено, МСК</th></tr></thead>
+    <thead><tr><th className="num">Посылка</th>{!inProblem && <th>Задача</th>}{showUser && <th>Участник</th>}<th>Вердикт</th><th className="num">Время GPU, мс</th><th>Отправлено, МСК</th></tr></thead>
     <tbody>{items.map(item => <tr key={item.id}>
-      <td className="mono"><Link to={`/submission/${encodeURIComponent(item.id)}`}>#{item.id}</Link></td>
+      <td className="num mono"><Link to={`/submission/${encodeURIComponent(item.id)}`}>#{item.id}</Link></td>
       {!inProblem && <td><Link to={problemPath(item.problemId, item.contestId || 'practice')}>{item.problemTitle}</Link><div className="subline">{item.contestId ? <Link to={`/contest/${encodeURIComponent(item.contestId)}`}>{item.contestTitle || 'Контест'}</Link> : 'Практика'}</div></td>}
       {showUser && <td><UserLink user={item.user} /></td>}
       <td><Status status={item.status} />{item.status === 'accepted' && !item.comparable && <div className="subline">Старый профиль проверки</div>}</td>
-      <td className="mono"><TimeValue value={item.status === 'accepted' ? item.timeMs : null} /></td>
+      <td className="num mono"><TimeValue value={item.status === 'accepted' ? item.timeMs : null} /></td>
       <td><time dateTime={item.createdAt}>{dateTime(item.createdAt)}</time></td>
     </tr>)}</tbody>
   </table></div>;

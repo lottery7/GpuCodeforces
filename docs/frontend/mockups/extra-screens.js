@@ -54,8 +54,8 @@
     return [Math.floor(seconds / 3600), Math.floor(seconds % 3600 / 60), seconds % 60].map(part => String(part).padStart(2, '0')).join(':');
   }
 
-  function table(headings, rows, label, className = '') {
-    return `<div class="table-wrap"><table class="data-table ${className}" aria-label="${label}"><thead><tr>${headings.map(heading => `<th scope="col">${heading}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
+  function table(headings, rows, label, className = '', numeric = new Set()) {
+    return `<div class="table-wrap"><table class="data-table ${className}" aria-label="${label}"><thead><tr>${headings.map((heading, index) => `<th ${numeric.has(index) ? 'class="num" ' : ''}scope="col">${heading}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
   }
 
   function tabs(ctx, entries, selected, label) {
@@ -109,11 +109,11 @@
     const row = contest => {
       const phase = ctx.M.phase(contest.id);
       const participation = phase === 'finished' ? '<span class="muted">—</span>' : registration(ctx, contest, phase);
-      return `<tr><td>${ctx.link(`/contest/${encodeURIComponent(contest.id)}`, contest.title)}</td><td><time datetime="${ctx.escape(contest.startAt)}">${date(contest.startAt)}</time></td><td>${duration(contest)}</td><td>${contest.problemIds.length}</td><td>${phases[phase]}</td><td>${participation}</td></tr>`;
+      return `<tr><td>${ctx.link(`/contest/${encodeURIComponent(contest.id)}`, contest.title)}</td><td><time datetime="${ctx.escape(contest.startAt)}">${date(contest.startAt)}</time></td><td class="num">${duration(contest)}</td><td class="num">${contest.problemIds.length}</td><td>${phases[phase]}</td><td>${participation}</td></tr>`;
     };
     const group = (label, list) => list.length ? `<tr class="contest-group"><td colspan="${headings.length}">${ctx.escape(label)}</td></tr>${list.map(row).join('')}` : '';
     const body = group(ctx.user ? 'Мои соревнования' : '', mine) + group('Все соревнования', rest);
-    return `${heading}${toolbar}${ctx.renderList(table(headings, [body], 'Список соревнований', 'contest-list'), 'Соревнований пока нет.')}`;
+    return `${heading}${toolbar}${ctx.renderList(table(headings, [body], 'Список соревнований', 'contest-list', new Set([2, 3])), 'Соревнований пока нет.')}`;
   }
 
   function moscowInput(value) {
@@ -209,8 +209,10 @@
       const path = `/problem/${encodeURIComponent(id)}${phase === 'live' || !ctx.M.problem(id) ? `?contest=${encodeURIComponent(contest.id)}` : ''}`;
       return `<a href="#${ctx.escape(path)}" title="${ctx.escape(problem?.title || id)}">${String.fromCharCode(65 + index)}</a>`;
     })];
-    const rows = people.map(row => `<tr${ctx.user?.id === row.user.id ? ' class="own-row"' : ''}><td>${row.rank}</td><td>${userLink(ctx, row.user)}${ctx.user?.id === row.user.id ? ' <span class="small muted">вы</span>' : ''}</td><td>${row.solved}</td><td class="mono">${solveTime(row.totalSeconds)}</td>${contest.problemIds.map(id => `<td class="mono">${row.times[id] === undefined ? '-' : solveTime(row.times[id])}</td>`).join('')}</tr>`);
-    return `<p class="small muted">${phase === 'finished' ? 'Итоговая таблица.' : 'Результаты обновляются после проверки посылок.'}</p>${table(headings, rows, phase === 'finished' ? 'Итоговая таблица соревнования' : 'Текущая таблица соревнования')}`;
+    const rows = people.map(row => `<tr${ctx.user?.id === row.user.id ? ' class="own-row"' : ''}><td class="num">${row.rank}</td><td>${userLink(ctx, row.user)}${ctx.user?.id === row.user.id ? ' <span class="small muted">вы</span>' : ''}</td><td class="num">${row.solved}</td><td class="num mono">${solveTime(row.totalSeconds)}</td>${contest.problemIds.map(id => `<td class="num mono">${row.times[id] === undefined ? '-' : solveTime(row.times[id])}</td>`).join('')}</tr>`);
+    const numeric = new Set([0, 2, 3]);
+    contest.problemIds.forEach((unused, index) => numeric.add(4 + index));
+    return `<p class="small muted">${phase === 'finished' ? 'Итоговая таблица.' : 'Результаты обновляются после проверки посылок.'}</p>${table(headings, rows, phase === 'finished' ? 'Итоговая таблица соревнования' : 'Текущая таблица соревнования', '', numeric)}`;
   }
 
   function contestRules(ctx, contest) {
@@ -247,10 +249,10 @@
       const index = all.indexOf(user);
       const rank = all.findIndex(item => item.rating === user.rating) + 1;
       const contest = user.ratingContestId && ctx.M.contest(user.ratingContestId);
-      return `<tr${user.id === ctx.user?.id ? ' class="own-row"' : ''}><td>${rank || index + 1}</td><td>${userLink(ctx, user)}${user.id === ctx.user?.id ? ' <span class="small muted">вы</span>' : ''}</td><td>${user.rating}</td><td>${contest && user.ratingDelta !== null && user.ratingDelta !== undefined ? `<a class="text-link" href="#${ctx.escape(`/contest/${encodeURIComponent(contest.id)}?tab=standings`)}">${signed(user.ratingDelta)}</a>` : signed(user.ratingDelta)}</td></tr>`;
+      return `<tr${user.id === ctx.user?.id ? ' class="own-row"' : ''}><td class="num">${rank || index + 1}</td><td>${userLink(ctx, user)}${user.id === ctx.user?.id ? ' <span class="small muted">вы</span>' : ''}</td><td class="num">${user.rating}</td><td class="num">${contest && user.ratingDelta !== null && user.ratingDelta !== undefined ? `<a class="text-link" href="#${ctx.escape(`/contest/${encodeURIComponent(contest.id)}?tab=standings`)}">${signed(user.ratingDelta)}</a>` : signed(user.ratingDelta)}</td></tr>`;
     });
     const pager = pageCount > 1 ? `<nav class="toolbar" aria-label="Страницы рейтинга">${page > 1 ? ctx.link(`/rating?q=${encodeURIComponent(query)}&page=${page - 1}`, 'Назад', 'btn secondary') : ''}<span class="small muted">${page} из ${pageCount}</span>${page < pageCount ? ctx.link(`/rating?q=${encodeURIComponent(query)}&page=${page + 1}`, 'Далее', 'btn secondary') : ''}</nav>` : '';
-    return `${ctx.header('Рейтинг участников')}${form}${ctx.renderList((rows.length ? table(['Место', 'Участник', 'Рейтинг', 'После последнего контеста'], rows, 'Рейтинг участников') : empty('Участники не найдены', 'Измените запрос.')) + pager, 'Участников с рейтингом пока нет.')}`;
+    return `${ctx.header('Рейтинг участников')}${form}${ctx.renderList((rows.length ? table(['Место', 'Участник', 'Рейтинг', 'После последнего контеста'], rows, 'Рейтинг участников', '', new Set([0, 2, 3])) : empty('Участники не найдены', 'Измените запрос.')) + pager, 'Участников с рейтингом пока нет.')}`;
   }
 
   function submissionTime(ctx, item) {
@@ -271,16 +273,16 @@
     const recentRows = recent.slice(0, 5).map(item => {
       const problem = ctx.M.problem(item.problemId, item.contestId || undefined);
       const problemPath = `/problem/${encodeURIComponent(item.problemId)}${item.contestId ? `?contest=${encodeURIComponent(item.contestId)}` : ''}`;
-      return `<tr><td>${ctx.link(`/submission/${item.id}`, `#${item.id}`)}</td><td>${ctx.link(problemPath, problem?.title || item.problemId)}</td><td>${verdict(item.status)}</td><td>${submissionTime(ctx, item)}</td><td><time datetime="${ctx.escape(item.createdAt)}">${date(item.createdAt)}</time></td></tr>`;
+      return `<tr><td class="num">${ctx.link(`/submission/${item.id}`, `#${item.id}`)}</td><td>${ctx.link(problemPath, problem?.title || item.problemId)}</td><td>${verdict(item.status)}</td><td class="num">${submissionTime(ctx, item)}</td><td><time datetime="${ctx.escape(item.createdAt)}">${date(item.createdAt)}</time></td></tr>`;
     });
     const history = data.contestHistory || [];
     const historyRows = history.map(item => {
       const contest = ctx.M.contest(item.contestId);
-      return `<tr><td>${ctx.link(`/contest/${encodeURIComponent(item.contestId)}?tab=standings`, contest?.title || item.contestId)}</td><td>${item.phase === 'finished' ? item.rank ?? '-' : item.phase === 'upcoming' ? 'До начала' : 'Идет'}</td><td>${signed(item.ratingDelta)}</td><td>${item.ratingAfter ?? (item.phase === 'finished' ? 'Ожидает расчета' : '-')}</td></tr>`;
+      return `<tr><td>${ctx.link(`/contest/${encodeURIComponent(item.contestId)}?tab=standings`, contest?.title || item.contestId)}</td><td class="num">${item.phase === 'finished' ? item.rank ?? '-' : item.phase === 'upcoming' ? 'До начала' : 'Идет'}</td><td class="num">${signed(item.ratingDelta)}</td><td class="num">${item.ratingAfter ?? (item.phase === 'finished' ? 'Ожидает расчета' : '-')}</td></tr>`;
     });
     const ownProfile = ctx.user && person.id === ctx.user.id;
     const actions = `${ctx.link(`/submissions?user=${userQuery}`, ownProfile ? 'Мои посылки' : 'Посылки участника', 'btn secondary')}${ownProfile ? '<button type="button" class="btn secondary" data-action="logout">Выйти</button>' : ''}`;
-    return `${ctx.header(person.handle, '', actions)}${summary}<section class="stack"><h2>Последние посылки</h2>${recentRows.length ? table(['Посылка', 'Задача', 'Вердикт', 'Время GPU, мс', 'Отправлено, МСК'], recentRows, 'Последние посылки участника') : empty('Посылок пока нет', ownProfile ? 'Выберите задачу и отправьте первое решение.' : 'Участник еще не отправлял решений.', ownProfile ? ctx.link('/problems', 'Выбрать задачу', 'btn primary') : '')}<h2>Соревнования</h2>${historyRows.length ? table(['Соревнование', 'Место', 'Изменение рейтинга', 'Рейтинг после контеста'], historyRows, 'История соревнований участника') : '<p class="muted">Еще не участвовал в соревнованиях.</p>'}</section>`;
+    return `${ctx.header(person.handle, '', actions)}${summary}<section class="stack"><h2>Последние посылки</h2>${recentRows.length ? table(['Посылка', 'Задача', 'Вердикт', 'Время GPU, мс', 'Отправлено, МСК'], recentRows, 'Последние посылки участника', '', new Set([0, 3])) : empty('Посылок пока нет', ownProfile ? 'Выберите задачу и отправьте первое решение.' : 'Участник еще не отправлял решений.', ownProfile ? ctx.link('/problems', 'Выбрать задачу', 'btn primary') : '')}<h2>Соревнования</h2>${historyRows.length ? table(['Соревнование', 'Место', 'Изменение рейтинга', 'Рейтинг после контеста'], historyRows, 'История соревнований участника', '', new Set([1, 2, 3])) : '<p class="muted">Еще не участвовал в соревнованиях.</p>'}</section>`;
   }
 
   function authModeFrom(value) {

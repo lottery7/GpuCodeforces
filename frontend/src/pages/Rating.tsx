@@ -39,8 +39,8 @@ export default function Rating() {
     </div>
     <QueryState query={rating}>
       {rating.data && <>
-        {rating.data.items.length ? <div className="table-wrap"><table className="data-table" aria-label="Рейтинг участников"><thead><tr><th>Место</th><th>Участник</th><th>Рейтинг</th><th>После последнего контеста</th></tr></thead><tbody>{rating.data.items.map(person => <tr key={person.id} className={person.id === user?.id ? 'own-row' : undefined}>
-          <td>{person.rank ?? '-'}</td><td><UserLink user={person} />{person.id === user?.id && <span className="small muted"> вы</span>}</td><td>{person.rating ?? '-'}</td><td>{person.ratingContestId && person.ratingDelta !== null ? <Link to={`/contest/${encodeURIComponent(person.ratingContestId)}?tab=standings`}><RatingDelta value={person.ratingDelta} /></Link> : <RatingDelta value={person.ratingDelta} />}</td>
+        {rating.data.items.length ? <div className="table-wrap"><table className="data-table" aria-label="Рейтинг участников"><thead><tr><th className="num">Место</th><th>Участник</th><th className="num">Рейтинг</th><th className="num">После последнего контеста</th></tr></thead><tbody>{rating.data.items.map(person => <tr key={person.id} className={person.id === user?.id ? 'own-row' : undefined}>
+          <td className="num">{person.rank ?? '-'}</td><td><UserLink user={person} />{person.id === user?.id && <span className="small muted"> вы</span>}</td><td className="num">{person.rating ?? '-'}</td><td className="num">{person.ratingContestId && person.ratingDelta !== null ? <Link to={`/contest/${encodeURIComponent(person.ratingContestId)}?tab=standings`}><RatingDelta value={person.ratingDelta} /></Link> : <RatingDelta value={person.ratingDelta} />}</td>
         </tr>)}</tbody></table></div> : <Empty>{q.trim() ? 'Участники не найдены. Измените запрос.' : 'Участников с рейтингом пока нет.'}</Empty>}
         <Pagination total={rating.data.total} offset={offset} limit={limit} onChange={value => { const next = new URLSearchParams(params); value ? next.set('offset', String(value)) : next.delete('offset'); setParams(next); }} />
       </>}

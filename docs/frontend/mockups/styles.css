@@ -243,6 +243,7 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
 .table-wrap { max-width: 100%; min-width: 0; overflow: auto; overscroll-behavior-x: contain; }
 .data-table { width: 100%; border-collapse: collapse; text-align: left; font-size: var(--font-base); }
 .data-table th, .data-table td { padding: 10.8px 14.4px; vertical-align: middle; white-space: nowrap; }
+.data-table th.num, .data-table td.num { text-align: center; }
 .data-table th { border-bottom: 1.2px solid var(--border); background: var(--chrome); color: var(--muted); font-size: var(--font-sm); font-weight: 500; }
 .data-table td { border-bottom: 1.2px solid #34363b; }
 .data-table tbody tr:last-child td { border-bottom: 0; }

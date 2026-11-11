@@ -80,12 +80,12 @@ export default function Problems() {
       {problems.data && <>{problems.data.items.length ?
         <div className="panel table-wrap">
           <table className={`data-table problem-table${personal ? '' : ' guest'}`} aria-label="Банк задач">
-            <thead><tr><th aria-label="Решена" /><th><button className="text-link" onClick={() => patch({ sort: 'code' })}>Задача</button></th><th><button className="text-link" onClick={() => patch({ sort: 'difficulty' })}>Сложность</button></th><th>Решили</th>{personal && <th><button className="text-link" onClick={() => patch({ sort: 'bestTime' })}>Личный рекорд, мс</button></th>}</tr></thead>
+            <thead><tr><th aria-label="Решена" /><th><button className="text-link" onClick={() => patch({ sort: 'code' })}>Задача</button></th><th><button className="text-link" onClick={() => patch({ sort: 'difficulty' })}>Сложность</button></th><th className="num">Решили</th>{personal && <th className="num"><button className="text-link" onClick={() => patch({ sort: 'bestTime' })}>Личный рекорд, мс</button></th>}</tr></thead>
             <tbody>{problems.data.items.map(problem => <tr key={problem.id}>
               <td>{problem.solved && <span className="accepted" aria-label="Решена">✓</span>}</td>
               <td><Link className="task-link" to={problemPath(problem.id)}>{problem.code}. {problem.title}</Link><div className="subline">{problem.tags.map((tag, index) => <span key={tag}>{index > 0 && ' / '}<button className="text-link tag" onClick={() => patch({ tag })}>{tag}</button></span>)}</div></td>
-              <td><Difficulty difficulty={problem.difficulty} /></td><td>{problem.solvedCount}</td>
-              {personal && <td className="mono">{problem.bestSubmissionId ? <Link to={`/submission/${encodeURIComponent(problem.bestSubmissionId)}`}><TimeValue value={problem.bestTimeMs} /></Link> : <TimeValue value={problem.bestTimeMs} />}</td>}
+              <td><Difficulty difficulty={problem.difficulty} /></td><td className="num">{problem.solvedCount}</td>
+              {personal && <td className="num mono">{problem.bestSubmissionId ? <Link to={`/submission/${encodeURIComponent(problem.bestSubmissionId)}`}><TimeValue value={problem.bestTimeMs} /></Link> : <TimeValue value={problem.bestTimeMs} />}</td>}
             </tr>)}</tbody>
           </table>
         </div> : <Empty>{hasFilters ? 'Задачи не найдены. Измените запрос или сбросьте фильтры.' : 'В банке пока нет задач.'}</Empty>}
