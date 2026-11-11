@@ -15,7 +15,7 @@ export function HackForm({ submissionId, contestId }: { submissionId: string; co
     <form className="form" onSubmit={event => { event.preventDefault(); create.mutate(); }}>
       <label className="field">Входной тест<textarea rows={8} maxLength={65536} value={testJson} onChange={event => { setTestJson(event.target.value); create.reset(); }} /></label>
       <button className="btn secondary" disabled={create.isPending}>{create.isPending ? 'Отправляем...' : 'Проверить взлом'}</button>
-      <ErrorMessage error={create.error} />{create.data && <p role="status">Тест принят. {labels[create.data.status]}</p>}
+      <ErrorMessage error={create.error} />{create.data && <p role="status">Тест принят, результат появится в списке ниже.</p>}
     </form><HackList contestId={contestId} /></section>;
 }
 

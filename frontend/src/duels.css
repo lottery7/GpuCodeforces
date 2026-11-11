@@ -13,6 +13,7 @@
 .notification-item { padding: 16.8px 0; border-top: 1.2px solid var(--border); }
 .notification-item > p:first-child { margin: 0 0 4.8px; }
 .notification-item.unread > p:first-child { color: var(--text-strong); }
+.notification-item > time { display: block; }
 .notification-item > a { display: inline-block; margin-top: 12px; }
 .notification-actions { display: flex; flex-wrap: wrap; gap: 9.6px; margin-top: 14.4px; }
 .notification-actions .btn { min-height: 40.8px; padding: 6px 12px; }
