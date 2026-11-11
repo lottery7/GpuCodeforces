@@ -35,7 +35,15 @@ data class MockDirective(
     val timeMs: Double = 1.0,
     /** Number of tests the problem is pretended to have. */
     val tests: Int = 3,
+    val customVerdict: Verdict? = null,
 ) {
+    fun forProblem(problem: ProblemSpec): MockDirective = when {
+        problem.customOnly -> copy(verdict = customVerdict ?: Verdict.ACCEPTED, test = 1, tests = 1)
+        problem.customTests.isNotEmpty() && verdict == Verdict.ACCEPTED ->
+            copy(verdict = customVerdict ?: Verdict.ACCEPTED, test = tests + 1, tests = tests + problem.customTests.size)
+        else -> this
+    }
+
     companion object {
         private val LINE = Regex("""judge-mock:(.*)""")
         private const val MAX_TESTS = 200
@@ -47,7 +55,7 @@ data class MockDirective(
                 require('=' in it) { "judge-mock: expected key=value, got '$it'" }
                 it.substringBefore('=') to it.substringAfter('=')
             }
-            val unknown = values.keys - setOf("verdict", "test", "time-ms", "tests")
+            val unknown = values.keys - setOf("verdict", "test", "time-ms", "tests", "custom-verdict")
             require(unknown.isEmpty()) { "judge-mock: unknown keys $unknown" }
             return MockDirective(
                 verdict = values["verdict"]?.let { name ->
@@ -58,6 +66,9 @@ data class MockDirective(
                 tests = values["tests"]?.let { v ->
                     v.toIntOrNull()?.takeIf { it in 1..MAX_TESTS } ?: throw IllegalArgumentException("judge-mock: tests must be in 1..$MAX_TESTS")
                 } ?: 3,
+                customVerdict = values["custom-verdict"]?.let { name ->
+                    Verdict.entries.find { it.name == name } ?: throw IllegalArgumentException("judge-mock: unknown custom verdict '$name'")
+                },
             )
         }
     }
@@ -155,7 +166,7 @@ class MockJudge(
             return JudgeResult(Verdict.INTERNAL_ERROR, message = "Invalid judge job")
         }
         val directive = try {
-            MockDirective.parse(job.source)
+                MockDirective.parse(job.source).forProblem(job.problem)
         } catch (e: IllegalArgumentException) {
             log.warn("Bad mock directive: {}", e.message)
             return JudgeResult(Verdict.INTERNAL_ERROR, message = e.message)

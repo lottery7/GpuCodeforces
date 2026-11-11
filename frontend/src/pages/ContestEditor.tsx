@@ -7,7 +7,7 @@ import { useSession } from '../auth';
 import { Empty, ErrorMessage, LoginRequired, PageHeader, UserLink } from '../ui';
 import { difficultyLabels, phaseOf } from '../utils';
 
-type Values = { title: string; startAt: string; duration: string; authors: User[]; problemIds: string[] };
+type Values = { title: string; startAt: string; duration: string; hackDuration: string; authors: User[]; problemIds: string[] };
 
 function moscowInput(date: string) {
   return new Date(Date.parse(date) + 3 * 3600000).toISOString().slice(0, 16);
@@ -67,6 +67,7 @@ export default function ContestEditor() {
       title: item?.title ?? '',
       startAt: moscowInput(item?.startAt ?? new Date(Date.now() + 3600000).toISOString()),
       duration: String(item ? Math.round((Date.parse(item.endAt) - Date.parse(item.startAt)) / 60000) : 120),
+      hackDuration: String(item?.hackEndAt ? Math.round((Date.parse(item.hackEndAt) - Date.parse(item.endAt)) / 60000) : 0),
       authors: item?.authors ?? [user],
       problemIds: [...(item?.problemIds ?? [])],
     });
@@ -145,6 +146,7 @@ export default function ContestEditor() {
       endAt: end.toISOString(),
       authorIds: values.authors.map(author => author.id),
       problemIds: values.problemIds,
+      hackDurationMinutes: Number(values.hackDuration),
     });
   };
 
@@ -158,6 +160,7 @@ export default function ContestEditor() {
           <label className="field"><span>Длительность, минут</span><input name="duration" type="number" min={1} step={1} required value={values.duration} disabled={save.isPending} onChange={event => update({ duration: event.target.value })} /></label>
         </div>
         <fieldset className="contest-authors" disabled={save.isPending}>
+          <label className="field"><span>Период взломов, минут (0 — отключён)</span><input type="number" min={0} max={10080} step={1} required value={values.hackDuration} onChange={event => update({ hackDuration: event.target.value })} /></label>
           <legend>Авторы</legend>
           <p className="small muted">{values.authors.some(author => author.id === user.id) ? 'Авторы могут изменять контест до начала.' : 'После сохранения вы потеряете право редактирования.'}</p>
           <div className="contest-selected-authors">{values.authors.map(author => <div className="contest-selected-author" key={author.id}><UserLink user={author} /><button type="button" className="text-link" aria-label={`Убрать ${author.handle}`} disabled={values.authors.length === 1} title={values.authors.length === 1 ? 'Нужен хотя бы один автор' : undefined} onClick={() => update({ authors: values.authors.filter(person => person.id !== author.id) })}>Убрать</button></div>)}</div>

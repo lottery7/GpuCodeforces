@@ -7,6 +7,7 @@ import CodeEditor from '../components/CodeEditor';
 import { writeDraft } from '../drafts';
 import { ErrorMessage, Markdown, PageHeader, QueryState, Status, TimeValue, UserLink } from '../ui';
 import { dateTime, pendingStatuses, problemPath } from '../utils';
+import { HackForm } from '../components/Hacks';
 
 export default function Submission() {
   const { id = '' } = useParams();
@@ -38,10 +39,10 @@ export default function Submission() {
     },
   });
   const owner = Boolean(user && item?.user.id === user.id);
-  const context = item?.contestId || 'practice';
+  const context = item?.context || item?.contestId || 'practice';
   const pending = Boolean(item && pendingStatuses.has(item.status));
   const accepted = item?.status === 'accepted';
-  const retryAvailable = owner && (item?.status === 'system_error' || item?.status === 'measurement_error');
+  const retryAvailable = owner && item?.recheckAllowed !== false && (item?.status === 'system_error' || item?.status === 'measurement_error');
   function edit() {
     if (!item || typeof item.code !== 'string' || !user) return;
     writeDraft(user.id, item.problemId, context, item.code);
@@ -66,7 +67,8 @@ export default function Submission() {
       <ErrorMessage error={recheck.error} />
     </section>
     {accepted && <p><Link to={problemPath(item.problemId, context, 'leaders')}>Таблица лидеров</Link></p>}
-    {owner && typeof item.code === 'string' ? <details className="disclosure" open={!accepted && !pending}><summary>Код решения</summary><div className="editor-panel"><CodeEditor value={item.code} readOnly label="Исходный код посылки" /></div></details> : <p className="muted small">Исходный код доступен автору посылки.</p>}
+    {(owner || item.sourcePublic) && typeof item.code === 'string' ? <details className="disclosure" open={!accepted && !pending}><summary>Код решения</summary><div className="editor-panel"><CodeEditor value={item.code} readOnly label="Исходный код посылки" /></div></details> : <p className="muted small">Исходный код доступен автору посылки.</p>}
+    {item.hackable && item.contestId && <HackForm submissionId={item.id} contestId={item.contestId} />}
     {item.environmentMarkdown && <details className="disclosure"><summary>Среда и методика замера</summary><Markdown>{item.environmentMarkdown}</Markdown></details>}
   </>}</QueryState>;
 }

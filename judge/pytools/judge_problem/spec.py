@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -160,3 +161,38 @@ def parse_test(index: int, raw: Any, params: List[Param], max_test_bytes: int) -
         if value is not None and (not isinstance(value, dict) or set(value) != wanted):
             raise ValueError(f"{where}: {what} must have exactly the keys {sorted(wanted)}")
     return Test(index, name, seed, bool(raw.get("sample", False)), scalars, sizes, inputs, expected)
+
+
+def parse_custom_test(index: int, raw: Any, params: List[Param]) -> Test:
+    """The public data-only format, checked independently of backend validation."""
+    if not isinstance(raw, dict) or set(raw) != {"scalars", "inputs"}:
+        raise ValueError("only scalars and inputs are allowed")
+    test = parse_test(index, {"name": f"custom-{index}", **raw}, params, 1 << 20)
+    if any(n < 1 or n > 8192 for n in test.sizes.values()):
+        raise ValueError("custom array sizes must be in 1..8192")
+    if sum(len(v) if isinstance(v, list) else 8193 for v in test.inputs.values()) > 8192:
+        raise ValueError("custom test exceeds 8192 input elements")
+    for param in params:
+        if param.role == "SCALAR":
+            values = [test.scalars[param.name]]
+        elif param.is_input:
+            values = test.inputs[param.name]
+            if not isinstance(values, list) or len(values) != test.sizes[param.name]:
+                raise ValueError(f"invalid size of {param.name}")
+        else:
+            continue
+        for value in values:
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                raise ValueError(f"invalid values of {param.name}")
+            if param.type.startswith(("FLOAT", "BFLOAT")):
+                maximum = 65504 if param.type == "FLOAT16" else 3.389e38 if param.type == "BFLOAT16" else 3.402823466e38 if param.type == "FLOAT32" else 1.7976931348623157e308
+                if abs(value) > maximum:
+                    raise ValueError(f"value outside {param.type}")
+            else:
+                bits = DTYPES[param.type][1] * 8
+                unsigned = param.type.startswith("UINT")
+                minimum = 0 if unsigned else -(1 << (bits - 1))
+                maximum = (1 << (bits if unsigned and bits != 64 else bits - 1)) - 1
+                if int(value) != value or not minimum <= value <= maximum:
+                    raise ValueError(f"value outside {param.type}")
+    return test

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useLocation, useParams, useSearchParams } from 'react-router';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import { api } from '../api/client';
 import type { Problem } from '../api/types';
 import { useSession } from '../auth';
 import { Empty, ErrorMessage, Markdown, PageHeader, Status, Tabs, TimeValue, UserLink } from '../ui';
 import { dateTime, difficultyLabels, phaseOf, problemPath, statusLabels } from '../utils';
+import { HackList } from '../components/Hacks';
 
 function countdown(value: string, now: number) {
   const seconds = Math.max(0, Math.ceil((Date.parse(value) - now) / 1000));
@@ -39,6 +40,9 @@ function PersonalStatus({ problem }: { problem: Problem }) {
 export default function Contest() {
   const { id = '' } = useParams();
   const [params] = useSearchParams();
+  const navigate = useNavigate();
+  const upsolving = params.get('mode') === 'upsolving';
+  const context = upsolving ? `upsolve:${id}` : id;
   const { user, isLoading } = useSession();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -51,23 +55,23 @@ export default function Contest() {
     queryKey: ['contest', id, user?.id],
     queryFn: ({ signal }) => api.getContest(id, signal),
     enabled: Boolean(id) && !isLoading,
-    refetchInterval: query => query.state.data && phaseOf(query.state.data) !== 'finished' ? 5000 : false,
+    refetchInterval: query => query.state.data?.finalized ? false : 5000,
   });
   const item = contest.data;
   const phase = item ? phaseOf(item) : 'upcoming';
   const author = Boolean(user && item?.authors.some(person => person.id === user.id));
-  const selected = ['tasks', 'standings', 'rules'].find(tab => tab === params.get('tab')) ?? 'tasks';
+  const selected = ['tasks', 'standings', 'rules', 'hacks'].find(tab => tab === params.get('tab')) ?? 'tasks';
   const tasks = useQuery({
-    queryKey: ['contest-tasks', id, user?.id],
-    queryFn: ({ signal }) => api.allProblems({ context: id }, signal),
+    queryKey: ['contest-tasks', id, context, user?.id],
+    queryFn: ({ signal }) => api.allProblems({ context }, signal),
     enabled: Boolean(item) && (phase !== 'upcoming' || author),
-    refetchInterval: phase === 'live' ? 5000 : false,
+    refetchInterval: item?.finalized && !upsolving ? false : 5000,
   });
   const standings = useQuery({
     queryKey: ['standings', id, user?.id],
     queryFn: ({ signal }) => api.contestStandings(id, signal),
     enabled: Boolean(item) && phase !== 'upcoming' && selected === 'standings',
-    refetchInterval: phase === 'live' ? 5000 : false,
+    refetchInterval: item?.finalized ? false : 5000,
   });
   const previousPhase = useRef<{ id: string; phase: string } | null>(null);
   useEffect(() => {
@@ -88,6 +92,7 @@ export default function Contest() {
     },
   });
   const resetJoin = join.reset;
+  const startVirtual = useMutation({ mutationFn: () => api.startVirtual(id), onSuccess: attempt => navigate(`/virtual/${attempt.id}`) });
   useEffect(() => resetJoin(), [id, resetJoin]);
 
   if (contest.isPending) return <p className="loading" role="status">Загрузка контеста...</p>;
@@ -96,6 +101,8 @@ export default function Contest() {
 
   const base = `/contest/${encodeURIComponent(id)}`;
   const actions = <>
+    {item.finalized && <><Link className="btn secondary" to={`${base}${upsolving ? '' : '?mode=upsolving'}`}>{upsolving ? 'Официальные результаты' : 'Дорешивание'}</Link>{user && <button className="btn secondary" disabled={startVirtual.isPending} onClick={() => startVirtual.mutate()}>Начать виртуально</button>}</>}
+    {user && <Link className="text-link" to="/virtual">Мои виртуальные контесты</Link>}
     {phase !== 'finished' && (item.registered ? <span className="success">{phase === 'upcoming' ? 'Вы зарегистрированы' : 'Вы участвуете'}</span> : user ? <button className="btn secondary" disabled={join.isPending} onClick={() => join.mutate()}>{join.isPending ? 'Регистрация...' : 'Зарегистрироваться'}</button> : <Link className="btn secondary" to={`/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`}>Зарегистрироваться</Link>)}
     {author && phase === 'upcoming' && <Link className="btn secondary" to={`${base}/edit`}>Изменить</Link>}
   </>;
@@ -111,14 +118,18 @@ export default function Contest() {
       <span className="muted">Авторы: {item.authors.map((person, index) => <span key={person.id}>{index > 0 && ', '}<UserLink user={person} /></span>)}</span>
     </div>
     {join.error && <ErrorMessage error={join.error} />}
-    <Tabs selected={selected} items={[{ id: 'tasks', label: 'Задачи', to: `${base}?tab=tasks` }, { id: 'standings', label: 'Таблица', to: `${base}?tab=standings` }, { id: 'rules', label: 'Правила', to: `${base}?tab=rules` }]} />
+    <ErrorMessage error={startVirtual.error} />
+    {upsolving && <p className="notice">Дорешивание. Ваши новые отправки не изменяют официальный зачёт.</p>}
+    {phase === 'finished' && item.finalized === false && <p className="notice">{item.hackEndAt && Date.parse(item.hackEndAt) > now ? `Период взломов до ${dateTime(item.hackEndAt)} МСК.` : 'Ожидаем окончания проверок. Результаты предварительные.'}</p>}
+    <Tabs selected={selected} items={[{ id: 'tasks', label: 'Задачи', to: `${base}?tab=tasks${upsolving ? '&mode=upsolving' : ''}` }, { id: 'standings', label: 'Таблица', to: `${base}?tab=standings` }, { id: 'rules', label: 'Правила', to: `${base}?tab=rules` }, ...(item.hackEndAt ? [{ id: 'hacks', label: 'Взломы', to: `${base}?tab=hacks` }] : [])]} />
+    {selected === 'hacks' && <HackList contestId={id} />}
     {selected === 'rules' ? item.rulesMarkdown ? <Markdown>{item.rulesMarkdown}</Markdown> : <Empty>Правила пока недоступны.</Empty> : phase === 'upcoming' && (selected === 'standings' || !author) ? <Empty>{selected === 'standings' ? 'Таблица появится после начала.' : `Задачи откроются ${dateTime(item.startAt)} МСК.`}</Empty> : <>
       {tasks.isPending && <p className="loading" role="status">Загрузка задач...</p>}
       {tasks.error && <div><ErrorMessage error={tasks.error} /><button className="text-link" onClick={() => void tasks.refetch()}>Повторить</button></div>}
       {selected === 'tasks' && tasks.data && <>
-        {phase === 'finished' && <p className="notice">Контест завершен. На странице задачи можно перейти к решению в практике.</p>}
+        {phase === 'finished' && !upsolving && <p className="notice">{item.finalized ? 'Контест завершён. Можно дорешать задачи или начать виртуальное участие.' : 'Контест завершен. На странице задачи можно перейти к решению в практике.'}</p>}
         {tasks.data.length ? <div className="table-wrap"><table className="data-table" aria-label="Задачи соревнования"><thead><tr><th>Задача</th><th>Сложность</th>{user && <><th>Ваш статус</th><th>Ваше лучшее время, мс</th></>}<th>Рекорд контеста, мс</th></tr></thead><tbody>{tasks.data.map((problem, index) => <tr key={problem.id}>
-          <td><Link to={problemPath(problem.id, id)}>{taskLabel(index)}. {problem.title}</Link></td>
+          <td><Link to={problemPath(problem.id, context)}>{taskLabel(index)}. {problem.title}</Link></td>
           <td>{difficultyLabels[problem.difficulty]}</td>
           {user && <><td><PersonalStatus problem={problem} /></td><td>{problem.bestSubmissionId && problem.bestTimeMs !== null ? <Link to={`/submission/${encodeURIComponent(problem.bestSubmissionId)}`}><TimeValue value={problem.bestTimeMs} /></Link> : '-'}</td></>}
           <td><TimeValue value={problem.recordTimeMs} /></td>
@@ -129,7 +140,7 @@ export default function Contest() {
         {standings.isPending && <p className="loading" role="status">Загрузка таблицы...</p>}
         {standings.error && <div><ErrorMessage error={standings.error} /><button className="text-link" onClick={() => void standings.refetch()}>Повторить</button></div>}
         {standings.data && (standings.data.length ? <div className="table-wrap"><table className="data-table" aria-label="Таблица контеста"><thead><tr><th>Место</th><th>Участник</th><th>Решено</th><th>Сумма ускорений</th>{columns.map((problem, index) => <th key={problem.id}><Link title={problem.title} to={problemPath(problem.id, id)}>{taskLabel(index)}, мс</Link></th>)}</tr></thead><tbody>{standings.data.map(row => <tr key={row.user.id} className={row.user.id === user?.id ? 'own-row' : undefined}>
-          <td>{row.rank}</td><td><UserLink user={row.user} />{row.user.id === user?.id && <span className="small muted"> вы</span>}</td><td>{row.solved}</td><td>{row.speedup.toFixed(3)}x</td>
+          <td>{row.rank}</td><td><UserLink user={row.user} />{row.user.id === user?.id && <span className="small muted"> вы</span>}{phase === 'finished' && <div className="small"><Link to={`/submissions?user=${encodeURIComponent(row.user.id)}&contest=${encodeURIComponent(id)}`}>Решения</Link></div>}</td><td>{row.solved}</td><td>{row.speedup.toFixed(3)}x</td>
           {columns.map(problem => <td key={problem.id}>{row.user.id === user?.id && problem.bestSubmissionId && row.times[problem.id] !== undefined ? <Link to={`/submission/${encodeURIComponent(problem.bestSubmissionId)}`}><TimeValue value={row.times[problem.id]} /></Link> : <TimeValue value={row.times[problem.id]} />}</td>)}
         </tr>)}</tbody></table></div> : <Empty>Результатов пока нет.</Empty>)}
       </>}

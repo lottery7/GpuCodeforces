@@ -81,9 +81,9 @@ class QueryPlanIntegrationTest {
         plans.check { submissions.countByUserIdAndStatusIn(id, SubmissionStatus.PENDING) }
         plans.check { submissions.findUnsent(SubmissionStatus.QUEUED, now) }
         plans.check { submissions.findStuck(SubmissionStatus.PENDING, now) }
-        plans.check { submissions.search(id, null, null, false, null) }
-        plans.check { submissions.search(id, "probe", SubmissionStatus.ACCEPTED, true, null) }
-        plans.check { submissions.search(id, "probe", SubmissionStatus.ACCEPTED, false, id) }
+        plans.check { submissions.search(id, null, null, null) }
+        plans.check { submissions.search(id, "probe", SubmissionStatus.ACCEPTED, "practice") }
+        plans.check { submissions.search(id, "probe", SubmissionStatus.ACCEPTED, id.toString()) }
         plans.check { stats.findWithStatus(SubmissionStatus.ACCEPTED, listOf("probe", "other")) }
         plans.check { stats.findHeads(id, listOf("probe", "other")) }
         plans.check { stats.countProblemsWithStatus(id, SubmissionStatus.ACCEPTED) }

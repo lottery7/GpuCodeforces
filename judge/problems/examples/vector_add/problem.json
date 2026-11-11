@@ -1,6 +1,7 @@
 {
   "id": "vector-add",
   "version": "1",
+  "allowCustomTests": true,
   "signature": {
     "function": "solve",
     "params": [

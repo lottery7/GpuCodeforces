@@ -72,7 +72,12 @@ class Submission(
     val previousBestTimeMs: BigDecimal?,
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: Instant = Instant.now(),
+    @Column(name = "context_key", nullable = false)
+    val contextKey: String = contestId?.toString() ?: "practice",
 ) {
+    @Column(name = "test_suite", nullable = false)
+    var testSuite: String = "base"
+
     @Column(nullable = false)
     var status: SubmissionStatus = SubmissionStatus.QUEUED
 
@@ -114,7 +119,7 @@ class Submission(
 
     override fun hashCode() = id.hashCode()
 
-    fun toRow() = SubmissionRow(id, userId, problemId, problemVersionId, contestId, status, timeMs, judgeHash, gpuProfile, createdAt)
+    fun toRow() = SubmissionRow(id, userId, problemId, problemVersionId, contestId, status, timeMs, judgeHash, gpuProfile, createdAt, contextKey)
 
     companion object {
         const val RECHECK_SEPARATOR = ".r"
@@ -132,9 +137,15 @@ class SubmissionRow(
     val judgeHash: String,
     val gpuProfile: String,
     val createdAt: Instant,
+    val contextKey: String = contestId?.toString() ?: "practice",
 )
 
 interface SubmissionRepository : JpaRepository<Submission, UUID> {
+    fun findByContestId(contestId: UUID): List<Submission>
+
+    @Query("SELECT count(s) FROM Submission s WHERE s.recheckCount > 0 AND s.contestId IS NOT NULL AND s.contextKey NOT LIKE '%:%' AND s.status IN :statuses")
+    fun countPendingRejudges(statuses: Collection<SubmissionStatus>): Long
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT s FROM Submission s WHERE s.id = :id")
     fun findForUpdate(id: UUID): Submission?
@@ -151,15 +162,14 @@ interface SubmissionRepository : JpaRepository<Submission, UUID> {
     @Query(
         """
         SELECT new dev.gpucodeforces.backend.submission.SubmissionRow(
-            s.id, s.userId, s.problemId, s.problemVersionId, s.contestId, s.status, s.timeMs, s.judgeHash, s.gpuProfile, s.createdAt)
+            s.id, s.userId, s.problemId, s.problemVersionId, s.contestId, s.status, s.timeMs, s.judgeHash, s.gpuProfile, s.createdAt, s.contextKey)
         FROM Submission s
         WHERE s.userId = :userId
           AND (:problemId IS NULL OR s.problemId = :problemId)
           AND (:status IS NULL OR s.status = :status)
-          AND (:practiceOnly = FALSE OR s.contestId IS NULL)
-          AND (:contestId IS NULL OR s.contestId = :contestId)
+          AND (:contextKey IS NULL OR s.contextKey = :contextKey)
         ORDER BY s.createdAt DESC
         """,
     )
-    fun search(userId: UUID, problemId: String?, status: SubmissionStatus?, practiceOnly: Boolean, contestId: UUID?): List<SubmissionRow>
+    fun search(userId: UUID, problemId: String?, status: SubmissionStatus?, contextKey: String?): List<SubmissionRow>
 }

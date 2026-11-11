@@ -13,6 +13,7 @@ const ContestEditor = lazy(() => import('./pages/ContestEditor'));
 const Auth = lazy(() => import('./pages/Auth'));
 const Profile = lazy(() => import('./pages/Profile'));
 const Rating = lazy(() => import('./pages/Rating'));
+const Virtual = lazy(() => import('./pages/Virtual'));
 
 const navigation = [
   ['/problems', 'Задачи'], ['/contests', 'Соревнования'],
@@ -87,6 +88,8 @@ export default function App() {
           <Route path="/login" element={<Auth key="login" mode="login" />} />
           <Route path="/register" element={<Auth key="register" mode="register" />} />
           <Route path="/rating" element={<Rating />} />
+          <Route path="/virtual" element={<Virtual />} />
+          <Route path="/virtual/:id" element={<Virtual />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="*" element={<><PageHeader title="Страница не найдена" /><Link to="/problems">Перейти к задачам</Link></>} />
         </Routes>

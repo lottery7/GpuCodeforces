@@ -40,6 +40,32 @@ function open(path: string) {
 beforeEach(() => { session.user = owner; });
 
 describe('Решение задачи', () => {
+  it('отправляет дорешивание в архивный контекст без конкурсной регистрации', async () => {
+    vi.spyOn(api, 'getProblem').mockResolvedValue(problem);
+    vi.spyOn(api, 'getContest').mockResolvedValue({ id: 'round', title: 'Архив', startAt: '2026-01-01T09:00:00Z', endAt: '2026-01-01T10:00:00Z', authors: [], problemIds: [problem.id], problemCount: 1, registered: false, gpu: 'GPU', finalized: true });
+    const submit = vi.spyOn(api, 'submitSolution').mockResolvedValue({ ...record, context: 'upsolve:round', status: 'queued' });
+    vi.spyOn(api, 'getSubmission').mockResolvedValue({ ...record, context: 'upsolve:round', status: 'queued' });
+    const join = vi.spyOn(api, 'registerForContest');
+    open('/problem/vector-add?contest=upsolve%3Around');
+    await userEvent.click(await screen.findByRole('button', { name: 'Отправить' }));
+    expect(submit).toHaveBeenCalledWith({ problemId: problem.id, context: 'upsolve:round', code: problem.starterCode });
+    expect(join).not.toHaveBeenCalled();
+  });
+
+  it('показывает опубликованный исходник и отправляет тест взлома', async () => {
+    session.user = { ...owner, id: 'viewer', handle: 'viewer' };
+    vi.spyOn(api, 'getSubmission').mockResolvedValue({ ...record, status: 'accepted', sourcePublic: true, hackable: true });
+    vi.spyOn(api, 'listHacks').mockResolvedValue([]);
+    const hack = vi.spyOn(api, 'createHack').mockResolvedValue({ id: 'h1', contestId: record.contestId!, userId: 'viewer', submissionId: record.id, problemId: problem.id, status: 'queued', diagnostic: '', createdAt: record.createdAt });
+    open('/submission/42');
+    expect(await screen.findByLabelText('Исходный код посылки')).toHaveValue(record.code);
+    const input = '{"scalars":{"N":1},"inputs":{"A":[1],"B":[2]}}';
+    fireEvent.change(screen.getByLabelText('Входной тест'), { target: { value: input } });
+    await userEvent.click(screen.getByRole('button', { name: 'Проверить взлом' }));
+    expect(hack).toHaveBeenCalledWith(record.id, input);
+    expect(await screen.findByText(/Тест принят/)).toBeVisible();
+  });
+
   it('не показывает результат примера как актуальный после правки кода', async () => {
     vi.spyOn(api, 'getProblem').mockResolvedValue(problem);
     let finish!: (result: { passed: boolean; diagnostic: string }) => void;

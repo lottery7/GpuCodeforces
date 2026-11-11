@@ -11,6 +11,9 @@ import jakarta.persistence.ManyToMany
 import jakarta.persistence.Table
 import java.time.Instant
 import java.util.UUID
+import org.hibernate.annotations.JdbcTypeCode
+import org.hibernate.type.SqlTypes
+import java.math.BigDecimal
 
 @Entity
 @Table(name = "contests", schema = "gpucodeforces")
@@ -36,6 +39,21 @@ class Contest(
     )
     var authors: MutableSet<User> = mutableSetOf(),
 ) {
+    @Column(name = "hack_end_at")
+    var hackEndAt: Instant? = null
+
+    @Column(name = "finalized_at")
+    var finalizedAt: Instant? = null
+
+    @Column(name = "gpu_profile")
+    var gpuProfile: String? = null
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "baseline_times", nullable = false)
+    var baselineTimes: Map<String, BigDecimal> = emptyMap()
+
+    fun hacksOpen(now: Instant): Boolean = !now.isBefore(endAt) && hackEndAt?.isAfter(now) == true && finalizedAt == null
+
     constructor(title: String, startAt: Instant, endAt: Instant, gpu: String) :
         this(UUID.randomUUID(), title, startAt, endAt, gpu)
 

@@ -1,0 +1,29 @@
+import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { Link, useParams } from 'react-router';
+import { api } from '../api/client';
+import { useSession } from '../auth';
+import { PageHeader, QueryState, TimeValue, LoginRequired } from '../ui';
+import { dateTime, problemPath } from '../utils';
+
+export default function Virtual() {
+  const { id } = useParams();
+  const { user } = useSession();
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
+  const attempt = useQuery({ queryKey: ['virtual', id, user?.id], queryFn: ({ signal }) => api.getVirtual(id!, signal), enabled: Boolean(id && user), refetchInterval: 5000 });
+  const history = useQuery({ queryKey: ['virtual-history', user?.id], queryFn: ({ signal }) => api.listVirtual(signal), enabled: Boolean(!id && user), refetchInterval: 15000 });
+  const context = `virtual:${id}`;
+  const tasks = useQuery({ queryKey: ['virtual-tasks', id, user?.id], queryFn: ({ signal }) => api.allProblems({ context }, signal), enabled: Boolean(id && attempt.data), refetchInterval: 5000 });
+  if (!user) return <LoginRequired returnTo={id ? `/virtual/${id}` : '/virtual'}>Войдите для виртуального участия.</LoginRequired>;
+  if (!id) return <><PageHeader title="Мои виртуальные контесты" /><QueryState query={history}>{history.data?.length ? <ul>{history.data.map(item => <li key={item.id}><Link to={`/virtual/${item.id}`}>{dateTime(item.startedAt)}</Link> · Решено: {item.solved} · {item.speedup.toFixed(3)}x</li>)}</ul> : <p>Попыток пока нет. Начать можно со страницы завершённого контеста.</p>}</QueryState></>;
+  const item = attempt.data;
+  const serverNow = item ? now + Date.parse(item.serverNow) - attempt.dataUpdatedAt : now;
+  const remaining = item ? Math.max(0, Math.ceil((Date.parse(item.endsAt) - serverNow) / 1000)) : 0;
+  return <><PageHeader title="Виртуальный контест" actions={<Link to="/virtual">Все попытки</Link>} /><QueryState query={attempt}>{item && <>
+    <p className="notice" role="status">{remaining > 0 ? `Осталось ${Math.floor(remaining / 3600)}:${String(Math.floor(remaining / 60) % 60).padStart(2, '0')}:${String(remaining % 60).padStart(2, '0')}` : item.pending ? 'Время истекло. Ожидаем проверки отправленных решений.' : 'Виртуальный контест завершён.'}</p>
+    <p>Решено: {item.solved}. Сумма ускорений: {item.speedup.toFixed(3)}x. Участие не изменяет рейтинг.</p>
+    <QueryState query={tasks}><ul>{tasks.data?.map(problem => <li key={problem.id}><Link to={problemPath(problem.id, remaining > 0 ? context : `upsolve:${item.contestId}`)}>{problem.code}. {problem.title}</Link> · <TimeValue value={item.times[problem.id]} /> мс</li>)}</ul></QueryState>
+    {remaining === 0 && <p><Link to={`/contest/${item.contestId}?tab=standings`}>Сравнить с официальной таблицей</Link> · <Link to={`/contest/${item.contestId}?mode=upsolving`}>Дорешивание</Link></p>}
+  </>}</QueryState></>;
+}

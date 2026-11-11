@@ -30,7 +30,7 @@ fun Contest.toApiModel(
         problems.size,
         registered,
         gpu,
-    ).rulesMarkdown(rulesMarkdown)
+    ).rulesMarkdown(rulesMarkdown).hackEndAt(hackEndAt?.toOffsetDateTime()).finalized(finalizedAt != null).serverNow(now.toOffsetDateTime())
 }
 
 private fun Instant.toOffsetDateTime(): OffsetDateTime = atOffset(ZoneOffset.UTC)

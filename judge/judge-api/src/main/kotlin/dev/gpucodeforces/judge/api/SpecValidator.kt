@@ -56,6 +56,10 @@ object SpecValidator {
         if (spec.generator.source.isBlank()) errors += "generator.source is empty"
         val generatorBytes = spec.generator.source.toByteArray().size
         if (generatorBytes > limits.maxGeneratorBytes) errors += "generator.source is $generatorBytes bytes, limit ${limits.maxGeneratorBytes}"
+        if (spec.customTests.isNotEmpty() && !spec.allowCustomTests) errors += "custom tests are disabled"
+        if (spec.customOnly && spec.customTests.size != 1) errors += "customOnly requires exactly one test"
+        if (spec.customTests.size > 32) errors += "at most 32 custom tests are allowed"
+        spec.customTests.take(32).forEach { errors += validateCustomTest(spec.signature, it) }
 
         with(spec.checker) {
             if (!(rtol >= 0 && rtol.isFinite())) errors += "checker.rtol must be a finite non-negative number"
@@ -88,6 +92,49 @@ object SpecValidator {
                 .forEach { errors += "compile: flag '${it.take(MAX_NAME_LENGTH)}' is not allowed" }
         }
         return errors
+    }
+
+    fun validateCustomTest(sig: Signature, test: CustomTest): List<String> = buildList {
+        if (test.scalars.keys != sig.scalars.map { it.name }.toSet()) add("invalid scalar names")
+        val inputs = sig.arrays.filter { it.role == ParamRole.INPUT || it.role == ParamRole.INOUT }
+        if (test.inputs.keys != inputs.map { it.name }.toSet()) add("invalid input names")
+        if (test.inputs.values.sumOf { it.size.toLong() } > 8192) add("custom test exceeds 8192 input elements")
+        for (param in sig.scalars) test.scalars[param.name]?.let { value ->
+            if (!validNumber(value, param.type)) add("invalid scalar ${param.name}")
+        }
+        if (isNotEmpty()) return@buildList
+        val counts = try {
+            elementCounts(sig, test.scalars)
+        } catch (e: IllegalArgumentException) {
+            add(e.message ?: "invalid sizes")
+            return@buildList
+        } catch (e: ArithmeticException) {
+            add(e.message ?: "size overflow")
+            return@buildList
+        }
+        if (sig.arrays.any { counts.getValue(it.name) !in 1..8192 }) add("custom array sizes must be in 1..8192")
+        for (param in inputs) {
+            val values = test.inputs.getValue(param.name)
+            if (values.size.toLong() != counts.getValue(param.name)) add("invalid size of ${param.name}")
+            if (values.any { !validNumber(it, param.type) }) add("invalid values of ${param.name}")
+        }
+    }
+
+    private fun validNumber(value: Number, type: DType): Boolean {
+        if (!value.toDouble().isFinite()) return false
+        if (type.floating) return when (type) {
+            DType.FLOAT16 -> kotlin.math.abs(value.toDouble()) <= 65504
+            DType.BFLOAT16, DType.FLOAT32 -> value.toFloat().isFinite()
+            else -> true
+        }
+        if (!isIntegral(value)) return false
+        val number = BigDecimal(value.toString()).toBigInteger()
+        val bits = type.bytes * 8
+        val unsigned = type == DType.UINT8 || type == DType.UINT32 || type == DType.UINT64
+        val min = if (unsigned) BigInteger.ZERO else BigInteger.ONE.shiftLeft(bits - 1).negate()
+        val max = if (unsigned && type != DType.UINT64) BigInteger.ONE.shiftLeft(bits).subtract(BigInteger.ONE)
+            else BigInteger.ONE.shiftLeft(bits - 1).subtract(BigInteger.ONE)
+        return number in min..max
     }
 
     private val HEADER = Regex("[A-Za-z0-9_./+-]{1,128}")

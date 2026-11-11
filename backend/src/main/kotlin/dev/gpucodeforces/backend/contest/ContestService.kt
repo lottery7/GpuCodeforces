@@ -81,6 +81,8 @@ class ContestService(
                 authors = resolveAuthors(input.authorIds).toMutableSet(),
             ),
         )
+        contest.hackEndAt = input.hackDurationMinutes?.takeIf { it > 0 }?.let { contest.endAt.plusSeconds(it * 60L) }
+        contest.gpuProfile = gpuProperties.profile
         saveProblems(contest.id, input.problemIds)
         log.info("Contest {} created by {}: {} - {}, problems {}", contest.id, creator.handle, contest.startAt, contest.endAt, input.problemIds)
         return contest
@@ -111,6 +113,7 @@ class ContestService(
         contest.title = input.title
         contest.startAt = input.startAt.toInstant()
         contest.endAt = input.endAt.toInstant()
+        contest.hackEndAt = input.hackDurationMinutes?.takeIf { it > 0 }?.let { contest.endAt.plusSeconds(it * 60L) }
         contest.authors = resolveAuthors(input.authorIds).toMutableSet()
         saveProblems(contest.id, input.problemIds)
         log.info("Contest {} updated by {}: {} - {}, problems {}", contest.id, currentUser.handle, contest.startAt, contest.endAt, input.problemIds)
@@ -139,7 +142,7 @@ class ContestService(
         if (contest.phaseAt(Instant.now()) == ContestPhase.UPCOMING) return emptyList()
         val versions = problemCatalog.versions(problemsOf(contest.id).mapNotNull { it.problemVersionId }).values
         val times = submissionStats.contestBestTimes(
-            ResultScope(contest.id, versions.associate { it.problemId to it.judgeHash }, gpuProperties.profile),
+            ResultScope(contest.id, versions.associate { it.problemId to it.judgeHash }, contest.gpuProfile ?: gpuProperties.profile),
         )
         val baselines = baselines(contest)
         val userIds = contestRegistrationRepository.findByIdContestId(contest.id).map { it.id.userId }
@@ -160,9 +163,10 @@ class ContestService(
 
     /** Practice record of each contest problem version before the start, see [standings]. */
     fun baselines(contest: Contest): Map<String, BigDecimal> {
+        if (contest.finalizedAt != null) return contest.baselineTimes
         val versions = problemCatalog.versions(problemsOf(contest.id).mapNotNull { it.problemVersionId }).values
         return versions.mapNotNull { version ->
-            submissionStats.practiceRecord(version.problemId, version.judgeHash, gpuProperties.profile, contest.startAt)?.let { version.problemId to it }
+            submissionStats.practiceRecord(version.problemId, version.judgeHash, contest.gpuProfile ?: gpuProperties.profile, contest.startAt)?.let { version.problemId to it }
         }.toMap()
     }
 
@@ -183,6 +187,7 @@ class ContestService(
     }
 
     private fun validate(input: ContestInputApi) {
+        if ((input.hackDurationMinutes ?: 0) !in 0..10080) throw BadRequestException("Недопустимая длительность периода взломов")
         val now = Instant.now()
         if (!input.startAt.toInstant().isAfter(now)) throw BadRequestException("Начало контеста должно быть в будущем")
         if (!input.endAt.toInstant().isAfter(input.startAt.toInstant())) {

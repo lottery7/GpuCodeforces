@@ -188,6 +188,17 @@ components:
         timing: {$ref: '#/components/schemas/TimingSpec'}
         compile: {$ref: '#/components/schemas/CompileSpec'}
         policy: {$ref: '#/components/schemas/PolicyOverrides'}
+        allowCustomTests: {type: boolean, default: false}
+        customOnly: {type: boolean, default: false}
+        customTests:
+          type: array
+          maxItems: 32
+          items:
+            type: object
+            required: [scalars, inputs]
+            properties:
+              scalars: {type: object, additionalProperties: {type: number}}
+              inputs: {type: object, additionalProperties: {type: array, items: {type: number}}}
     Signature:
       type: object
       description: Сигнатура функции, которую реализует участник

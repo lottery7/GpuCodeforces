@@ -41,6 +41,7 @@ class ProblemListing(private val jdbc: NamedParameterJdbcTemplate) {
         val contestId = (context as? ProblemContext.InContest)?.contest?.id
         val parameters = MapSqlParameterSource()
             .addValue("contestId", contestId)
+            .addValue("contextKey", context.key)
             .addValue("viewer", viewer?.handle)
             .addValue("subjectId", subjectId)
             .addValue("gpu", gpuProfile)
@@ -73,7 +74,7 @@ class ProblemListing(private val jdbc: NamedParameterJdbcTemplate) {
             EXISTS (SELECT 1 FROM gpucodeforces.submissions s
                     WHERE s.problem_id = v.problem_id AND s.user_id = CAST(:subjectId AS uuid)
                       AND s.status = 'accepted'
-                      AND (CAST(:contestId AS uuid) IS NULL OR s.contest_id = CAST(:contestId AS uuid)))
+                      AND (:contextKey = 'practice' OR s.context_key = :contextKey))
         """
         @Language("SQL") val filters = """
             AND (CAST(:query AS text) = '' OR strpos(lower(v.code || ' ' || v.title), :query) > 0)
@@ -85,7 +86,7 @@ class ProblemListing(private val jdbc: NamedParameterJdbcTemplate) {
             (SELECT s.time_ms FROM gpucodeforces.submissions s
              WHERE s.problem_id = v.problem_id AND s.user_id = CAST(:subjectId AS uuid)
                AND s.status = 'accepted' AND s.judge_hash = v.judge_hash AND s.gpu_profile = :gpu
-               AND s.contest_id IS NOT DISTINCT FROM CAST(:contestId AS uuid)
+               AND s.context_key = :contextKey
              ORDER BY s.time_ms LIMIT 1)
         """
         @Language("SQL") val order = when {

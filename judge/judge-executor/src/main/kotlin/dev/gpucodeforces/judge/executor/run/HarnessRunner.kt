@@ -187,6 +187,7 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
         appendLine("params ${sig.params.size}")
         for (t in prepared.tests) {
             appendLine("test ${t.index}")
+            appendLine("benchmark ${if (t.spec.benchmark) 1 else 0}")
             sig.params.forEachIndexed { pi, p ->
                 if (p.role == ParamRole.SCALAR) {
                     val v = t.spec.scalars.getValue(p.name)
@@ -422,7 +423,7 @@ class HarnessRunner(private val props: ExecutorProperties, private val sandbox: 
                     val timeMs = t / 1e6
                     val wallMs = w / 1e6
                     val measured = TestResult(idx, test.spec.name, test.spec.sample, Verdict.ACCEPTED, timeMs = timeMs, wallTimeMs = wallMs, runs = kv["runs"]?.toIntOrNull())
-                    if (t > tlNs || w > wallNs) {
+                    if (test.spec.benchmark && t > tlNs || w > wallNs) {
                         val what = if (t > tlNs) "%.1f ms".format(timeMs) else "wall %.1f ms".format(wallMs)
                         results += measured.copy(verdict = Verdict.TIME_LIMIT_EXCEEDED, message = "Time limit exceeded ($what)")
                         fail(Verdict.TIME_LIMIT_EXCEEDED, "Time limit exceeded on test $idx", kill = false)

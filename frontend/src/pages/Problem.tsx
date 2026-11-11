@@ -41,7 +41,7 @@ function EditorPane({ problem, context, contest, contestLoading, phase }: { prob
     onError: error => { if (error instanceof ApiError && error.status === 401) requestLogin(); },
   });
   const submit = useMutation({
-    mutationFn: () => api.submitSolution({ problemId: problem.id, ...(context !== 'practice' ? { contestId: context } : {}), code }),
+    mutationFn: () => api.submitSolution({ problemId: problem.id, ...(context.includes(':') ? { context } : context !== 'practice' ? { contestId: context } : {}), code }),
     onSuccess: item => {
       void queryClient.invalidateQueries();
       navigate(`/submission/${encodeURIComponent(item.id)}`);
@@ -62,8 +62,9 @@ function EditorPane({ problem, context, contest, contestLoading, phase }: { prob
     check.reset();
   }
   function practice() {
-    setSaved(writeDraft(user?.id || null, problem.id, 'practice', code));
-    navigate(problemPath(problem.id));
+    const nextContext = contest?.finalized ? `upsolve:${contest.id}` : 'practice';
+    setSaved(writeDraft(user?.id || null, problem.id, nextContext, code));
+    navigate(problemPath(problem.id, nextContext));
   }
   function download() {
     const url = URL.createObjectURL(new Blob([code], { type: 'text/plain;charset=utf-8' }));
@@ -87,10 +88,10 @@ function EditorPane({ problem, context, contest, contestLoading, phase }: { prob
       <div className="editor-actions">
         <button type="button" className="text-link" onClick={reset} disabled={busy}>Восстановить шаблон</button>
         <button type="button" className="btn secondary run-btn" onClick={() => { setExample(null); check.mutate(code); }} disabled={busy || !code.trim()}>{check.isPending ? 'Проверяем пример...' : 'Проверить пример'}</button>
-        {phase === 'finished' ? <button type="button" className="btn primary" onClick={practice}>Продолжить в практике</button>
+        {phase === 'finished' ? <button type="button" className="btn primary" onClick={practice}>{contest?.finalized ? 'Перейти к дорешиванию' : 'Продолжить в практике'}</button>
           : phase === 'upcoming' ? <button type="button" className="btn primary" disabled>Отправка после начала</button>
           : !user ? <button type="button" className="btn primary" onClick={requestLogin}>Войти и отправить</button>
-          : context !== 'practice' && !contest?.registered ? <button type="button" className="btn primary" disabled={busy || contestLoading} onClick={() => join.mutate()}>{join.isPending ? 'Регистрируем...' : 'Участвовать'}</button>
+          : context !== 'practice' && !context.includes(':') && !contest?.registered ? <button type="button" className="btn primary" disabled={busy || contestLoading} onClick={() => join.mutate()}>{join.isPending ? 'Регистрируем...' : 'Участвовать'}</button>
           : <button type="button" className="btn primary" disabled={busy || !code.trim() || contestLoading} onClick={() => submit.mutate()}>{submit.isPending ? 'Отправляем...' : 'Отправить'}</button>}
       </div>
     </div>
@@ -124,6 +125,10 @@ export default function Problem() {
   const [now, setNow] = useState(Date.now);
   const previousPhase = useRef<{ context: string; phase: ReturnType<typeof phaseOf> } | null>(null);
   const context = contextFromSearch(params);
+  const virtualId = context.startsWith('virtual:') ? context.slice(8) : null;
+  const upsolving = context.startsWith('upsolve:');
+  const virtual = useQuery({ queryKey: ['virtual', virtualId, user?.id], queryFn: ({ signal }) => api.getVirtual(virtualId!, signal), enabled: Boolean(virtualId && user), refetchInterval: 5000 });
+  const contestId = virtualId ? virtual.data?.contestId : upsolving ? context.slice(8) : context;
   useEffect(() => {
     if (context === 'practice') return;
     setNow(Date.now());
@@ -137,12 +142,13 @@ export default function Problem() {
     enabled: Boolean(id) && !isLoading,
   });
   const contest = useQuery({
-    queryKey: ['contest', context, user?.id],
-    queryFn: ({ signal }) => api.getContest(context, signal),
-    enabled: context !== 'practice' && !isLoading,
-    refetchInterval: q => q.state.data && Date.now() >= Date.parse(q.state.data.endAt) ? false : 5000,
+    queryKey: ['contest', contestId, user?.id],
+    queryFn: ({ signal }) => api.getContest(contestId!, signal),
+    enabled: context !== 'practice' && Boolean(contestId) && !isLoading,
+    refetchInterval: q => q.state.data?.finalized === false ? 5000 : q.state.data && Date.now() >= Date.parse(q.state.data.endAt) ? false : 5000,
   });
-  const phase = phaseOf(contest.data, now);
+  const virtualNow = virtual.data ? now + Date.parse(virtual.data.serverNow) - virtual.dataUpdatedAt : now;
+  const phase = upsolving ? null : virtualId ? virtual.data ? virtualNow >= Date.parse(virtual.data.endsAt) ? 'finished' : 'live' : 'upcoming' : phaseOf(contest.data, now);
   useEffect(() => {
     const previous = previousPhase.current;
     if (phase && previous?.context === context && previous.phase && previous.phase !== phase) {
@@ -153,7 +159,9 @@ export default function Problem() {
     previousPhase.current = { context, phase };
   }, [phase, context, id, queryClient]);
   return <QueryState query={problem}>{problem.data && <>
-    <div className="breadcrumbs"><Link to={context === 'practice' ? '/problems' : `/contest/${encodeURIComponent(context)}`}>{context === 'practice' ? 'Практика' : contest.data?.title || 'Контест'}</Link></div>
+    <div className="breadcrumbs"><Link to={context === 'practice' ? '/problems' : virtualId ? `/virtual/${encodeURIComponent(virtualId)}` : `/contest/${encodeURIComponent(contestId || '')}`}>{context === 'practice' ? 'Практика' : contest.data?.title || 'Контест'}</Link>{upsolving && <span> / Дорешивание</span>}{virtualId && <span> / Виртуальное участие</span>}</div>
+    {virtual.error && <ErrorMessage error={virtual.error} />}
+    {virtual.data && <p className="notice">Виртуальный контест. Осталось {Math.max(0, Math.ceil((Date.parse(virtual.data.endsAt) - virtualNow) / 1000))} с.</p>}
     <PageHeader title={`${problem.data.code}. ${problem.data.title}`} actions={tab === 'statement' ? <a className="text-link editor-anchor" href="#editor">К редактору</a> : undefined} />
     <div className="problem-meta"><span>{difficultyLabels[problem.data.difficulty]}</span><span>Время: {problem.data.timeLimitSeconds} с</span><span>Память GPU: {problem.data.memoryLimitMb} MB</span></div>
     <Tabs selected={tab} items={[
@@ -166,6 +174,6 @@ export default function Problem() {
     {tab === 'statement' ? <div className="problem-workspace">
       <section className="statement statement-pane" id="statement" aria-label="Условие задачи"><div className="tool-window-head">Условие</div><div className="statement-body"><Markdown>{problem.data.statementMarkdown}</Markdown><details className="methodology"><summary>Среда и замер</summary><Markdown>{problem.data.environmentMarkdown}</Markdown></details></div></section>
       <EditorPane key={`${user?.id || 'guest'}:${id}:${context}`} problem={problem.data} context={context} contest={contest.data} phase={phase} contestLoading={context !== 'practice' && (contest.isPending || Boolean(contest.error))} />
-    </div> : tab === 'submissions' ? <SubmissionList key={`${id}:${context}:${user?.id || 'guest'}`} problemId={id} context={context} /> : <Leaders problemId={id} context={context} finished={phase === 'finished'} />}
+    </div> : tab === 'submissions' ? <SubmissionList key={`${id}:${context}:${user?.id || 'guest'}`} problemId={id} context={context} /> : <Leaders problemId={id} context={context} finished={phase === 'finished' && contest.data?.finalized !== false} />}
   </>}</QueryState>;
 }

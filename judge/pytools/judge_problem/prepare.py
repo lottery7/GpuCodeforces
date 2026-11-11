@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import itertools
 import importlib.util
 import json
 import os
@@ -25,7 +26,7 @@ import traceback
 from pathlib import Path
 from typing import Dict
 
-from .spec import DTYPES, Param, Test, parse_params, parse_test
+from .spec import DTYPES, Param, Test, parse_params, parse_test, parse_custom_test
 
 # Must be set before CUDA is initialised for deterministic cuBLAS.
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
@@ -35,6 +36,10 @@ import torch  # noqa: E402
 
 class ProblemError(Exception):
     """Mistake in the problem module (wrong keys, shapes, dtypes)."""
+
+
+class InvalidCustomTest(Exception):
+    """A candidate input violates the problem's input contract."""
 
 
 def torch_dtype(type_name: str) -> torch.dtype:
@@ -148,8 +153,20 @@ def prepare(spec: dict, source: Path, out: Path, device: str) -> dict:
     declared = []
     started = time.monotonic()
     with reference_context():
-        tests = declared_tests(module, params, int(limits.get("maxTests", 200)), int(limits.get("maxTestBytes", 4 << 30)))
-        for test in tests:
+        base = [] if spec.get("customOnly") else declared_tests(module, params, int(limits.get("maxTests", 200)), int(limits.get("maxTestBytes", 4 << 30)))
+        custom = spec.get("customTests", [])
+        if len(custom) > 32:
+            raise InvalidCustomTest("too many custom tests")
+        def candidate_tests():
+            for i, raw in enumerate(custom):
+                try:
+                    test = parse_custom_test(i + 1, raw, params)
+                except (ValueError, ZeroDivisionError) as e:
+                    raise InvalidCustomTest(str(e)) from None
+                yield test, False
+        tests = itertools.chain(((t, True) for t in base), candidate_tests())
+        for index, (test, benchmark) in enumerate(tests, start=1):
+            test.index = index
             t0 = time.monotonic()
             if test.inputs is not None:
                 inputs = as_tensors("inputs", test, test.inputs, inputs_p, device)
@@ -159,6 +176,13 @@ def prepare(spec: dict, source: Path, out: Path, device: str) -> dict:
                 gen = torch.Generator(device=device)
                 gen.manual_seed(test.seed)
                 inputs = check_arrays("generate", test, generate(test, gen, device), inputs_p)
+
+            if not benchmark:
+                validator = getattr(module, "validate_input", None)
+                if not callable(validator):
+                    raise ProblemError("custom tests require validate_input(test, inputs)")
+                if validator(test, {k: v.clone() for k, v in inputs.items()}) is not True:
+                    raise InvalidCustomTest("input violates problem constraints")
 
             entry = {"index": test.index, "name": test.name, "inputs": {}, "expected": {}}
             for p in inputs_p:
@@ -175,7 +199,7 @@ def prepare(spec: dict, source: Path, out: Path, device: str) -> dict:
                 entry["expected"][p.name] = write_array(out / "expected" / f"t{test.index}" / f"{p.name}.bin", ref_out[p.name])
             entry["seconds"] = round(time.monotonic() - t0, 3)
             meta["tests"].append(entry)
-            declared.append(test.describe())
+            declared.append({**test.describe(), "benchmark": benchmark})
             print(f"test {test.index} '{test.name}' prepared in {entry['seconds']}s", file=sys.stderr, flush=True)
             del inputs, ref_out
             test.inputs = test.expected = None
@@ -200,6 +224,9 @@ def main(argv=None) -> int:
         args.out.mkdir(parents=True, exist_ok=True)
         prepare(spec, args.source, args.out, device)
         return 0
+    except InvalidCustomTest as e:
+        print(f"invalid custom test: {e}", file=sys.stderr)
+        return 3
     except ProblemError as e:
         print(f"problem error: {e}", file=sys.stderr)
         return 2

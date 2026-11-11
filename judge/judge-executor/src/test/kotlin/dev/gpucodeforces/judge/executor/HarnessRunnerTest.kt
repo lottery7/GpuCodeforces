@@ -94,7 +94,7 @@ class HarnessRunnerTest {
         @Language("Python")
         val source = """
             #!/usr/bin/env python3
-            import os, signal, struct, sys, time
+            import os, struct, sys, time
             print("ready garbage that must be ignored", flush=True)
             mode = "$behaviour"
             nonce = None; tests = []; cur = None
@@ -111,7 +111,8 @@ class HarnessRunnerTest {
                 st("load %d 0" % i); st("run %d 0" % i)
                 behaviour = mode.split(",")[i - 1] if "," in mode else mode
                 if behaviour == "hang": time.sleep(60)
-                if behaviour == "crash": os.kill(os.getpid(), signal.SIGSEGV)
+                # The runner consumes the exit status; a real signal also triggers desktop crash reports.
+                if behaviour == "crash": os._exit(128 + 11)
                 if behaviour == "exit": sys.exit(0)
                 if behaviour == "cuda_error": st("test %d runtime_error cudaErrorIllegalAddress (an illegal memory access was encountered)" % i); sys.exit(0)
                 if behaviour == "replay": st("test 1 ok runs 1 time_ns 1 wall_ns 1"); time.sleep(60)
@@ -133,13 +134,18 @@ class HarnessRunnerTest {
         return script
     }
 
-    private fun run(behaviour: String): RunOutcome {
+    private fun run(behaviour: String, lastBenchmark: Boolean = true): RunOutcome {
         val runDir = Files.createDirectories(tmp.resolve("run"))
         val binary = fakeBinary(behaviour)
         Files.move(binary, runDir.resolve("solution.bin"))
         val progress = mutableListOf<Int>()
+        val prepared = prepared().let { data ->
+            data.copy(tests = data.tests.mapIndexed { i, test ->
+                if (i == data.tests.lastIndex) test.copy(spec = test.spec.copy(benchmark = lastBenchmark)) else test
+            })
+        }
         val outcome = HarnessRunner(props, DirectSandbox()).run(
-            problem, prepared(), runDir.resolve("solution.bin"), runDir, GpuSlot(GpuSlotConfig(0)), { progress += it }, { false },
+            problem, prepared, runDir.resolve("solution.bin"), runDir, GpuSlot(GpuSlotConfig(0)), { progress += it }, { false },
         )
         if (outcome.verdict == Verdict.ACCEPTED) assertEquals(listOf(1, 2), progress)
         return outcome
@@ -177,6 +183,13 @@ class HarnessRunnerTest {
         assertEquals(Verdict.TIME_LIMIT_EXCEEDED, o.verdict)
         assertEquals(2, o.failedTest)
         assertEquals(300.0, o.tests[1].timeMs!!, 1e-9)
+    }
+
+    @Test
+    fun `custom correctness test can exceed benchmark time within the safety wall limit`() {
+        val outcome = run("ok,slow", false)
+        assertEquals(Verdict.ACCEPTED, outcome.verdict)
+        assertEquals(2, outcome.tests.size)
     }
 
     @Test

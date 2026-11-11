@@ -51,7 +51,7 @@ data class PreparedProblem(val hash: String, val dir: Path, val inputsDir: Path,
  * @param problemFault true if the problem's generator/reference is broken (retrying will not help),
  * false for infrastructure failures.
  */
-class ProblemPreparationException(msg: String, val problemFault: Boolean) : RuntimeException(msg)
+class ProblemPreparationException(msg: String, val problemFault: Boolean, val invalidInput: Boolean = false) : RuntimeException(msg)
 
 /**
  * Generates the tests a problem's generator declares, their inputs and reference answers once per problem version
@@ -84,7 +84,7 @@ class ProblemStore(
      * reference answers computed by the old one.
      */
     fun hash(spec: ProblemSpec): String = Hashing.sha256(
-        canonical.writeValueAsString(mapOf("signature" to spec.signature, "generator" to spec.generator)),
+        canonical.writeValueAsString(mapOf("signature" to spec.signature, "generator" to spec.generator, "customTests" to spec.customTests, "customOnly" to spec.customOnly)),
         pytoolsHash, toolchain.torchVersion ?: "", props.prepare.device, PREP_FORMAT,
     )
 
@@ -155,8 +155,12 @@ class ProblemStore(
         } catch (e: JacksonException) {
             broken("$TESTS is not a list of tests: ${e.originalMessage}")
         }
-        val errors = GeneratedTest.validate(spec.signature, tests, limits)
+        val errors = GeneratedTest.validate(spec.signature, tests, limits.copy(maxTests = limits.maxTests + spec.customTests.size))
         if (errors.isNotEmpty()) broken("invalid tests: ${errors.take(20).joinToString("; ")}")
+        val baseCount = if (spec.customOnly) 0 else tests.size - spec.customTests.size
+        if (baseCount < 0 || tests.withIndex().any { (index, test) -> test.benchmark != (index < baseCount) }) {
+            broken("invalid benchmark flags for custom tests")
+        }
         return tests
     }
 
@@ -168,7 +172,8 @@ class ProblemStore(
             FileTrees.makeWritableByAll(tmp)
             val specFile = tmp.resolve("spec.json")
             val prepareLimits = mapOf("maxTests" to limits.maxTests, "maxTestBytes" to limits.maxTestBytes)
-            specFile.writeText(canonical.writeValueAsString(mapOf("signature" to spec.signature, "limits" to prepareLimits)))
+            specFile.writeText(canonical.writeValueAsString(mapOf("signature" to spec.signature, "limits" to prepareLimits,
+                "customTests" to spec.customTests, "customOnly" to spec.customOnly)))
             val source = tmp.resolve("problem.py")
             source.writeText(spec.generator.source)
             val out = tmp.resolve("data")
@@ -200,6 +205,7 @@ class ProblemStore(
                 gpus.pool.release(slot)
             }
             if (!res.ok) {
+                if (res.exitCode == 3) throw ProblemPreparationException("Invalid custom test", true, true)
                 val problemFault = res.exitCode == 2 && !res.timedOut
                 log.error("Problem {} preparation failed: {}; sandbox log: {}", spec.id, res.describe(), Sandbox.logTail(tmp) ?: "-")
                 throw ProblemPreparationException(

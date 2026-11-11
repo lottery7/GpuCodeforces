@@ -49,7 +49,7 @@ class ExampleChecks(
                 submissionId = judgeId,
                 problem = spec.copy(generator = spec.generator.copy(source = spec.generator.source + SAMPLES_ONLY)),
                 source = code,
-                gpuProfile = gpuProperties.profile,
+                gpuProfile = problem.context.gpuProfile(gpuProperties.profile),
             )
             when (val outcome = judgeGateway.send(request)) {
                 is SendOutcome.Accepted -> Unit

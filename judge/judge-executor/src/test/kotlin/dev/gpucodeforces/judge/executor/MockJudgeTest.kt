@@ -1,6 +1,7 @@
 package dev.gpucodeforces.judge.executor
 
 import dev.gpucodeforces.judge.api.DType
+import dev.gpucodeforces.judge.api.CustomTest
 import dev.gpucodeforces.judge.api.GeneratorSpec
 import dev.gpucodeforces.judge.api.JudgeEvent
 import dev.gpucodeforces.judge.api.JudgeJob
@@ -16,6 +17,7 @@ import dev.gpucodeforces.judge.executor.messaging.CancelRegistry
 import dev.gpucodeforces.judge.executor.messaging.EventPublisher
 import dev.gpucodeforces.judge.executor.mock.MockDirective
 import dev.gpucodeforces.judge.executor.mock.MockJudge
+import dev.gpucodeforces.judge.executor.mock.MockResults
 import dev.gpucodeforces.judge.executor.pipeline.Disposition
 import java.time.Clock
 import java.time.Instant
@@ -43,6 +45,18 @@ class MockJudgeTest {
         generator = GeneratorSpec(source = "def reference(test, inputs): ..."),
     )
     private val publisher = mock<EventPublisher>()
+
+    @Test
+    fun `mock can accept a solution initially and fail it on a hack`() {
+        val directive = MockDirective.parse("// judge-mock: custom-verdict=WRONG_ANSWER")
+        assertEquals(Verdict.ACCEPTED, MockResults.of(problem, directive.forProblem(problem)).verdict)
+        val expanded = problem.copy(allowCustomTests = true, customTests = listOf(CustomTest(mapOf("N" to 1), mapOf("A" to listOf(1)))))
+        val result = MockResults.of(expanded, directive.forProblem(expanded))
+        assertEquals(Verdict.WRONG_ANSWER, result.verdict)
+        assertEquals(4, result.failedTest)
+        val candidate = expanded.copy(customOnly = true)
+        assertEquals(1, MockResults.of(candidate, directive.forProblem(candidate)).failedTest)
+    }
     private val clock = Clock.systemUTC()
     private val judge = MockJudge(ExecutorProperties(id = "mock-1"), publisher, CancelRegistry(clock), clock)
 

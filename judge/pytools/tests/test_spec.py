@@ -1,6 +1,6 @@
 import unittest
 
-from judge_problem.spec import eval_size, parse_params, parse_test
+from judge_problem.spec import eval_size, parse_params, parse_test, parse_custom_test
 
 PARAMS = parse_params({"params": [
     {"name": "A", "type": "FLOAT32", "role": "INPUT", "memory": "HOST", "size": "M*K"},
@@ -13,6 +13,22 @@ LIMIT = 1 << 30
 
 
 class SpecTest(unittest.TestCase):
+    def test_custom_tests_cannot_supply_answers_or_code(self):
+        good = {"scalars": {"M": 2, "K": 1, "alpha": 1}, "inputs": {"A": [1, 2]}}
+        self.assertEqual(parse_custom_test(1, good, PARAMS).sizes, {"A": 2, "C": 2})
+        invalid = [
+            {**good, "expected": {"C": [0, 0]}},
+            {**good, "source": "print('hello')"},
+            {**good, "inputs": {"A": [1]}},
+            {**good, "inputs": {"A": [True, 1]}},
+            {**good, "inputs": {"A": [float('inf'), 1]}},
+            {**good, "inputs": {"A": [1e39, 1]}},
+            {**good, "scalars": {"M": 8193, "K": 1, "alpha": 1}},
+        ]
+        for test in invalid:
+            with self.subTest(test=test), self.assertRaises(ValueError):
+                parse_custom_test(1, test, PARAMS)
+
     def test_eval_size_c_semantics(self):
         self.assertEqual(eval_size("(N + 255) / 256 * 256", {"N": 1000}), 1024)
         self.assertEqual(eval_size("M*K - -1", {"M": 3, "K": 4}), 13)

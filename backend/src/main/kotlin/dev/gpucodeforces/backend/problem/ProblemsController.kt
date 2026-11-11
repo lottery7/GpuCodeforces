@@ -45,10 +45,10 @@ class ProblemsController(
         val viewer = CurrentUser.resolve()
         val subject = userId?.let { userService.getById(it) } ?: viewer
         val problemContext = problemService.context(context, viewer)
-        val page = problemListing.page(problemContext, viewer, subject?.id, q, difficulty, tag, solved, sort, gpuProperties.profile, offset, limit)
+        val page = problemListing.page(problemContext, viewer, subject?.id, q, difficulty, tag, solved, sort, problemContext.gpuProfile(gpuProperties.profile), offset, limit)
         val results = submissionStats.problemResults(ResultScope(
             (problemContext as? ProblemContext.InContest)?.contest?.id,
-            page.items.associate { it.problemId to it.judgeHash }, gpuProperties.profile,
+            page.items.associate { it.problemId to it.judgeHash }, problemContext.gpuProfile(gpuProperties.profile), problemContext.key,
         ), subject?.id)
         val items = page.items.map { metadata ->
             val result = results.getValue(metadata.problemId)
@@ -106,7 +106,8 @@ class ProblemsController(
     private fun scope(context: ProblemContext, problems: List<ContextProblem>) = ResultScope(
         (context as? ProblemContext.InContest)?.contest?.id,
         problems.associate { it.version.problemId to it.version.judgeHash },
-        gpuProperties.profile,
+        context.gpuProfile(gpuProperties.profile),
+        context.key,
     )
 
     companion object {

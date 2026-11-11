@@ -37,6 +37,7 @@ class JudgeEventListener(
     private val submissionService: SubmissionService,
     private val exampleChecks: ExampleChecks,
     private val jsonMapper: JsonMapper,
+    private val hacks: HackService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -49,7 +50,9 @@ class JudgeEventListener(
             throw AmqpRejectAndDontRequeueException("Malformed judge event", exception)
         }
         try {
-            if (exampleChecks.isExample(event.submissionId)) {
+            if (event.submissionId.startsWith("hack-")) {
+                hacks.apply(event)
+            } else if (exampleChecks.isExample(event.submissionId)) {
                 if (event.status == SubmissionStatus.FINISHED) exampleChecks.complete(event.submissionId, event.result!!)
             } else {
                 submissionService.apply(event)

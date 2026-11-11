@@ -17,15 +17,16 @@ class AcceptedSubmission(
     val gpuProfile: String,
     val timeMs: BigDecimal,
     val createdAt: Instant,
+    val contextKey: String = contestId?.toString() ?: "practice",
 )
 
 /** Submission header for "last submission" summaries. */
-class SubmissionHead(val id: UUID, val problemId: String, val contestId: UUID?, val status: SubmissionStatus, val createdAt: Instant)
+class SubmissionHead(val id: UUID, val problemId: String, val contestId: UUID?, val status: SubmissionStatus, val createdAt: Instant, val contextKey: String = contestId?.toString() ?: "practice")
 
 interface SubmissionStatsRepository : Repository<Submission, UUID> {
     @Query(
         """
-        SELECT new dev.gpucodeforces.backend.submission.AcceptedSubmission(s.id, s.userId, s.problemId, s.contestId, s.judgeHash, s.gpuProfile, s.timeMs, s.createdAt)
+        SELECT new dev.gpucodeforces.backend.submission.AcceptedSubmission(s.id, s.userId, s.problemId, s.contestId, s.judgeHash, s.gpuProfile, s.timeMs, s.createdAt, s.contextKey)
         FROM Submission s WHERE s.status = :status AND s.problemId IN :problemIds
         """,
     )
@@ -33,7 +34,7 @@ interface SubmissionStatsRepository : Repository<Submission, UUID> {
 
     @Query(
         """
-        SELECT new dev.gpucodeforces.backend.submission.SubmissionHead(s.id, s.problemId, s.contestId, s.status, s.createdAt)
+        SELECT new dev.gpucodeforces.backend.submission.SubmissionHead(s.id, s.problemId, s.contestId, s.status, s.createdAt, s.contextKey)
         FROM Submission s WHERE s.userId = :userId AND s.problemId IN :problemIds
         """,
     )
@@ -47,9 +48,9 @@ interface SubmissionStatsRepository : Repository<Submission, UUID> {
  * Where results count: practice and every contest have their own records. Accepted times are compared only within
  * one judge configuration - the problem version's judge hash on the platform GPU.
  */
-data class ResultScope(val contestId: UUID?, val judgeHashes: Map<String, String>, val gpuProfile: String) {
+data class ResultScope(val contestId: UUID?, val judgeHashes: Map<String, String>, val gpuProfile: String, val contextKey: String = contestId?.toString() ?: "practice") {
     fun counts(submission: AcceptedSubmission): Boolean =
-        submission.gpuProfile == gpuProfile && submission.contestId == contestId && judgeHashes[submission.problemId] == submission.judgeHash
+        submission.gpuProfile == gpuProfile && submission.contextKey == contextKey && judgeHashes[submission.problemId] == submission.judgeHash
 }
 
 class ProblemResult(
@@ -64,8 +65,8 @@ class Leader(val rank: Int, val submission: AcceptedSubmission)
 
 @Service
 class SubmissionStats(private val repository: SubmissionStatsRepository) {
-    fun bestTime(userId: UUID, problemId: String, contestId: UUID?, judgeHash: String, gpuProfile: String): BigDecimal? {
-        val scope = ResultScope(contestId, mapOf(problemId to judgeHash), gpuProfile)
+    fun bestTime(userId: UUID, problemId: String, contestId: UUID?, judgeHash: String, gpuProfile: String, contextKey: String = contestId?.toString() ?: "practice"): BigDecimal? {
+        val scope = ResultScope(contestId, mapOf(problemId to judgeHash), gpuProfile, contextKey)
         return accepted(listOf(problemId)).filter { it.userId == userId && scope.counts(it) }.minOfOrNull { it.timeMs }
     }
 
@@ -80,9 +81,9 @@ class SubmissionStats(private val repository: SubmissionStatsRepository) {
             val counted = all.filter { scope.counts(it) }
             ProblemResult(
                 // Practice counts a solution in any context, a contest only its own.
-                solved = userId != null && all.any { it.userId == userId && (scope.contestId == null || it.contestId == scope.contestId) },
+                solved = userId != null && all.any { it.userId == userId && (scope.contextKey == "practice" || it.contextKey == scope.contextKey) },
                 solvedCount = all.map { it.userId }.distinct().size,
-                last = heads[problemId].orEmpty().filter { it.contestId == scope.contestId }.maxByOrNull { it.createdAt },
+                last = heads[problemId].orEmpty().filter { it.contextKey == scope.contextKey }.maxByOrNull { it.createdAt },
                 best = counted.filter { it.userId == userId }.fastest(),
                 record = counted.fastest(),
             )

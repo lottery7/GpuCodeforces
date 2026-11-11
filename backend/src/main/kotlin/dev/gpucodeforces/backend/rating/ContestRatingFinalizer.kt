@@ -13,8 +13,7 @@ class ContestRatingFinalizer(
     @Scheduled(fixedDelay = 60_000)
     fun finalizeDueContests() {
         val now = Instant.now()
-        contestRepository.findAll()
-            .filter { it.ratingAppliedAt == null && it.endAt.isBefore(now) }
+        contestRepository.findByFinalizedAtIsNullAndEndAtLessThanEqual(now)
             .forEach { ratingFinalizationService.finalize(it.id, now) }
     }
 }

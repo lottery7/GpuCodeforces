@@ -155,7 +155,7 @@ class JudgePipeline(
                         message = o.message,
                         compileLog = build.compileLog.ifBlank { null },
                         tests = o.tests,
-                        maxTimeMs = o.tests.filter { it.verdict == Verdict.ACCEPTED }.mapNotNull { it.timeMs }.maxOrNull(),
+                        maxTimeMs = o.tests.filter { it.verdict == Verdict.ACCEPTED && prepared.tests[it.index - 1].spec.benchmark }.mapNotNull { it.timeMs }.maxOrNull(),
                         timingMode = timingMode,
                         gpu = gpuInfo(slot, o),
                     )
@@ -181,6 +181,7 @@ class JudgePipeline(
             log.error("No healthy GPU on this executor, returning job to the queue: {}", e.message)
             return Disposition.REQUEUE
         } catch (e: ProblemPreparationException) {
+            if (e.invalidInput) return finish(reporter, started, JudgeResult(Verdict.INTERNAL_ERROR, message = "Invalid custom test"))
             if (e.problemFault) {
                 log.error("Problem {} is broken, tests cannot be generated: {}", job.problem.id, e.message)
                 return finish(reporter, started, JudgeResult(Verdict.INTERNAL_ERROR, message = "Tests of this problem could not be generated"))

@@ -3,6 +3,7 @@ package dev.gpucodeforces.backend.contest
 import dev.gpucodeforces.backend.api.ContestsApi
 import dev.gpucodeforces.backend.api.model.ContestInput
 import dev.gpucodeforces.backend.api.model.GetContestStandings200ResponseInner
+import dev.gpucodeforces.backend.api.model.VirtualParticipation as VirtualApiModel
 import dev.gpucodeforces.backend.auth.CurrentUser
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -11,7 +12,10 @@ import java.time.Instant
 import dev.gpucodeforces.backend.api.model.Contest as ContestApiModel
 
 @RestController
-class ContestsController(private val contestService: ContestService) : ContestsApi {
+class ContestsController(private val contestService: ContestService, private val virtuals: VirtualParticipationService, private val virtualViews: VirtualViews) : ContestsApi {
+    override fun startVirtual(id: String): ResponseEntity<VirtualApiModel> =
+        ResponseEntity.status(HttpStatus.CREATED).body(virtualViews.detail(virtuals.start(id, CurrentUser.resolve()!!)))
+
     override fun listContests(q: String?, phase: String?, mine: Boolean): ResponseEntity<List<ContestApiModel>> {
         val viewer = CurrentUser.resolve()
         val now = Instant.now()

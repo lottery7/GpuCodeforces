@@ -16,6 +16,7 @@ data class GeneratedTest(
     val sample: Boolean = false,
     /** Values of all SCALAR params. Integers for integer types, decimals for float types. */
     val scalars: Map<String, Number> = emptyMap(),
+    val benchmark: Boolean = true,
 ) {
     companion object {
         /** Values the harness can pass for an integer scalar; UINT64 is capped at what a Long holds. */

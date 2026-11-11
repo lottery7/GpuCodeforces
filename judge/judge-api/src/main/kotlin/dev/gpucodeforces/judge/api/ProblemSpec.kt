@@ -19,7 +19,13 @@ data class ProblemSpec(
     val timing: TimingSpec = TimingSpec(),
     val compile: CompileSpec = CompileSpec(),
     val policy: PolicyOverrides = PolicyOverrides(),
+    /** Requires an author-supplied validate_input(test, inputs) function. */
+    val allowCustomTests: Boolean = false,
+    val customTests: List<CustomTest> = emptyList(),
+    val customOnly: Boolean = false,
 )
+
+data class CustomTest(val scalars: Map<String, Number>, val inputs: Map<String, List<Number>>)
 
 /** How the solution is compiled. Null fields fall back to the executor's defaults for its GPU profile. */
 data class CompileSpec(

@@ -61,6 +61,8 @@ class ProblemStoreTest {
             if behaviour == "broken":
                 sys.stderr.write("problem error: reference must return keys ['C']\n")
                 sys.exit(2)
+            if behaviour == "invalid-custom":
+                sys.exit(3)
             tests = {
                 "bad-tests": '[{"name": "only", "scalars": {"M": 4}}]',
                 "huge-test": '[{"name": "only", "scalars": {"N": 4000000000}}]',
@@ -143,5 +145,13 @@ class ProblemStoreTest {
         assertContains(e.message!!, "reference must return keys")
         assertTrue(!store.isReady(problem("broken")))
         assertTrue(Files.notExists(tmp.resolve("cache/problems").resolve(store.hash(problem("broken")))))
+    }
+
+    @Test
+    fun `invalid custom input is distinct from a broken reference`() {
+        val store = store()
+        val error = assertFailsWith<ProblemPreparationException> { store.acquire(problem("invalid-custom"), {}, { false }) }
+        assertTrue(error.invalidInput)
+        assertTrue(!store.isReady(problem("invalid-custom")))
     }
 }

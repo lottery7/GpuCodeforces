@@ -5,12 +5,15 @@ import dev.gpucodeforces.backend.api.model.ListSubmissions200Response
 import dev.gpucodeforces.backend.api.model.SubmitSolutionRequest
 import dev.gpucodeforces.backend.auth.CurrentUser
 import dev.gpucodeforces.backend.common.BadRequestException
+import dev.gpucodeforces.backend.common.ForbiddenException
 import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.common.UnauthorizedException
 import dev.gpucodeforces.backend.common.toUuidOrBadRequest
 import dev.gpucodeforces.backend.contest.ContestRepository
 import dev.gpucodeforces.backend.contest.ContestService
+import dev.gpucodeforces.backend.contest.VirtualParticipationRepository
 import dev.gpucodeforces.backend.problem.ProblemCatalog
+import dev.gpucodeforces.backend.problem.ProblemService
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.backend.user.UserRepository
 import dev.gpucodeforces.backend.user.UserService
@@ -20,6 +23,7 @@ import org.springframework.http.ResponseEntity
 import org.springframework.stereotype.Component
 import org.springframework.web.bind.annotation.RestController
 import java.time.ZoneOffset
+import java.time.Instant
 import java.util.UUID
 import dev.gpucodeforces.backend.api.model.Submission as SubmissionApiModel
 
@@ -29,6 +33,7 @@ class SubmissionsController(
     private val submissionRepository: SubmissionRepository,
     private val userService: UserService,
     private val views: SubmissionViews,
+    private val problems: ProblemService,
 ) : SubmissionsApi {
     override fun listSubmissions(
         userId: String?,
@@ -40,15 +45,16 @@ class SubmissionsController(
     ): ResponseEntity<ListSubmissions200Response> {
         val target = userId?.let { userService.getById(it) } ?: CurrentUser.resolve() ?: throw UnauthorizedException("Нужен вход или userId")
         val statusFilter = status?.let { SubmissionStatus.ofOrNull(it) ?: throw BadRequestException("Неизвестный статус") }
-        val contestId = context.takeUnless { it == ALL || it == PRACTICE }?.toUuidOrBadRequest("Неизвестный контекст")
-        val rows = submissionRepository.search(target.id, problemId, statusFilter, context == PRACTICE, contestId)
+        val contextKey = context.takeUnless { it == ALL }?.let { problems.context(it, CurrentUser.resolve()).key }
+        val rows = submissionRepository.search(target.id, problemId, statusFilter, contextKey)
+            .filter { !it.contextKey.startsWith("virtual:") || it.userId == CurrentUser.resolve()?.id }
         return ResponseEntity.ok(ListSubmissions200Response(views.summaries(rows.drop(offset).take(limit)), rows.size))
     }
 
     // SecurityConfig requires a session for submitting and rechecking.
     override fun submitSolution(submitSolutionRequest: SubmitSolutionRequest): ResponseEntity<SubmissionApiModel> {
         val author = CurrentUser.resolve()!!
-        val submission = with(submitSolutionRequest) { submissionService.submit(problemId, contestId, code, author) }
+        val submission = with(submitSolutionRequest) { submissionService.submit(problemId, contestId, code, author, context) }
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(views.detail(submission, author))
     }
 
@@ -74,6 +80,7 @@ class SubmissionViews(
     private val contestRepository: ContestRepository,
     private val userRepository: UserRepository,
     private val gpuProperties: GpuProperties,
+    private val virtuals: VirtualParticipationRepository,
 ) {
     fun summaries(rows: List<SubmissionRow>): List<SubmissionApiModel> {
         val versions = problemCatalog.versions(rows.map { it.problemVersionId }.toSet())
@@ -94,19 +101,36 @@ class SubmissionViews(
                 row.createdAt.atOffset(ZoneOffset.UTC),
                 SubmissionApiModel.StatusEnum.fromValue(row.status.value),
                 row.timeMs,
-                row.status == SubmissionStatus.ACCEPTED && row.judgeHash == contextHash && row.gpuProfile == gpuProperties.profile,
-            )
+                row.status == SubmissionStatus.ACCEPTED && row.judgeHash == contextHash && row.gpuProfile == (contest?.gpuProfile ?: gpuProperties.profile),
+            ).context(row.contextKey)
         }
     }
 
     /** Detail of one submission; code and diagnostic only for its author. */
     fun detail(submission: Submission, viewer: User?): SubmissionApiModel {
+        if (submission.contextKey.startsWith("virtual:") && submission.userId != viewer?.id) {
+            throw ForbiddenException("Это посылка чужого виртуального участия")
+        }
         val summary = summaries(listOf(submission.toRow())).single()
             .passedTests(submission.passedTests)
             .totalTests(submission.totalTests)
             .previousBestTimeMs(submission.previousBestTimeMs)
             .environmentMarkdown(submission.environmentMarkdown)
-        return if (viewer?.id == submission.userId) summary.code(submission.code).diagnostic(submission.diagnostic) else summary
+        val contest = submission.contestId?.let { contestService.get(it.toString()) }
+        val official = contest != null && submission.contextKey == contest.id.toString()
+        val now = Instant.now()
+        val virtualActive = viewer != null && virtuals.existsByUserIdAndStartedAtLessThanEqualAndEndsAtGreaterThan(viewer.id, now, now)
+        val open = official && !Instant.now().isBefore(contest.endAt) && !virtualActive
+        summary.sourcePublic(open)
+        summary.recheckAllowed(viewer?.id == submission.userId && submission.status in setOf(SubmissionStatus.SYSTEM_ERROR, SubmissionStatus.MEASUREMENT_ERROR)
+            && !(official && contest.finalizedAt != null))
+        summary.hackable(open && contest.hacksOpen(Instant.now()) && submission.status == SubmissionStatus.ACCEPTED && viewer != null && viewer.id != submission.userId
+            && problemCatalog.spec(problemCatalog.versions(listOf(submission.problemVersionId)).getValue(submission.problemVersionId)).allowCustomTests)
+        return when {
+            viewer?.id == submission.userId -> summary.code(submission.code).diagnostic(submission.diagnostic)
+            open -> summary.code(submission.code)
+            else -> summary
+        }
     }
 
     private fun contextJudgeHash(problemId: String, contestId: UUID?): String? = if (contestId == null) {
