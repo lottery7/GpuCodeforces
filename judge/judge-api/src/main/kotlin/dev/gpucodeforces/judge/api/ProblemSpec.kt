@@ -1,5 +1,7 @@
 package dev.gpucodeforces.judge.api
 
+import kotlin.math.ceil
+
 /**
  * Everything the judge needs to know about a problem. Sent inline with every submission (a few KB). The tests
  * are not part of it: the generator declares them, and executors generate them once per content hash of the
@@ -21,10 +23,62 @@ data class ProblemSpec(
     val policy: PolicyOverrides = PolicyOverrides(),
     /** Requires an author-supplied validate_input(test, inputs) function. */
     val allowCustomTests: Boolean = false,
+    /** Run after the generator's tests, unmeasured. */
     val customTests: List<CustomTest> = emptyList(),
+    /** Only the single test of [customTests] is run, without the generator's. */
     val customOnly: Boolean = false,
+    /**
+     * Processors the problem can be judged on. Empty means `gpu-cuda` alone with its time limit from
+     * [LimitsSpec.timeLimitMs]: packages written before processors existed keep working. [timing], [compile],
+     * [policy] and [LimitsSpec.gpuMemoryLimitMb] concern `gpu-cuda`; [compile] flags apply to `cuda-sim` as well.
+     */
+    val processors: List<ProcessorSpec> = emptyList(),
+) {
+    /** [processors], or what a package without them means. A function: it is not part of the wire format. */
+    fun declaredProcessors(): List<ProcessorSpec> =
+        processors.ifEmpty { listOf(ProcessorSpec(Processors.GPU_CUDA, languages = listOf(Languages.CUDA))) }
+
+    fun processorSpec(id: String): ProcessorSpec? = declaredProcessors().find { it.id == id }
+
+    /**
+     * Limit on the score of one measured test, in units of the processor's [ScoreType]. Only `gpu-cuda` may leave
+     * [ProcessorSpec.limit] out; its limit is then [LimitsSpec.timeLimitMs]. Null for a processor that lacks one,
+     * which validation rejects.
+     */
+    fun scoreLimit(processor: ProcessorSpec): Double? =
+        processor.limit ?: limits.timeLimitMs.toDouble().takeIf { processor.id == Processors.GPU_CUDA }
+}
+
+/** One processor a problem can be judged on. */
+data class ProcessorSpec(
+    /** Id from [Processors]. */
+    val id: String,
+    /** Subset of the processor's languages a submission may be written in. */
+    val languages: List<String>,
+    /** Limit on the score of one measured test, in units of the processor's [ScoreType]. See [ProblemSpec.scoreLimit]. */
+    val limit: Double? = null,
+    /** Only for `rtl`: how the circuit gets its data. Null there means the defaults. */
+    val rtl: RtlSettings? = null,
 )
 
+data class RtlSettings(
+    /** Independent read ports of every array the circuit reads, in [RtlDataMode.MEMORY]. */
+    val readPorts: Int = 1,
+    val dataMode: RtlDataMode = RtlDataMode.MEMORY,
+)
+
+enum class RtlDataMode {
+    /** Every array is a memory of the judge with address and data ports; data arrives a cycle after the address. */
+    MEMORY,
+
+    /** After `start` the judge feeds inputs one element per cycle and takes outputs one element at a time, in order. */
+    STREAM,
+}
+
+/**
+ * A test given as data, not declared by the generator: values of the scalars and of every INPUT and INOUT array.
+ * It runs on every processor of the problem, and only its answer is checked.
+ */
 data class CustomTest(val scalars: Map<String, Number>, val inputs: Map<String, List<Number>>)
 
 /** How the solution is compiled. Null fields fall back to the executor's defaults for its GPU profile. */
@@ -68,7 +122,10 @@ data class ParamSpec(
     val name: String,
     val type: DType,
     val role: ParamRole,
-    /** Where the harness places the array before calling `solve`. Required for arrays. */
+    /**
+     * Where the harness places the array before calling `solve`. Required for arrays. Only `gpu-cuda` and
+     * `cuda-sim` have a device; other processors ignore it.
+     */
     val memory: MemorySpace? = null,
     /** Element count of an array as an integer expression over scalar params, e.g. `"M*K"`. */
     val size: String? = null,
@@ -127,7 +184,10 @@ data class CheckerSpec(
 )
 
 data class LimitsSpec(
-    /** Limit on the measured time of one `solve` call (see [TimingSpec.mode]). */
+    /**
+     * Limit on the measured time of one `solve` call on `gpu-cuda` (see [TimingSpec.mode]), unless its
+     * [ProcessorSpec.limit] is set.
+     */
     val timeLimitMs: Long = 1000,
     /**
      * Safety limit on the wall time of one `solve` call, applied in every timing mode.
@@ -139,7 +199,11 @@ data class LimitsSpec(
     /** GPU memory available to the solution on top of device buffers allocated by the harness. Null = whole GPU. */
     val gpuMemoryLimitMb: Long? = null,
 ) {
-    val effectiveWallTimeLimitMs: Long get() = wallTimeLimitMs ?: maxOf(3 * timeLimitMs, timeLimitMs + 2000)
+    val effectiveWallTimeLimitMs: Long get() = wallTimeLimitMsFor(timeLimitMs.toDouble())
+
+    /** The wall limit that goes with a time limit of [timeLimitMs], which may come from a [ProcessorSpec.limit]. */
+    fun wallTimeLimitMsFor(timeLimitMs: Double): Long =
+        wallTimeLimitMs ?: maxOf(3 * timeLimitMs, timeLimitMs + 2000).let { ceil(it).toLong() }
 }
 
 enum class TimingMode {

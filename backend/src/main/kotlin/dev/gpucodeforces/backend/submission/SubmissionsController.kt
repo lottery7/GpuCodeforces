@@ -3,17 +3,23 @@ package dev.gpucodeforces.backend.submission
 import dev.gpucodeforces.backend.api.SubmissionsApi
 import dev.gpucodeforces.backend.api.model.ListSubmissions200Response
 import dev.gpucodeforces.backend.api.model.SubmitSolutionRequest
+import dev.gpucodeforces.backend.api.model.GuessChoice
+import dev.gpucodeforces.backend.api.model.GuessResult
+import dev.gpucodeforces.backend.api.model.MeasurementSummary
+import dev.gpucodeforces.backend.api.model.BenchmarkAggregation
+import dev.gpucodeforces.backend.api.model.MeasurementTiming
+import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
 import dev.gpucodeforces.backend.auth.CurrentUser
 import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.common.ForbiddenException
-import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.common.UnauthorizedException
-import dev.gpucodeforces.backend.common.toUuidOrBadRequest
 import dev.gpucodeforces.backend.contest.ContestRepository
 import dev.gpucodeforces.backend.contest.ContestService
+import dev.gpucodeforces.backend.contest.VirtualParticipation
 import dev.gpucodeforces.backend.contest.VirtualParticipationRepository
 import dev.gpucodeforces.backend.problem.ProblemCatalog
 import dev.gpucodeforces.backend.problem.ProblemService
+import dev.gpucodeforces.backend.processor.scoreApiModel
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.backend.user.UserRepository
 import dev.gpucodeforces.backend.user.UserService
@@ -22,6 +28,9 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.stereotype.Component
 import org.springframework.web.bind.annotation.RestController
+import dev.gpucodeforces.judge.api.Processors
+import java.math.BigDecimal
+import tools.jackson.databind.json.JsonMapper
 import java.time.ZoneOffset
 import java.time.Instant
 import java.util.UUID
@@ -45,16 +54,18 @@ class SubmissionsController(
     ): ResponseEntity<ListSubmissions200Response> {
         val target = userId?.let { userService.getById(it) } ?: CurrentUser.resolve() ?: throw UnauthorizedException("Нужен вход или userId")
         val statusFilter = status?.let { SubmissionStatus.ofOrNull(it) ?: throw BadRequestException("Неизвестный статус") }
-        val contextKey = context.takeUnless { it == ALL }?.let { problems.context(it, CurrentUser.resolve()).key }
+        val viewer = CurrentUser.resolve()
+        val contextKey = context.takeUnless { it == ALL }?.let { problems.context(it, viewer).key }
+        // submissions of a virtual attempt are seen by its owner alone
         val rows = submissionRepository.search(target.id, problemId, statusFilter, contextKey)
-            .filter { !it.contextKey.startsWith("virtual:") || it.userId == CurrentUser.resolve()?.id }
+            .filter { !it.contextKey.startsWith(VirtualParticipation.CONTEXT_PREFIX) || it.userId == viewer?.id }
         return ResponseEntity.ok(ListSubmissions200Response(views.summaries(rows.drop(offset).take(limit)), rows.size))
     }
 
     // SecurityConfig requires a session for submitting and rechecking.
     override fun submitSolution(submitSolutionRequest: SubmitSolutionRequest): ResponseEntity<SubmissionApiModel> {
         val author = CurrentUser.resolve()!!
-        val submission = with(submitSolutionRequest) { submissionService.submit(problemId, contestId, code, author, context) }
+        val submission = with(submitSolutionRequest) { submissionService.submit(problemId, contestId, processor, language, code, author, context) }
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(views.detail(submission, author))
     }
 
@@ -68,7 +79,6 @@ class SubmissionsController(
 
     companion object {
         private const val ALL = "all"
-        private const val PRACTICE = "practice"
     }
 }
 
@@ -79,7 +89,8 @@ class SubmissionViews(
     private val contestService: ContestService,
     private val contestRepository: ContestRepository,
     private val userRepository: UserRepository,
-    private val gpuProperties: GpuProperties,
+    private val jsonMapper: JsonMapper,
+    private val references: ReferenceMeasurements,
     private val virtuals: VirtualParticipationRepository,
 ) {
     fun summaries(rows: List<SubmissionRow>): List<SubmissionApiModel> {
@@ -87,6 +98,7 @@ class SubmissionViews(
         val users = userRepository.findAllById(rows.map { it.userId }.toSet()).associateBy { it.id }
         val contests = contestRepository.findAllById(rows.mapNotNull { it.contestId }.toSet()).associateBy { it.id }
         val comparableHashes = mutableMapOf<Pair<String, UUID?>, String?>()
+        val gpuEnvironmentKey = references.environmentKey(Processors.GPU_CUDA)
         return rows.map { row ->
             val contest = row.contestId?.let { contests.getValue(it) }
             // Accepted results are comparable while the context still judges this problem the same way.
@@ -100,37 +112,66 @@ class SubmissionViews(
                 contest?.title,
                 row.createdAt.atOffset(ZoneOffset.UTC),
                 SubmissionApiModel.StatusEnum.fromValue(row.status.value),
-                row.timeMs,
-                row.status == SubmissionStatus.ACCEPTED && row.judgeHash == contextHash && row.gpuProfile == (contest?.gpuProfile ?: gpuProperties.profile),
-            ).context(row.contextKey)
+                row.processor,
+                row.language,
+                // The judge sets a score and its type together, and SubmissionService stores them so.
+                row.score?.let { scoreApiModel(it, row.scoreType!!) },
+                // Scores are compared within a processor; on the real GPU also within the current environment.
+                row.status == SubmissionStatus.ACCEPTED && row.score != null && row.judgeHash == contextHash &&
+                    (row.processor != Processors.GPU_CUDA || gpuEnvironmentKey != null && row.benchmarkEnvironmentKey == gpuEnvironmentKey),
+            ).format(SubmissionApiModel.FormatEnum.fromValue(versions.getValue(row.problemVersionId).format))
+                .context(row.contextKey)
         }
     }
 
     /** Detail of one submission; code and diagnostic only for its author. */
     fun detail(submission: Submission, viewer: User?): SubmissionApiModel {
-        if (submission.contextKey.startsWith("virtual:") && submission.userId != viewer?.id) {
+        if (submission.contextKey.startsWith(VirtualParticipation.CONTEXT_PREFIX) && submission.userId != viewer?.id) {
             throw ForbiddenException("Это посылка чужого виртуального участия")
         }
         val summary = summaries(listOf(submission.toRow())).single()
             .passedTests(submission.passedTests)
             .totalTests(submission.totalTests)
-            .previousBestTimeMs(submission.previousBestTimeMs)
+            .previousBestScore(submission.previousBestScore?.let { scoreApiModel(it, Processors.get(submission.processor).scoreType) })
+            .metrics(submission.metrics.mapValues { BigDecimal.valueOf(it.value) })
             .environmentMarkdown(submission.environmentMarkdown)
-        val contest = submission.contestId?.let { contestService.get(it.toString()) }
-        val official = contest != null && submission.contextKey == contest.id.toString()
-        val now = Instant.now()
-        val virtualActive = viewer != null && virtuals.existsByUserIdAndStartedAtLessThanEqualAndEndsAtGreaterThan(viewer.id, now, now)
-        val open = official && !Instant.now().isBefore(contest.endAt) && !virtualActive
-        summary.sourcePublic(open)
-        summary.recheckAllowed(viewer?.id == submission.userId && submission.status in setOf(SubmissionStatus.SYSTEM_ERROR, SubmissionStatus.MEASUREMENT_ERROR)
-            && !(official && contest.finalizedAt != null))
-        summary.hackable(open && contest.hacksOpen(Instant.now()) && submission.status == SubmissionStatus.ACCEPTED && viewer != null && viewer.id != submission.userId
-            && problemCatalog.spec(problemCatalog.versions(listOf(submission.problemVersionId)).getValue(submission.problemVersionId)).allowCustomTests)
-        return when {
-            viewer?.id == submission.userId -> summary.code(submission.code).diagnostic(submission.diagnostic)
-            open -> summary.code(submission.code)
-            else -> summary
+        submission.measurement?.let { source ->
+            val measured = jsonMapper.readValue(source, MeasurementData::class.java)
+            summary.measurement(
+                MeasurementSummary().aggregation(BenchmarkAggregation.fromValue(measured.aggregation))
+                    .timingMode(measured.timingMode?.let(MeasurementTiming::fromValue))
+                    .model(measured.model.takeUnless { measured.synthetic })
+                    .synthetic(measured.synthetic)
+                    .testCount(measured.tests.size),
+            )
         }
+        val isAuthor = viewer?.id == submission.userId
+        val now = Instant.now()
+        val contest = submission.contestId?.let { contestService.get(it.toString()) }
+        // Official code is published once the contest stops taking solutions, yet not to somebody who is solving a
+        // contest virtually right now.
+        val open = contest != null && submission.official && !now.isBefore(contest.endAt) &&
+            !(viewer != null && virtuals.existsByUserIdAndStartedAtLessThanEqualAndEndsAtGreaterThan(viewer.id, now, now))
+        summary.sourcePublic(open)
+        summary.recheckAllowed(
+            isAuthor && (submission.status == SubmissionStatus.SYSTEM_ERROR || submission.status == SubmissionStatus.MEASUREMENT_ERROR) &&
+                !(submission.official && contest?.finalizedAt != null),
+        )
+        summary.hackable(
+            open && contest.hacksOpen(now) && submission.status == SubmissionStatus.ACCEPTED && submission.guessChoice == null &&
+                viewer != null && !isAuthor &&
+                problemCatalog.spec(problemCatalog.versions(listOf(submission.problemVersionId)).getValue(submission.problemVersionId)).allowCustomTests,
+        )
+        if (!isAuthor) return if (open) summary.code(submission.code) else summary
+        summary.code(submission.code).diagnostic(submission.diagnostic)
+        submission.guessChoice?.let { choice ->
+            val data = submission.guessResult?.let { jsonMapper.readValue(it, GuessSnapshot::class.java) } ?: return summary
+            summary.guessResult(GuessResult(
+                GuessChoice.fromValue(choice), GuessChoice.fromValue(data.correctChoice()),
+                scoreApiModel(data.firstScore, data.scoreType), scoreApiModel(data.secondScore, data.scoreType), data.explanation,
+            ).benchmarkKey(data.benchmarkKey).synthetic(data.synthetic))
+        }
+        return summary
     }
 
     private fun contextJudgeHash(problemId: String, contestId: UUID?): String? = if (contestId == null) {

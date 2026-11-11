@@ -9,7 +9,7 @@ vi.mock('../src/auth', () => ({ useSession: () => ({ user: { id: 'owner' }, isLo
 
 it('использует серверное время и ждёт позднего вердикта после дедлайна', async () => {
   const now = Date.now();
-  vi.spyOn(api, 'getVirtual').mockResolvedValue({ id: 'attempt', contestId: 'round', startedAt: new Date(now - 3600000).toISOString(), endsAt: new Date(now - 1000).toISOString(), serverNow: new Date(now).toISOString(), pending: true, solved: 0, speedup: 0, times: {} });
+  vi.spyOn(api, 'getVirtual').mockResolvedValue({ id: 'attempt', contestId: 'round', startedAt: new Date(now - 3600000).toISOString(), endsAt: new Date(now - 1000).toISOString(), serverNow: new Date(now).toISOString(), pending: true, solved: 0, totalSeconds: 0, times: {} });
   vi.spyOn(api, 'allProblems').mockResolvedValue([]);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   render(<QueryClientProvider client={client}><MemoryRouter initialEntries={['/virtual/attempt']}><Routes><Route path="/virtual/:id" element={<Virtual />} /></Routes></MemoryRouter></QueryClientProvider>);

@@ -7,16 +7,19 @@ data class SubmissionRequest(
     /** Backend-generated id; idempotency key. */
     val submissionId: String,
     val problem: ProblemSpec,
-    /** Contents of the contestant's `.cu` file. */
+    /** Contents of the contestant's file, in [language]. */
     val source: String,
-    /** GPU profile to judge on (e.g. `rtx3060`). Null = gateway default. */
-    val gpuProfile: String? = null,
+    /** Processor to judge on, from [Processors]; the problem has to declare it. */
+    val processor: String,
+    /** One of the languages the problem allows on [processor]. */
+    val language: String,
 )
 
 /** Response of `POST /api/v1/submissions`. */
 data class SubmissionAccepted(
     val submissionId: String,
-    val gpuProfile: String,
+    val processor: String,
+    val language: String,
     val status: SubmissionStatus,
     val queuedAt: Instant,
     /** True if this submission id was already accepted recently and was not enqueued again. */
@@ -25,12 +28,13 @@ data class SubmissionAccepted(
     val jobId: String,
 )
 
-/** Message published by the gateway to `judge.jobs.<gpuProfile>`. */
+/** Message published by the gateway to `judge.jobs.<processor>`. */
 data class JudgeJob(
     val submissionId: String,
     val problem: ProblemSpec,
     val source: String,
-    val gpuProfile: String,
+    val processor: String,
+    val language: String,
     val enqueuedAt: Instant,
     /**
      * Unique per accepted request (a UUID from the gateway). A submission id can end up in two jobs - a retry after
@@ -49,7 +53,7 @@ enum class SubmissionStatus {
     /** Executor generates tests and reference answers for a new problem version (cached afterwards). */
     PREPARING,
 
-    /** Solution is running on the GPU; see [JudgeEvent.progress]. */
+    /** Solution is running on its processor; see [JudgeEvent.progress]. */
     TESTING,
 
     /** Terminal; [JudgeEvent.result] is set. */
@@ -93,7 +97,7 @@ enum class Verdict {
     RUNTIME_ERROR,
     COMPILATION_ERROR,
 
-    /** Forbidden header, inline asm, forbidden SASS instruction or symbol. */
+    /** Forbidden header, inline asm, forbidden SASS instruction or symbol, forbidden construct of the language. */
     POLICY_VIOLATION,
 
     /** Judge failure, not the contestant's fault. Safe to rejudge. */
@@ -111,14 +115,31 @@ data class JudgeResult(
     val compileLog: String? = null,
     /** Results of executed tests in order, up to and including the failed one. */
     val tests: List<TestResult> = emptyList(),
-    /** Max measured time over passed tests, ms. */
-    val maxTimeMs: Double? = null,
+    /** Max score over measured tests; set on ACCEPTED only. */
+    val score: Score? = null,
+    /** Further numbers of the submission, by name (e.g. `cycles` and `cells` on `rtl`): those of the test that gave [score]. */
+    val metrics: Map<String, Double> = emptyMap(),
+    /** Set once a processor took the job; absent on results decided before that (invalid job, dead job). */
+    val processor: ProcessorRun? = null,
+    /** `gpu-cuda` only. */
     val timingMode: TimingMode? = null,
+    /** `gpu-cuda` only. */
     val gpu: GpuInfo? = null,
     /** Total time spent by the judge on this attempt, ms. */
     val judgeTimeMs: Long = 0,
-    /** Pinned toolchain used, e.g. "nvcc 12.8.93 (sm_86), g++ 13.3.0, torch 2.8.0+cu128". */
-    val toolchain: String? = null,
+)
+
+/** Which processor judged a submission. */
+data class ProcessorRun(
+    val id: String,
+    /**
+     * Pinned toolchain and emulator, e.g. "nvcc 12.8.93 (sm_86), g++ 13.3.0, torch 2.9.1". For logs and
+     * diagnostics: versions are fixed per processor, so results do not depend on it.
+     */
+    val version: String,
+    /** What to show a person: "NVIDIA GeForce RTX 3060", "Verilator 5.x + Yosys 0.x". */
+    val model: String,
+    val executorId: String,
 )
 
 data class TestResult(
@@ -127,9 +148,16 @@ data class TestResult(
     val name: String,
     val sample: Boolean,
     val verdict: Verdict,
-    /** Measured time per the timing mode (median of runs if re-measured), ms. */
-    val timeMs: Double? = null,
-    /** Wall time of the `solve` call, ms. */
+    /**
+     * Score of the test in the processor's type; on `gpu-cuda` the measured time per the timing mode (median of
+     * runs if re-measured). Set for every test that ran to the end, measured or not.
+     */
+    val score: Score? = null,
+    /** Whether [score] counts towards the submission's score and is checked against the limit. */
+    val measured: Boolean = true,
+    /** Further numbers of the test, by name. */
+    val metrics: Map<String, Double> = emptyMap(),
+    /** Host wall time of the run of this test, ms (on `gpu-cuda`: of the `solve` call). */
     val wallTimeMs: Double? = null,
     val runs: Int? = null,
     /** Safe to show to the contestant. For sample tests may include the first mismatch. */
@@ -157,14 +185,30 @@ data class GpuInfo(
 data class ExecutorHeartbeat(
     val executorId: String,
     val hostname: String,
-    val gpuProfile: String,
+    /** Processors this executor judges, each consumed from its own queue. */
+    val processors: List<ProcessorStatus>,
     val version: String,
     val startedAt: Instant,
     val timestamp: Instant,
+    /** Empty on an executor without a GPU. */
     val gpus: List<GpuSlotStatus>,
     /** Jobs taken from the queue and not yet finished. */
     val inFlight: Int,
     /** Max jobs taken from the queue at once (prefetch). */
+    val capacity: Int,
+)
+
+data class ProcessorStatus(
+    val id: String,
+    /** See [ProcessorRun.version]. */
+    val version: String,
+    /** See [ProcessorRun.model]. */
+    val model: String,
+    /** Can take a job now (on `gpu-cuda`: at least one GPU passed its health probe). */
+    val healthy: Boolean,
+    /** Every worker of the processor is judging. */
+    val busy: Boolean,
+    /** Jobs this executor takes from the processor's queue at once. */
     val capacity: Int,
 )
 

@@ -2,9 +2,11 @@ package dev.gpucodeforces.backend.contest
 
 import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.common.ForbiddenException
-import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.common.UnauthorizedException
 import dev.gpucodeforces.backend.problem.ProblemCatalog
+import dev.gpucodeforces.backend.problem.ProblemVersion
+import dev.gpucodeforces.backend.processor.ProcessorCatalog
+import dev.gpucodeforces.backend.processor.ProcessorProperties
 import dev.gpucodeforces.backend.submission.SubmissionStats
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.backend.user.UserRepository
@@ -35,7 +37,7 @@ class ContestServiceTest {
         contestRegistrationRepository,
         userRepository,
         problemCatalog,
-        GpuProperties(),
+        ProcessorCatalog(ProcessorProperties(enabled = listOf("gpu-cuda", "rtl"), models = mapOf("gpu-cuda" to "NVIDIA GeForce RTX 3060"))),
         mock(SubmissionStats::class.java),
     )
 
@@ -45,18 +47,51 @@ class ContestServiceTest {
         startAt: Instant = Instant.now().plus(1, ChronoUnit.DAYS),
         endAt: Instant = startAt.plus(1, ChronoUnit.HOURS),
         authors: MutableSet<User> = mutableSetOf(),
-    ) = Contest(id = UUID.randomUUID(), title = "Контест", startAt = startAt, endAt = endAt, gpu = "NVIDIA GeForce RTX 4090", authors = authors)
+        processor: String = "gpu-cuda",
+        format: String = "standard",
+        challengerId: UUID? = null,
+        opponentId: UUID? = null,
+    ) = Contest(
+        id = UUID.randomUUID(), title = "Контест", startAt = startAt, endAt = endAt, processor = processor, authors = authors, format = format,
+        challengerId = challengerId, opponentId = opponentId,
+    )
 
     private fun input(
         authorIds: Set<String>,
         startAt: Instant = Instant.now().plus(1, ChronoUnit.DAYS),
         endAt: Instant = startAt.plus(1, ChronoUnit.HOURS),
         problemIds: Set<String> = setOf("vector-addition"),
-    ) = ContestInputApi("Контест", startAt.atOffset(ZoneOffset.UTC), endAt.atOffset(ZoneOffset.UTC), authorIds, problemIds)
+        processor: String = "gpu-cuda",
+    ) = ContestInputApi("Контест", startAt.atOffset(ZoneOffset.UTC), endAt.atOffset(ZoneOffset.UTC), authorIds, problemIds, processor)
+
+    private fun version(problemId: String, processors: List<String>) = ProblemVersion(
+        id = UUID.randomUUID(), problemId = problemId, code = "1", title = problemId, difficulty = "easy", tags = emptyList(),
+        authors = emptyList(), draft = false, statementMarkdown = "", processors = processors,
+        starters = processors.associateWith { emptyMap() }, judgeSpec = "{}", contentHash = "content", judgeHash = "judge", revision = null,
+    )
+
+    @Test
+    fun `a contest takes only problems that support its processor, on a processor the platform offers`() {
+        val author = user()
+        given(userRepository.findById(author.id)).willReturn(Optional.of(author))
+        given(problemCatalog.publishedVersions(setOf("vector-addition"))).willReturn(listOf(version("vector-addition", listOf("gpu-cuda"))))
+
+        assertThatThrownBy { service.create(input(setOf(author.id.toString()), processor = "rtl"), author) }
+            .isInstanceOf(BadRequestException::class.java).hasMessageContaining("нельзя сдавать на процессоре rtl")
+        assertThatThrownBy { service.create(input(setOf(author.id.toString()), processor = "coral-npu"), author) }
+            .isInstanceOf(BadRequestException::class.java).hasMessageContaining("coral-npu недоступен")
+    }
+
+    @Test
+    fun `rules name the processor and its limit`() {
+        val rules = service.buildRulesMarkdown(contestFixture(processor = "rtl"), emptyList(), viewer = null)
+        assertThat(rules).contains("`rtl`").contains("лимит тактов × глубины × транзисторов")
+        assertThat(service.buildRulesMarkdown(contestFixture(), emptyList(), viewer = null)).contains("NVIDIA GeForce RTX 3060").contains("лимит времени")
+    }
 
     @Test
     fun `list with mine=true but no viewer requires login`() {
-        assertThatThrownBy { service.list(null, null, mine = true, viewer = null) }
+        assertThatThrownBy { service.list(null, null, mine = true, processor = null, viewer = null) }
             .isInstanceOf(UnauthorizedException::class.java)
     }
 
@@ -147,5 +182,40 @@ class ContestServiceTest {
 
         assertThat(visitorMarkdown).doesNotContain("vector-addition")
         assertThat(authorMarkdown).contains("vector-addition")
+    }
+
+    @Test
+    fun `generic contest creation rejects scheduled duels`() {
+        val challenger = user("challenger")
+        val opponent = user("opponent")
+        assertThatThrownBy { service.create(
+            input(setOf(challenger.id.toString())).format(ContestInputApi.FormatEnum.DUEL).opponentId(opponent.id.toString()),
+            challenger,
+        ) }.isInstanceOf(BadRequestException::class.java).hasMessageContaining("поиск соперника")
+        verify(contestRepository, never()).save(any(Contest::class.java))
+    }
+
+    @Test
+    fun `a duel only admits its two participants`() {
+        val challenger = user("challenger")
+        val opponent = user("opponent")
+        val contest = contestFixture(format = "duel", challengerId = challenger.id, opponentId = opponent.id)
+        given(contestRepository.findById(contest.id)).willReturn(Optional.of(contest))
+        given(contestRepository.findForUpdate(contest.id)).willReturn(contest)
+
+        assertThatThrownBy { service.register(contest.id.toString(), user("outsider")) }.isInstanceOf(ForbiddenException::class.java)
+        service.register(contest.id.toString(), opponent)
+        verify(contestRegistrationRepository).save(ContestRegistration(contest.id, opponent.id))
+    }
+
+    @Test
+    fun `existing duels cannot be edited through the contest API`() {
+        val challenger = user()
+        val opponent = user("opponent")
+        val contest = contestFixture(authors = mutableSetOf(challenger), format = "duel", challengerId = challenger.id, opponentId = opponent.id)
+        given(contestRepository.findById(contest.id)).willReturn(Optional.of(contest))
+
+        assertThatThrownBy { service.update(contest.id.toString(), input(setOf(challenger.id.toString())), challenger) }
+            .isInstanceOf(ForbiddenException::class.java).hasMessageContaining("нельзя редактировать")
     }
 }

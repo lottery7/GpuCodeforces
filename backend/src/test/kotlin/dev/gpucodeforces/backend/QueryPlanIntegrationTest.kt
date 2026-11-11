@@ -85,6 +85,8 @@ class QueryPlanIntegrationTest {
         plans.check { submissions.search(id, "probe", SubmissionStatus.ACCEPTED, "practice") }
         plans.check { submissions.search(id, "probe", SubmissionStatus.ACCEPTED, id.toString()) }
         plans.check { stats.findWithStatus(SubmissionStatus.ACCEPTED, listOf("probe", "other")) }
+        plans.check { stats.findWithStatusInContext(SubmissionStatus.ACCEPTED, id.toString()) }
+        plans.check { stats.findContextParticipants(id.toString()) }
         plans.check { stats.findHeads(id, listOf("probe", "other")) }
         plans.check { stats.countProblemsWithStatus(id, SubmissionStatus.ACCEPTED) }
     }
@@ -95,9 +97,12 @@ class QueryPlanIntegrationTest {
             contests.findAll()
         }
         plans.check(mapOf("problems" to "Bank synchronization compares active ids with the imported set")) {
-            problems.findActiveIds()
+            problems.findActivePackageIds()
         }
-        plans.check(mapOf("users" to "Rank recomputation updates every rated user and orders the entire rated population")) {
+        plans.check(mapOf("problems" to "Reference measurements and duel matching go through every published problem")) {
+            versions.findCurrent()
+        }
+        plans.check(mapOf("user_ratings" to "Rank recomputation orders the entire rated population of every processor")) {
             users.recomputeRanks()
         }
     }
@@ -106,18 +111,17 @@ class QueryPlanIntegrationTest {
     fun `substring search uses trigrams while short patterns have explicit exceptions`() {
         plans.check { users.searchByHandle("probe", 20, 0) }
         plans.check { users.countByHandle("probe") }
-        plans.check { users.searchRated("probe", 20, 0) }
-        plans.check { users.countRated("probe") }
+        plans.check { users.searchRated(GPU, "probe", 20, 0) }
+        plans.check { users.countRated(GPU, "probe") }
         plans.check { users.pageByHandle(20, 0) }
-        plans.check { users.pageRated(20, 0) }
+        plans.check { users.pageRated(GPU, 20, 0) }
+        plans.check { users.countRated(GPU) }
         val short = mapOf("users" to "One- and two-character substrings cannot narrow a trigram index")
         plans.check(short) { users.searchShortByHandle("p", 20, 0) }
         plans.check(short) { users.countShortByHandle("p") }
-        plans.check(short) { users.searchShortRated("p", 20, 0) }
-        plans.check(short) { users.countShortRated("p") }
-        val total = mapOf("users" to "An exact unfiltered total must count the whole population")
-        plans.check(total) { users.count() }
-        plans.check(total) { users.countByRatingIsNotNull() }
+        plans.check(short) { users.searchShortRated(GPU, "p", 20, 0) }
+        plans.check(short) { users.countShortRated(GPU, "p") }
+        plans.check(mapOf("users" to "An exact unfiltered total must count the whole population")) { users.count() }
     }
 
     @Test
@@ -167,7 +171,7 @@ class QueryPlanIntegrationTest {
                         @Language("SQL") val select = "SELECT * FROM gpucodeforces.users WHERE password_hash = 'probe'"
                         statement.executeQuery(select).close()
                     }
-                    @Language("SQL") val update = "UPDATE gpucodeforces.users SET rating = 0 WHERE password_hash = ?"
+                    @Language("SQL") val update = "UPDATE gpucodeforces.users SET email = email WHERE password_hash = ?"
                     connection.prepareStatement(update).use { statement ->
                         statement.setString(1, "probe")
                         statement.addBatch()
@@ -186,6 +190,8 @@ class QueryPlanIntegrationTest {
     }
 
     companion object {
+        private const val GPU = "gpu-cuda"
+
         @Container
         @ServiceConnection
         @JvmStatic

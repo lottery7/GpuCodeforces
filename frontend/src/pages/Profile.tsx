@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router';
 import { api } from '../api/client';
 import { useSession } from '../auth';
+import { useProcessors } from '../processors';
 import { Empty, LoginRequired, PageHeader, QueryState } from '../ui';
 import { pendingStatuses } from '../utils';
 import { SubmissionTable } from './Submissions';
@@ -15,6 +16,7 @@ export default function Profile() {
   const { user, isLoading } = useSession();
   const id = params.get('user') || user?.id;
   const queryClient = useQueryClient();
+  const catalog = useProcessors();
   const previous = useRef(new Map<string, string>());
   const profile = useQuery({
     queryKey: ['profile', id],
@@ -48,7 +50,8 @@ export default function Profile() {
     <QueryState query={profile}>
       {data && <>
         <div className="metrics">
-          <span>Рейтинг: <strong>{data.user.rating ?? 'Нет рейтинга'}</strong>{data.user.ratingDelta !== null && data.user.ratingContestId && <> <Link className="small" to={`/contest/${encodeURIComponent(data.user.ratingContestId)}?tab=standings`}>{signed(data.user.ratingDelta)} после последнего контеста</Link></>}</span>
+          {Object.keys(data.user.ratings).length ? Object.entries(data.user.ratings).map(([processor, rating]) => <span key={processor}>Рейтинг ({catalog.title(processor)}): <Link to={`/rating?processor=${encodeURIComponent(processor)}`}><strong>{rating.rating}</strong></Link>{rating.ratingDelta !== null && rating.ratingContestId && <> <Link className="small" to={`/contest/${encodeURIComponent(rating.ratingContestId)}?tab=standings`}>{signed(rating.ratingDelta)} после последнего контеста</Link></>}</span>)
+            : <span>Рейтинг: <strong>Нет рейтинга</strong></span>}
           <span>Решено: <Link to={`/problems?user=${encoded}&status=solved`}>{data.solvedCount}</Link></span>
           <span>Контесты: <strong>{data.contests.length}</strong></span>
         </div>
@@ -59,9 +62,9 @@ export default function Profile() {
             {recent.data && (recent.data.items.length ? <SubmissionTable items={recent.data.items} /> : <Empty><p>Посылок пока нет.</p>{own && <Link className="btn secondary" to="/problems">Выбрать задачу</Link>}</Empty>)}
           </QueryState>
           <h2>Соревнования</h2>
-          {data.contests.length ? <div className="table-wrap"><table className="data-table" aria-label="История соревнований участника"><thead><tr><th>Соревнование</th><th>Статус</th><th>Место</th><th>Изменение рейтинга</th><th>Рейтинг после контеста</th></tr></thead><tbody>{data.contests.map(contest => <tr key={contest.id}>
+          {data.contests.length ? <div className="table-wrap"><table className="data-table" aria-label="История соревнований участника"><thead><tr><th>Соревнование</th><th>Процессор</th><th>Статус</th><th>Место</th><th>Изменение рейтинга</th><th>Рейтинг после контеста</th></tr></thead><tbody>{data.contests.map(contest => <tr key={contest.id}>
             <td><Link to={`/contest/${encodeURIComponent(contest.id)}${contest.phase === 'upcoming' ? '' : '?tab=standings'}`}>{contest.title}</Link></td>
-            <td>{phases[contest.phase]}</td><td>{contest.rank ?? '-'}</td><td>{signed(contest.ratingDelta)}</td><td>{contest.ratingAfter ?? '-'}</td>
+            <td>{catalog.title(contest.processor)}</td><td>{phases[contest.phase]}</td><td>{contest.rank ?? '-'}</td><td>{signed(contest.ratingDelta)}</td><td>{contest.ratingAfter ?? '-'}</td>
           </tr>)}</tbody></table></div> : <Empty>Еще не участвовал в соревнованиях.</Empty>}
         </section>
       </>}

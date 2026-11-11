@@ -2,8 +2,8 @@ package dev.gpucodeforces.judge.executor
 
 import dev.gpucodeforces.judge.api.PolicyOverrides
 import dev.gpucodeforces.judge.api.TimingMode
-import dev.gpucodeforces.judge.executor.compile.EffectivePolicy
-import dev.gpucodeforces.judge.executor.compile.SourceChecks
+import dev.gpucodeforces.judge.executor.processor.gpucuda.EffectivePolicy
+import dev.gpucodeforces.judge.executor.processor.gpucuda.SourceChecks
 import dev.gpucodeforces.judge.executor.config.ProfilePolicyConfig
 import kotlin.test.Test
 import kotlin.test.assertEquals

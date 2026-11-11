@@ -1,12 +1,17 @@
 package dev.gpucodeforces.backend.submission
 
+import dev.gpucodeforces.judge.api.ScoreType
 import jakarta.persistence.AttributeConverter
 import jakarta.persistence.Column
 import jakarta.persistence.Converter
 import jakarta.persistence.Entity
+import jakarta.persistence.EnumType
+import jakarta.persistence.Enumerated
 import jakarta.persistence.Id
 import jakarta.persistence.LockModeType
 import jakarta.persistence.Table
+import org.hibernate.annotations.JdbcTypeCode
+import org.hibernate.type.SqlTypes
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Query
@@ -66,23 +71,53 @@ class Submission(
     val environmentMarkdown: String,
     @Column(name = "judge_hash", nullable = false)
     val judgeHash: String,
-    @Column(name = "gpu_profile", nullable = false)
-    val gpuProfile: String,
-    @Column(name = "previous_best_time_ms")
-    val previousBestTimeMs: BigDecimal?,
+    /** Accepted results are comparable within one (judgeHash, processor). */
+    @Column(nullable = false)
+    val processor: String,
+    @Column(nullable = false)
+    val language: String,
+    /** Best accepted score of the author in the same context and configuration before this submission. */
+    @Column(name = "previous_best_score")
+    val previousBestScore: BigDecimal?,
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: Instant = Instant.now(),
+    @Column(name = "guess_choice")
+    val guessChoice: String? = null,
+    /** Where the result counts: `practice`, the contest id, `upsolve:<contest>` or `virtual:<attempt>`. */
     @Column(name = "context_key", nullable = false)
-    val contextKey: String = contestId?.toString() ?: "practice",
+    val contextKey: String = contestId?.toString() ?: PRACTICE_CONTEXT,
 ) {
+    /** The custom tests it was judged with beyond the problem's own: id of a [TestSuite]. */
     @Column(name = "test_suite", nullable = false)
-    var testSuite: String = "base"
+    var testSuite: String = TestSuite.BASE
 
     @Column(nullable = false)
     var status: SubmissionStatus = SubmissionStatus.QUEUED
 
-    @Column(name = "time_ms")
-    var timeMs: BigDecimal? = null
+    /** Set for accepted submissions only, in units of [scoreType]. */
+    var score: BigDecimal? = null
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "score_type")
+    var scoreType: ScoreType? = null
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(nullable = false)
+    var metrics: Map<String, Double> = emptyMap()
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "measurement")
+    var measurement: String? = null
+
+    @Column(name = "benchmark_environment_key")
+    var benchmarkEnvironmentKey: String? = null
+
+    @Column(name = "guess_benchmark_key")
+    var guessBenchmarkKey: String? = null
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "guess_result")
+    var guessResult: String? = null
 
     @Column(name = "passed_tests", nullable = false)
     var passedTests: Int = 0
@@ -119,12 +154,21 @@ class Submission(
 
     override fun hashCode() = id.hashCode()
 
-    fun toRow() = SubmissionRow(id, userId, problemId, problemVersionId, contestId, status, timeMs, judgeHash, gpuProfile, createdAt, contextKey)
+    fun toRow() = SubmissionRow(
+        id, userId, problemId, problemVersionId, contestId, status, score, scoreType, judgeHash, processor, language, createdAt,
+        benchmarkEnvironmentKey, contextKey,
+    )
+
+    /** Sent to a running contest: only these decide its standings and can be hacked. */
+    val official: Boolean get() = contestId != null && contextKey == contestId.toString()
 
     companion object {
         const val RECHECK_SEPARATOR = ".r"
     }
 }
+
+/** Context of the submissions sent outside any contest. */
+const val PRACTICE_CONTEXT = "practice"
 
 class SubmissionRow(
     val id: UUID,
@@ -133,18 +177,27 @@ class SubmissionRow(
     val problemVersionId: UUID,
     val contestId: UUID?,
     val status: SubmissionStatus,
-    val timeMs: BigDecimal?,
+    val score: BigDecimal?,
+    val scoreType: ScoreType?,
     val judgeHash: String,
-    val gpuProfile: String,
+    val processor: String,
+    val language: String,
     val createdAt: Instant,
-    val contextKey: String = contestId?.toString() ?: "practice",
+    val benchmarkEnvironmentKey: String? = null,
+    val contextKey: String = contestId?.toString() ?: PRACTICE_CONTEXT,
 )
 
 interface SubmissionRepository : JpaRepository<Submission, UUID> {
     fun findByContestId(contestId: UUID): List<Submission>
 
+    /** Official contest submissions being judged again (after a judge failure or a successful hack). */
     @Query("SELECT count(s) FROM Submission s WHERE s.recheckCount > 0 AND s.contestId IS NOT NULL AND s.contextKey NOT LIKE '%:%' AND s.status IN :statuses")
     fun countPendingRejudges(statuses: Collection<SubmissionStatus>): Long
+
+    @Query("SELECT s FROM Submission s WHERE s.userId = :userId AND s.problemVersionId = :versionId " +
+        "AND s.guessChoice IS NOT NULL AND s.contextKey = :contextKey " +
+        "AND ((:benchmarkKey IS NULL AND s.guessBenchmarkKey IS NULL) OR s.guessBenchmarkKey = :benchmarkKey)")
+    fun findGuess(userId: UUID, versionId: UUID, contextKey: String, benchmarkKey: String? = null): Submission?
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT s FROM Submission s WHERE s.id = :id")
@@ -162,7 +215,8 @@ interface SubmissionRepository : JpaRepository<Submission, UUID> {
     @Query(
         """
         SELECT new dev.gpucodeforces.backend.submission.SubmissionRow(
-            s.id, s.userId, s.problemId, s.problemVersionId, s.contestId, s.status, s.timeMs, s.judgeHash, s.gpuProfile, s.createdAt, s.contextKey)
+            s.id, s.userId, s.problemId, s.problemVersionId, s.contestId, s.status, s.score, s.scoreType, s.judgeHash, s.processor,
+            s.language, s.createdAt, s.benchmarkEnvironmentKey, s.contextKey)
         FROM Submission s
         WHERE s.userId = :userId
           AND (:problemId IS NULL OR s.problemId = :problemId)

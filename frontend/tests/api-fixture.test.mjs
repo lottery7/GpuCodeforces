@@ -83,14 +83,14 @@ describe('Fixture HTTP API', () => {
       method: 'POST', body: { handle: 'fresh_user', email: 'fresh@example.com', password: 'newpassword123' },
     });
     expect(response.status).toBe(201);
-    expect(response.body).toMatchObject({ id: 'fresh_user', rating: null, rank: null, ratingDelta: null });
+    expect(response.body).toMatchObject({ id: 'fresh_user', ratings: {} });
     const cookie = response.cookie;
     expect((await request('/session', { cookie })).body.id).toBe('fresh_user');
     expect((await request('/users/fresh_user')).body).toMatchObject({ solvedCount: 0, contests: [] });
     expect((await request('/users/new_cuda')).body).toMatchObject({ solvedCount: 0, contests: [] });
     expect((await request('/problems?solved=true', { cookie })).body.total).toBe(0);
     expect((await request('/contests?mine=true', { cookie })).body).toEqual([]);
-    expect((await request('/users?sort=rating&q=fresh_user')).body).toEqual({ items: [], total: 0 });
+    expect((await request('/users?sort=rating&processor=gpu-cuda&q=fresh_user')).body).toEqual({ items: [], total: 0 });
     expect((await request('/contests', { cookie })).body.every(contest => !contest.registered)).toBe(true);
     expect((await request('/session', {
       method: 'POST', body: { identifier: 'fresh_user', password: 'password123' },
@@ -100,13 +100,12 @@ describe('Fixture HTTP API', () => {
     })).status).toBe(200);
   });
 
-  it('hides upcoming tasks and reference times from ordinary visitors', async () => {
+  it('hides upcoming tasks from ordinary visitors', async () => {
     const author = await login('author_cuda');
     const hidden = (await request('/contests/weekly-13')).body;
     expect(hidden.problemCount).toBe(3);
     expect(hidden.problemIds).toEqual([]);
     expect(hidden.rulesMarkdown).not.toContain('Сложение векторов');
-    expect(hidden.rulesMarkdown).not.toContain('0.065');
     expect((await request('/problems?context=weekly-13')).status).toBe(403);
     expect((await request('/problems/vector-addition?context=weekly-13')).status).toBe(403);
     expect((await request('/problems/vector-addition/leaders?context=weekly-13')).status).toBe(403);
@@ -115,7 +114,7 @@ describe('Fixture HTTP API', () => {
     expect(visible.rulesMarkdown).toContain('Сложение векторов');
     expect((await request('/problems?context=weekly-13', { cookie: author })).body.total).toBe(3);
     expect((await request('/contests/weekly-13/standings', { cookie: author })).body).toEqual([]);
-    expect((await request('/problems')).body.total).toBe(8);
+    expect((await request('/problems')).body.total).toBe(10);
   });
 
   it('allows removing the creator while keeping at least one author', async () => {
@@ -124,7 +123,7 @@ describe('Fixture HTTP API', () => {
     const start = Date.now() + 86400000;
     const input = {
       title: 'Team Contest', startAt: new Date(start).toISOString(), endAt: new Date(start + 3600000).toISOString(),
-      authorIds: ['alex_cuda', 'new_cuda'], problemIds: ['reduction', 'vector-addition'],
+      authorIds: ['alex_cuda', 'new_cuda'], problemIds: ['reduction', 'vector-addition'], processor: 'gpu-cuda',
     };
     const created = await request('/contests', { method: 'POST', body: input, cookie: alex });
     expect(created.status).toBe(201);
@@ -154,7 +153,7 @@ describe('Fixture HTTP API', () => {
   it('rechecks a temporary failure without changing submission identity or contest context', async () => {
     const newcomer = await login('new_cuda');
     const alex = await login('alex_cuda');
-    const input = { problemId: 'vector-addition', contestId: 'weekly-12', code: 'FIXTURE_SYSTEM_ERROR' };
+    const input = { problemId: 'vector-addition', contestId: 'weekly-12', code: 'FIXTURE_SYSTEM_ERROR', processor: 'gpu-cuda', language: 'cuda' };
     expect((await request('/submissions', { method: 'POST', body: input })).status).toBe(401);
     expect((await request('/submissions', { method: 'POST', body: input, cookie: newcomer })).status).toBe(400);
     expect((await request('/contests/weekly-12/registration', { method: 'PUT', cookie: newcomer })).status).toBe(204);
@@ -164,7 +163,7 @@ describe('Fixture HTTP API', () => {
     expect(queued.body.status).toBe('queued');
     expect(queued.body).not.toHaveProperty('code');
     const failed = await waitForStatus(queued.body.id, 'system_error', newcomer);
-    expect(failed.timeMs).toBeNull();
+    expect(failed.score).toBeNull();
     expect(failed.comparable).toBe(false);
     expect((await request(`/submissions/${failed.id}/recheck`, { method: 'POST', cookie: alex })).status).toBe(403);
     const retry = await request(`/submissions/${failed.id}/recheck`, { method: 'POST', cookie: newcomer });
@@ -173,12 +172,16 @@ describe('Fixture HTTP API', () => {
     const accepted = await waitForStatus(failed.id, 'accepted', newcomer);
     expect(accepted).toMatchObject({
       id: failed.id, code: failed.code, createdAt: failed.createdAt, contestId: failed.contestId,
-      environmentMarkdown: failed.environmentMarkdown, previousBestTimeMs: failed.previousBestTimeMs,
+      environmentMarkdown: failed.environmentMarkdown, previousBestScore: failed.previousBestScore,
       comparable: true, passedTests: accepted.totalTests,
     });
-    expect(accepted.timeMs).toBeGreaterThan(0);
+    expect(accepted.score.value).toBeGreaterThan(0);
+    expect(accepted.score.type).toBe('TIME_MS');
     const standings = (await request('/contests/weekly-12/standings')).body;
-    expect(standings.find(row => row.user.id === 'new_cuda').times['vector-addition']).toBe(accepted.timeMs);
+    // Solve time counts from the start to when the submission was sent, not to its (re)check.
+    const contest = (await request('/contests/weekly-12')).body;
+    expect(standings.find(row => row.user.id === 'new_cuda').times['vector-addition'])
+      .toBe(Math.floor((Date.parse(failed.createdAt) - Date.parse(contest.startAt)) / 1000));
     expect((await request(`/submissions/${accepted.id}/recheck`, { method: 'POST', cookie: newcomer })).status).toBe(400);
   }, 10000);
 
@@ -187,8 +190,9 @@ describe('Fixture HTTP API', () => {
     const bank = (await request('/problems?q=001&difficulty=easy&solved=true', { cookie: alex })).body;
     expect(bank.items.map(problem => problem.id)).toEqual(['vector-addition']);
     expect(bank.tags.length).toBeGreaterThan(1);
-    const rating = (await request('/users?sort=rating&q=alex')).body;
-    expect(rating.items[0].rank).toBe(4);
+    const rating = (await request('/users?sort=rating&processor=gpu-cuda&q=alex')).body;
+    expect(rating.items[0].ratings['gpu-cuda'].rank).toBe(4);
+    expect((await request('/users?sort=rating')).status).toBe(400);
     const all = (await request('/submissions?context=all', { cookie: alex })).body;
     const practice = (await request('/submissions?context=practice', { cookie: alex })).body;
     expect(all.total).toBeGreaterThan(practice.total);
@@ -198,21 +202,24 @@ describe('Fixture HTTP API', () => {
     expect(archive.comparable).toBe(false);
     expect(archive.environmentMarkdown).toContain('demo-v0');
     const problem = (await request('/problems/vector-addition', { cookie: alex })).body;
-    expect(problem.starterCode).toContain('void solve');
-    expect(problem).toHaveProperty('timeLimitSeconds');
-    const leaders = (await request('/problems/vector-addition/leaders')).body;
-    expect(leaders[0].timeMs).toBeLessThanOrEqual(leaders.at(-1).timeMs);
+    const starter = problem.processorDetails.find(item => item.id === 'gpu-cuda').starters.cuda;
+    expect(starter).toContain('void solve');
+    expect(problem.processorDetails.map(item => item.limit.type)).toEqual(['TIME_MS', 'CYCLES_X_DEPTH_X_TRANSISTORS']);
+    const leaders = (await request('/problems/vector-addition/leaders?processor=gpu-cuda')).body;
+    expect(leaders[0].score.value).toBeLessThanOrEqual(leaders.at(-1).score.value);
+    expect((await request('/problems/vector-addition/leaders?processor=rtl')).body).toEqual([]);
+    const target = { processor: 'gpu-cuda', language: 'cuda' };
     expect((await request('/problems/vector-addition/example', {
-      method: 'POST', body: { code: 'FIXTURE_WRONG_ANSWER' }, cookie: alex,
+      method: 'POST', body: { code: 'FIXTURE_WRONG_ANSWER', ...target }, cookie: alex,
     })).body).toMatchObject({ passed: false });
     expect((await request('/problems/vector-addition/example', {
-      method: 'POST', body: { code: problem.starterCode }, cookie: alex,
+      method: 'POST', body: { code: starter, ...target }, cookie: alex,
     })).body).toEqual({ passed: true, diagnostic: '' });
     expect((await request('/submissions?context=all', { cookie: alex })).body.total).toBe(all.total);
     const contests = (await request('/contests?q=12&phase=live')).body;
     expect(contests.map(contest => contest.id)).toEqual(['weekly-12']);
     const paginated = (await request('/problems?offset=1&limit=2')).body;
-    expect(paginated.total).toBe(8);
+    expect(paginated.total).toBe(10);
     expect(paginated.items).toHaveLength(2);
   });
 
@@ -221,16 +228,154 @@ describe('Fixture HTTP API', () => {
     const statuses = ['compile_error', 'wrong_answer', 'runtime_error', 'time_limit', 'memory_limit', 'measurement_error'];
     const ids = await Promise.all(statuses.map(async status => {
       const response = await request('/submissions', {
-        method: 'POST', body: { problemId: 'softmax', code: `FIXTURE_${status.toUpperCase()}` }, cookie: alex,
+        method: 'POST', body: { problemId: 'softmax', code: `FIXTURE_${status.toUpperCase()}`, processor: 'gpu-cuda', language: 'cuda' }, cookie: alex,
       });
       expect(response.status).toBe(202);
       return response.body.id;
     }));
     const results = await Promise.all(ids.map((id, index) => waitForStatus(id, statuses[index], alex)));
-    expect(results.every(item => item.timeMs === null && item.comparable === false && item.diagnostic.length > 0)).toBe(true);
+    expect(results.every(item => item.score === null && item.comparable === false && item.diagnostic.length > 0)).toBe(true);
     expect(results[1].passedTests).toBe(6);
     expect(results.at(-1).passedTests).toBe(results.at(-1).totalTests);
     expect((await request('/problems/softmax', { cookie: alex })).body.solved).toBe(true);
     expect((await request('/submissions?problemId=softmax&status=wrong_answer', { cookie: alex })).body.total).toBe(1);
   }, 7000);
+
+  it('returns full long diagnostics only to the owner and preserves context on recheck', async () => {
+    const owner = await login('new_cuda');
+    const other = await login('alex_cuda');
+    const code = 'FIXTURE_LONG_DIAGNOSTIC';
+    const target = { processor: 'gpu-cuda', language: 'cuda' };
+    const example = await request('/problems/vector-addition/example', { method: 'POST', body: { code, ...target }, cookie: owner });
+    expect(example.body.passed).toBe(false);
+    expect(example.body.diagnostic).toHaveLength(16384);
+    expect(example.body.diagnostic.split('\n').length).toBeGreaterThan(100);
+    const queued = await request('/submissions', { method: 'POST', body: { problemId: 'vector-addition', code, ...target }, cookie: owner });
+    const failed = await waitForStatus(queued.body.id, 'system_error', owner);
+    expect(failed.diagnostic).toBe(example.body.diagnostic);
+    expect(failed).toMatchObject({ code, contestId: null, createdAt: queued.body.createdAt });
+    for (const cookie of [other, undefined]) {
+      const detail = await request(`/submissions/${failed.id}`, { cookie });
+      expect(detail.body).not.toHaveProperty('diagnostic');
+      expect(detail.body).not.toHaveProperty('code');
+    }
+    expect((await request(`/submissions/${failed.id}/recheck`, { method: 'POST', cookie: owner })).status).toBe(202);
+    const accepted = await waitForStatus(failed.id, 'accepted', owner);
+    expect(accepted).toMatchObject({ code, diagnostic: '', contestId: null, createdAt: failed.createdAt, environmentMarkdown: failed.environmentMarkdown });
+  }, 10000);
+
+  it('offers processors: filters, a submission on rtl with its own score, and contests on a processor', async () => {
+    const alex = await login('alex_cuda');
+    const processors = (await request('/processors')).body;
+    expect(processors.map(item => item.id)).toEqual(['gpu-cuda', 'rtl']);
+    expect((await request('/problems?processor=rtl')).body.items.map(problem => problem.id)).toEqual(['vector-addition']);
+    expect((await request('/problems?sort=bestScore')).status).toBe(400);
+    expect((await request('/submissions', { method: 'POST', body: { problemId: 'softmax', code: 'x', processor: 'rtl', language: 'systemverilog' }, cookie: alex })).status).toBe(400);
+    expect((await request('/submissions', { method: 'POST', body: { problemId: 'vector-addition', code: 'x', processor: 'rtl', language: 'cuda' }, cookie: alex })).status).toBe(400);
+    const queued = await request('/submissions', { method: 'POST', body: { problemId: 'vector-addition', code: 'module solve; endmodule', processor: 'rtl', language: 'systemverilog' }, cookie: alex });
+    expect(queued.status).toBe(202);
+    const accepted = await waitForStatus(queued.body.id, 'accepted', alex);
+    expect(accepted).toMatchObject({ processor: 'rtl', language: 'systemverilog', score: { type: 'CYCLES_X_DEPTH_X_TRANSISTORS' }, metrics: { cycles: 64, depth: 4, transistors: 16 } });
+    const start = new Date(Date.now() + 86400000).toISOString();
+    const contest = { title: 'Схемы', startAt: start, endAt: new Date(Date.parse(start) + 3600000).toISOString(), authorIds: ['alex_cuda'], problemIds: ['vector-addition'], processor: 'rtl' };
+    expect((await request('/contests', { method: 'POST', body: { ...contest, problemIds: ['softmax'] }, cookie: alex })).status).toBe(400);
+    const created = await request('/contests', { method: 'POST', body: contest, cookie: alex });
+    expect(created.body.processor).toBe('rtl');
+    expect((await request('/contests?processor=rtl')).body.map(item => item.id)).toEqual([created.body.id]);
+  }, 7000);
+  it('keeps guesses immutable, restores the attempt and hides the answer from other users', async () => {
+    const owner = await login('new_cuda');
+    const other = await login('alex_cuda');
+    const detail = (await request('/problems/guess-vector', { cookie: owner })).body;
+    expect(detail).toMatchObject({ format: 'guess', guessSubmissionId: null });
+    expect(detail.firstCode).toContain('void solve');
+    expect(detail).not.toHaveProperty('firstTimeMs');
+    const benchmarkKey = detail.processors[0].referenceMeasurement.key;
+    const guess = await request('/problems/guess-vector/guess', { method: 'POST', body: { choice: 'first', benchmarkKey }, cookie: owner });
+    expect(guess.status).toBe(200);
+    expect(guess.body).toMatchObject({ status: 'accepted', score: null, guessResult: { choice: 'first', correctChoice: 'first', firstScore: { type: 'TIME_MS' } } });
+    expect((await request('/problems/guess-vector', { cookie: owner })).body.guessSubmissionId).toBe(guess.body.id);
+    const repeated = await request('/problems/guess-vector/guess', { method: 'POST', body: { choice: 'first', benchmarkKey }, cookie: owner });
+    expect(repeated.body.id).toBe(guess.body.id);
+    expect((await request('/problems/guess-vector/guess', { method: 'POST', body: { choice: 'second', benchmarkKey }, cookie: owner })).status).toBe(400);
+    expect((await request(`/submissions/${guess.body.id}`, { cookie: other })).body).not.toHaveProperty('guessResult');
+    expect((await request('/problems?format=guess', { cookie: owner })).body.items.every(item => item.format === 'guess')).toBe(true);
+    expect((await request('/submissions', { method: 'POST', body: { problemId: 'guess-vector', code: 'void solve() {}', processor: 'gpu-cuda', language: 'cuda' }, cookie: owner })).status).toBe(400);
+  });
+
+  it('matches compatible random searches and chooses one common task after matching', async () => {
+    const owner = await login('alex_cuda');
+    const opponent = await login('new_cuda');
+    const outsider = await login('author_cuda');
+    const queued = await request('/duels', { method: 'POST', body: { mode: 'random', topics: ['Память'], processor: 'gpu-cuda' }, cookie: owner });
+    expect(queued.status).toBe(201);
+    expect(queued.body).toMatchObject({ status: 'queued', contestId: null });
+    expect(queued.body).not.toHaveProperty('problemId');
+    const matched = await request('/duels', { method: 'POST', body: { mode: 'random', topics: ['Матрицы'], processor: 'gpu-cuda' }, cookie: opponent });
+    expect(matched.status).toBe(201);
+    expect(matched.body.status).toBe('matched');
+    const current = (await request('/duels/current', { cookie: owner })).body;
+    expect(current.contestId).toBe(matched.body.contestId);
+    const room = (await request(`/contests/${current.contestId}`, { cookie: owner })).body;
+    expect(room).toMatchObject({ format: 'duel', registered: true, problemCount: 1 });
+    expect((await request(`/contests/${room.id}`, { cookie: opponent })).body.registered).toBe(true);
+    const task = (await request(`/problems/${room.problemIds[0]}?context=${room.id}`, { cookie: owner })).body;
+    expect(task.tags).toContain('Матрицы'); expect(task.tags).toContain('Память');
+    expect((await request(`/contests/${room.id}/registration`, { method: 'PUT', cookie: outsider })).status).toBe(403);
+    expect((await request(`/duels/${queued.body.id}`, { cookie: outsider })).status).toBe(403);
+  });
+
+  it('delivers a private persisted invitation and starts a duel only after acceptance', async () => {
+    const owner = await login('alex_cuda');
+    const opponent = await login('new_cuda');
+    const outsider = await login('author_cuda');
+    const created = await request('/duels', { method: 'POST', body: { mode: 'invite', opponentHandle: 'new_cuda', topics: ['Массивы'], processor: 'gpu-cuda' }, cookie: owner });
+    expect(created.body).toMatchObject({ status: 'invited', contestId: null });
+    expect((await request('/duels/current', { cookie: opponent })).status).toBe(204);
+    const notes = (await request('/notifications', { cookie: opponent })).body;
+    expect(notes.unreadCount).toBe(1);
+    expect(notes.items[0]).toMatchObject({ type: 'duel_invitation', duelRequestId: created.body.id, duelStatus: 'invited' });
+    expect((await request('/notifications', { cookie: outsider })).body.items).toEqual([]);
+    expect((await request(`/notifications/${notes.items[0].id}/read`, { method: 'PUT', cookie: outsider })).status).toBe(404);
+    expect((await request(`/notifications/${notes.items[0].id}/read`, { method: 'PUT', cookie: opponent })).status).toBe(204);
+    expect((await request('/notifications', { cookie: opponent })).body.unreadCount).toBe(0);
+    expect((await request(`/duels/${created.body.id}/accept`, { method: 'POST', cookie: owner })).status).toBe(403);
+    const accepted = await request(`/duels/${created.body.id}/accept`, { method: 'POST', cookie: opponent });
+    expect(accepted.body.status).toBe('matched');
+    expect((await request('/duels/current', { cookie: owner })).body.contestId).toBe(accepted.body.contestId);
+    expect((await request('/notifications', { cookie: owner })).body.items[0]).toMatchObject({ type: 'duel_started', contestId: accepted.body.contestId });
+  });
+
+  it('persists declined and cancelled invitations and prevents accepting stale invitations', async () => {
+    const owner = await login('alex_cuda');
+    const opponent = await login('new_cuda');
+    const body = { mode: 'invite', opponentHandle: 'new_cuda', topics: [], processor: 'gpu-cuda' };
+    const first = (await request('/duels', { method: 'POST', body, cookie: owner })).body;
+    expect((await request(`/duels/${first.id}/decline`, { method: 'POST', cookie: opponent })).body.status).toBe('declined');
+    expect((await request('/duels/current', { cookie: owner })).status).toBe(204);
+    expect((await request('/notifications', { cookie: owner })).body.items[0]).toMatchObject({ type: 'duel_declined', duelStatus: 'declined' });
+    const second = (await request('/duels', { method: 'POST', body, cookie: owner })).body;
+    expect((await request(`/duels/${second.id}/cancel`, { method: 'POST', cookie: owner })).body.status).toBe('cancelled');
+    expect((await request(`/duels/${second.id}/accept`, { method: 'POST', cookie: opponent })).status).toBe(400);
+    const notifications = (await request('/notifications', { cookie: opponent })).body.items;
+    expect(notifications.find(item => item.type === 'duel_invitation' && item.duelRequestId === second.id).duelStatus).toBe('cancelled');
+    expect(notifications[0].type).toBe('duel_cancelled');
+    expect((await request('/runtime')).body).toEqual({ executionMode: 'mock', gpuName: null });
+  });
+
+  it('publishes a comparison from two own accepted submissions without publishing measurements', async () => {
+    const cookie = await login('alex_cuda');
+    const queued = await request('/submissions', { method: 'POST', body: { problemId: 'vector-addition', code: 'void solve() {}', processor: 'gpu-cuda', language: 'cuda' }, cookie });
+    await waitForStatus(queued.body.id, 'accepted', cookie);
+    const created = await request('/problems/vector-addition/comparisons', { method: 'POST', body: { firstSubmissionId: '1042', secondSubmissionId: queued.body.id, explanation: 'Разные размеры блока.' }, cookie });
+    expect(created.status).toBe(201);
+    expect(created.body.format).toBe('guess');
+    const detail = (await request(`/problems/${created.body.id}`)).body;
+    expect(detail.firstCode).toContain('void solve');
+    expect(detail.secondCode).toBe('void solve() {}');
+    expect(detail).not.toHaveProperty('firstTimeMs');
+    expect(detail).not.toHaveProperty('explanation');
+    const other = await login('new_cuda');
+    expect((await request('/problems/vector-addition/comparisons', { method: 'POST', body: { firstSubmissionId: '1042', secondSubmissionId: queued.body.id, explanation: 'Чужие посылки.' }, cookie: other })).status).toBe(400);
+  });
 });

@@ -13,7 +13,12 @@ import org.springframework.transaction.annotation.Transactional
 /** Content-addressed immutable suite; submissions and historical checks keep its identifier. */
 @Entity
 @Table(name = "test_suites", schema = "gpucodeforces")
-class TestSuite(@Id val id: String, @Column(name = "tests_json") val testsJson: String)
+class TestSuite(@Id val id: String, @Column(name = "tests_json") val testsJson: String) {
+    companion object {
+        /** No custom tests: the problem's own tests only. */
+        const val BASE = "base"
+    }
+}
 
 interface TestSuiteRepository : JpaRepository<TestSuite, String> {
     @Modifying

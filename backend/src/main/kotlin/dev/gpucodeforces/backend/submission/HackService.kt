@@ -82,10 +82,13 @@ class HackService(
         val hack = transactions.execute {
             val contest = contests.findForUpdate(contestId)!!
             if (!contest.hacksOpen(Instant.now())) throw BadRequestException("Период взломов закрыт")
-            if (submissions.findByContestId(contestId).any { it.contextKey == contestId.toString() && !it.status.terminal }) {
+            if (submissions.findByContestId(contestId).any { it.official && !it.status.terminal }) {
                 throw BadRequestException("Дождитесь окончания проверок решений")
             }
-            if (target.contextKey != contestId.toString() || target.status != SubmissionStatus.ACCEPTED) throw BadRequestException("Нужно принятое официальное решение")
+            // an answer to a guess is accepted too, yet there is no code to run on a test
+            if (!target.official || target.status != SubmissionStatus.ACCEPTED || target.guessChoice != null) {
+                throw BadRequestException("Нужно принятое официальное решение")
+            }
             if (target.userId == user.id) throw ForbiddenException("Нельзя взломать собственное решение")
             val existing = list(contestId)
             existing.firstOrNull { it.submissionId == target.id && it.testHash == hash }?.let { return@execute it }
@@ -106,7 +109,7 @@ class HackService(
 
     fun suite(contestId: UUID?, problemId: String): String {
         val tests = contestId?.let { list(it).filter { h -> h.problemId == problemId && h.status == "successful" }.distinctBy { h -> h.testHash }.sortedBy { h -> h.testHash }.map { h -> json.readValue<CustomTest>(h.testJson) } }.orEmpty()
-        if (tests.isEmpty()) return "base"
+        if (tests.isEmpty()) return TestSuite.BASE
         val contents = json.writeValueAsString(tests)
         val hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(contents.toByteArray()))
         suites.store(hash, contents)
@@ -123,7 +126,16 @@ class HackService(
         val target = submissions.findById(hack.submissionId).orElseThrow()
         val spec = catalog.spec(catalog.versions(listOf(target.problemVersionId)).getValue(target.problemVersionId))
         val retryCount = hack.retryCount
-        val outcome = gateway.send(SubmissionRequest("hack-${hack.id}.r$retryCount", spec.copy(customTests = listOf(json.readValue(hack.testJson)), customOnly = true), target.code, target.gpuProfile))
+        // on the processor and in the language of the hacked solution: that is where it was accepted
+        val outcome = gateway.send(
+            SubmissionRequest(
+                submissionId = "$JOB_PREFIX${hack.id}.r$retryCount",
+                problem = spec.copy(customTests = listOf(json.readValue(hack.testJson)), customOnly = true),
+                source = target.code,
+                processor = target.processor,
+                language = target.language,
+            ),
+        )
         transactions.executeWithoutResult {
             contests.findForUpdate(hack.contestId)
             val current = repository.findById(hack.id).orElseThrow()
@@ -140,14 +152,14 @@ class HackService(
 
     fun apply(event: JudgeEvent) {
         if (event.status != JudgeStatus.FINISHED) return
-        val id = runCatching { UUID.fromString(event.submissionId.removePrefix("hack-").substringBefore(".r")) }.getOrNull()
+        val id = runCatching { UUID.fromString(event.submissionId.removePrefix(JOB_PREFIX).substringBefore(".r")) }.getOrNull()
             ?: return log.warn("Judge event for an unknown hack identifier: {}", event.submissionId)
         val before = repository.findById(id).orElse(null)
             ?: return log.warn("Judge event for a hack that does not exist: {}", id)
         transactions.executeWithoutResult {
             contests.findForUpdate(before.contestId)
             val hack = repository.findById(id).orElseThrow()
-            if (event.submissionId != "hack-${hack.id}.r${hack.retryCount}" || hack.status != "queued" || hack.jobId != null && hack.jobId != event.jobId) return@executeWithoutResult
+            if (event.submissionId != "$JOB_PREFIX${hack.id}.r${hack.retryCount}" || hack.status != "queued" || hack.jobId != null && hack.jobId != event.jobId) return@executeWithoutResult
             val result = event.result!!
             hack.jobId = event.jobId
             hack.status = when {
@@ -181,5 +193,12 @@ class HackService(
         }!!
         send(hack)
         return repository.findById(id).orElseThrow()
+    }
+
+    companion object {
+        /** Judge jobs of hacks: `hack-<id>.r<retry>`. */
+        const val JOB_PREFIX = "hack-"
+
+        fun isHack(judgeSubmissionId: String): Boolean = judgeSubmissionId.startsWith(JOB_PREFIX)
     }
 }

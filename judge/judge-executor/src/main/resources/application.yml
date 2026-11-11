@@ -17,8 +17,11 @@ judge:
   executor:
     # must be unique among all executors; without it the host name is used
     id: ${JUDGE_EXECUTOR_ID:${HOSTNAME:}}
-    # The GPU type of this machine. Submissions are routed by this name, so the executor checks at startup that the
-    # card really is what the profile below describes. For another GPU set all three variables, e.g.
+    # Processors this executor judges (ids of judge-api Processors), comma-separated; one queue each.
+    processors: ${JUDGE_PROCESSORS:gpu-cuda}
+    # gpu-cuda only: the GPU type of this machine. All gpu-cuda executors share one queue and their times are
+    # compared, so the executor checks at startup that the card really is what the profile below describes. For
+    # another GPU set all three variables, e.g.
     # JUDGE_GPU_PROFILE=rtx4090 JUDGE_GPU_ARCH=sm_89 JUDGE_GPU_NAME="NVIDIA GeForce RTX 4090".
     gpu-profile: ${JUDGE_GPU_PROFILE:rtx3060}
     profile:
@@ -34,6 +37,14 @@ judge:
       - index: 0
         # Stable timings: lock graphics clocks (MHz). Needs root, native Linux only. RTX 3060 base clock is 1320.
         lock-graphics-clocks-mhz: ${JUDGE_LOCK_CLOCKS:}
+    # emulated processors: simulators running at once, each single-threaded (one core)
+    emulators:
+      rtl:
+        workers: ${JUDGE_RTL_WORKERS:2}
+      "[riscv-rvv]":
+        workers: ${JUDGE_RISCV_WORKERS:2}
+      "[cuda-sim]":
+        workers: ${JUDGE_CUDA_SIM_WORKERS:2}
     prefetch-extra: 2
     compile-workers: ${JUDGE_COMPILE_WORKERS:4}
     paths:
@@ -49,6 +60,21 @@ judge:
       expected-torch-version: ${JUDGE_TORCH_VERSION:2.9.1}
       host-compiler: ${JUDGE_HOST_CXX:g++-13}
       python: ${JUDGE_PYTHON:python3}
+    rtl:
+      # OSS CAD Suite of judge/deploy/executor-emu.Dockerfile; the executor refuses to start on other versions
+      home: ${JUDGE_RTL_HOME:/opt/oss-cad-suite}
+      expected-yosys-version: ${JUDGE_YOSYS_VERSION:0.70+286}
+      expected-verilator-version: ${JUDGE_VERILATOR_VERSION:5.053}
+    riscv:
+      # QEMU and plugin of judge/deploy/executor-emu.Dockerfile; the executor refuses to start on other versions
+      qemu: ${JUDGE_QEMU_RISCV:/opt/qemu/bin/qemu-riscv64}
+      plugin: ${JUDGE_RISCV_PLUGIN:/opt/judge/riscv/judge_plugin.so}
+      expected-qemu-version: ${JUDGE_QEMU_VERSION:11.1.3}
+      expected-gcc-version: ${JUDGE_RISCV_GCC_VERSION:13.3}
+    cuda-sim:
+      # GPGPU-Sim of judge/deploy/executor-cuda-sim.Dockerfile; the executor refuses to start on another commit
+      home: ${JUDGE_GPGPUSIM_HOME:/opt/gpgpu-sim}
+      expected-version: ${JUDGE_GPGPUSIM_VERSION:4195dd4f229c}
     sandbox:
       type: ${JUDGE_SANDBOX:NSJAIL}
       seccomp-policy: ${JUDGE_SECCOMP_POLICY:/opt/judge/sandbox/seccomp.kafel}
@@ -69,9 +95,9 @@ logging:
   level:
     dev.gpucodeforces.judge: INFO
   pattern:
-    correlation: "[sub=%X{submissionId:-} a=%X{attempt:-} gpu=%X{gpu:-}] "
+    correlation: "[sub=%X{submissionId:-} a=%X{attempt:-} proc=%X{processor:-} gpu=%X{gpu:-}] "
 ---
-# JSON logs for log collectors: SPRING_PROFILES_ACTIVE=json (MDC: submissionId, attempt, problem, executor, gpu)
+# JSON logs for log collectors: SPRING_PROFILES_ACTIVE=json (MDC: submissionId, attempt, problem, processor, executor, gpu)
 spring:
   config:
     activate:

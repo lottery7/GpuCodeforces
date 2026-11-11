@@ -11,9 +11,6 @@ import jakarta.persistence.ManyToMany
 import jakarta.persistence.Table
 import java.time.Instant
 import java.util.UUID
-import org.hibernate.annotations.JdbcTypeCode
-import org.hibernate.type.SqlTypes
-import java.math.BigDecimal
 
 @Entity
 @Table(name = "contests", schema = "gpucodeforces")
@@ -25,8 +22,9 @@ class Contest(
     var startAt: Instant,
     @Column(name = "end_at")
     var endAt: Instant,
+    /** The one processor every submission of the contest is judged on; chosen at creation, fixed once it starts. */
     @Column(nullable = false)
-    var gpu: String,
+    var processor: String,
     @Column(name = "rating_applied_at")
     var ratingAppliedAt: Instant? = null,
     // Eager: every Contest response includes authors, and open-in-view is disabled.
@@ -38,24 +36,28 @@ class Contest(
         inverseJoinColumns = [JoinColumn(name = "user_id")],
     )
     var authors: MutableSet<User> = mutableSetOf(),
+    @Column(nullable = false)
+    val format: String = "standard",
+    @Column(name = "challenger_id")
+    val challengerId: UUID? = null,
+    @Column(name = "opponent_id")
+    val opponentId: UUID? = null,
 ) {
+    /** End of the hack period after [endAt]; null when the contest has none. */
     @Column(name = "hack_end_at")
     var hackEndAt: Instant? = null
 
+    /** When the official results became final: hacks are over, everything is rejudged and the rating is applied. */
     @Column(name = "finalized_at")
     var finalizedAt: Instant? = null
 
-    @Column(name = "gpu_profile")
-    var gpuProfile: String? = null
-
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(name = "baseline_times", nullable = false)
-    var baselineTimes: Map<String, BigDecimal> = emptyMap()
+    /** When the results can become final at the earliest. */
+    val resultsAt: Instant get() = hackEndAt ?: endAt
 
     fun hacksOpen(now: Instant): Boolean = !now.isBefore(endAt) && hackEndAt?.isAfter(now) == true && finalizedAt == null
 
-    constructor(title: String, startAt: Instant, endAt: Instant, gpu: String) :
-        this(UUID.randomUUID(), title, startAt, endAt, gpu)
+    constructor(title: String, startAt: Instant, endAt: Instant, processor: String) :
+        this(UUID.randomUUID(), title, startAt, endAt, processor)
 
     fun phaseAt(now: Instant): ContestPhase = when {
         now.isBefore(startAt) -> ContestPhase.UPCOMING

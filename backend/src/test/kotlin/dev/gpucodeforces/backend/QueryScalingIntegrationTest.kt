@@ -2,9 +2,11 @@ package dev.gpucodeforces.backend
 
 import dev.gpucodeforces.backend.contest.ContestService
 import dev.gpucodeforces.backend.problem.ProblemContext
+import dev.gpucodeforces.backend.problem.ProblemFilter
 import dev.gpucodeforces.backend.problem.ProblemListing
 import dev.gpucodeforces.backend.problem.ProblemService
 import dev.gpucodeforces.backend.user.User
+import dev.gpucodeforces.backend.user.UserRating
 import dev.gpucodeforces.backend.user.UserService
 import dev.gpucodeforces.backend.user.UserRepository
 import org.assertj.core.api.Assertions.assertThat
@@ -35,15 +37,24 @@ class QueryScalingIntegrationTest {
     @Autowired lateinit var userRepository: UserRepository
 
     @Test
-    @AllowFullScan("users", "UPDATE gpucodeforces\\.users u SET rank", "Exact global ranks require ordering every rated user; unchanged ranks must not be written")
+    @AllowFullScan(
+        "user_ratings", "UPDATE gpucodeforces\\.user_ratings r SET rank",
+        "Exact ranks require ordering every rated user of a processor; unchanged ranks must not be written",
+    )
     fun `rank recomputation writes only changed ranks and preserves ties`() {
-        val first = userRepository.saveAndFlush(User("rankfirst", "first@example.com", "hash").also { it.rating = 1500 })
-        val tied = userRepository.saveAndFlush(User("ranktied", "tied@example.com", "hash").also { it.rating = 1500 })
-        val last = userRepository.saveAndFlush(User("ranklast", "last@example.com", "hash").also { it.rating = 1200 })
-        assertThat(userRepository.recomputeRanks()).isEqualTo(3)
-        assertThat(userRepository.findById(first.id).orElseThrow().rank).isEqualTo(1)
-        assertThat(userRepository.findById(tied.id).orElseThrow().rank).isEqualTo(1)
-        assertThat(userRepository.findById(last.id).orElseThrow().rank).isEqualTo(3)
+        fun rated(handle: String, rating: Int) =
+            userRepository.saveAndFlush(User(handle, "$handle@example.com", "hash").also { it.ratings[GPU] = UserRating(rating) })
+        val first = rated("rankfirst", 1500)
+        val tied = rated("ranktied", 1500)
+        val last = rated("ranklast", 1200)
+        // a rating on another processor has a place of its own
+        val elsewhere = userRepository.saveAndFlush(User("rankrtl", "rankrtl@example.com", "hash").also { it.ratings["rtl"] = UserRating(1000) })
+        assertThat(userRepository.recomputeRanks()).isEqualTo(4)
+        fun rank(user: User, processor: String = GPU) = userRepository.findById(user.id).orElseThrow().ratings.getValue(processor).rank
+        assertThat(rank(first)).isEqualTo(1)
+        assertThat(rank(tied)).isEqualTo(1)
+        assertThat(rank(last)).isEqualTo(3)
+        assertThat(rank(elsewhere, "rtl")).isEqualTo(1)
         assertThat(userRepository.recomputeRanks()).isZero()
     }
 
@@ -58,9 +69,9 @@ class QueryScalingIntegrationTest {
         @Language("SQL") val versionRows = """
             INSERT INTO gpucodeforces.problem_versions
                 (id, problem_id, code, title, difficulty, tags, authors, draft, statement_markdown,
-                 starter_code, judge_spec, content_hash, judge_hash, created_at)
+                 processors, starters, judge_spec, content_hash, judge_hash, created_at)
             SELECT gen_random_uuid(), 'scale-' || p, lpad(p::text, 3, '0'), 'Scale ' || p, 'easy',
-                   ARRAY['scaling'], ARRAY['author'], false, repeat('statement', 2000), 'code', '{}', h::text, 'hash', now()
+                   ARRAY['scaling'], ARRAY['author'], false, repeat('statement', 2000), ARRAY['gpu-cuda'], '{}', '{}', h::text, 'hash', now()
             FROM generate_series(1, 40) p CROSS JOIN generate_series(0, 99) h
         """
         jdbc.execute(versionRows)
@@ -74,10 +85,15 @@ class QueryScalingIntegrationTest {
         }
         jdbc.execute("ANALYZE gpucodeforces.problems")
         jdbc.execute("ANALYZE gpucodeforces.problem_versions")
-        plans.assertRows("SELECT v\\.problem_id", 3) {
-            val page = listing.page(ProblemContext.Practice, null, null, "Scale", "easy", "scaling", null, "code", "gpu", 10, 3)
+        @Language("SQL") val expectedPage = """
+            SELECT current_version_id FROM gpucodeforces.problems WHERE id IN ('scale-11', 'scale-12', 'scale-13') ORDER BY id
+        """
+        val expected = jdbc.queryForList(expectedPage, UUID::class.java)
+        plans.assertRows("SELECT v\\.id", 3) {
+            val filter = ProblemFilter("Scale", "easy", "scaling", "standard", null, GPU, ProblemListing.SORT_CODE, null)
+            val page = listing.page(ProblemContext.Practice, null, null, filter, 10, 3)
             assertThat(page.total).isEqualTo(40)
-            assertThat(page.items.map { it.problemId }).containsExactly("scale-11", "scale-12", "scale-13")
+            assertThat(page.versionIds).containsExactlyElementsOf(expected)
             assertThat(page.tags).contains("scaling")
         }
         plans.assertRows("judge_spec", 1) {
@@ -95,13 +111,13 @@ class QueryScalingIntegrationTest {
         @Language("SQL") val insertUser = "INSERT INTO gpucodeforces.users (id, handle, email, password_hash, created_at) VALUES (?, 'scaleauthor', 'scale@example.com', 'hash', now())"
         jdbc.update(insertUser, author)
         @Language("SQL") val contestRows = """
-            INSERT INTO gpucodeforces.contests (id, title, start_at, end_at, gpu)
-            SELECT gen_random_uuid(), 'archive ' || n, now() - n * interval '1 day', now() - n * interval '1 day' + interval '1 hour', 'gpu'
+            INSERT INTO gpucodeforces.contests (id, title, start_at, end_at, processor)
+            SELECT gen_random_uuid(), 'archive ' || n, now() - n * interval '1 day', now() - n * interval '1 day' + interval '1 hour', 'gpu-cuda'
             FROM generate_series(1, 1000) n
         """
         jdbc.execute(contestRows)
         val upcoming = UUID.randomUUID()
-        @Language("SQL") val insertUpcoming = "INSERT INTO gpucodeforces.contests (id, title, start_at, end_at, gpu) VALUES (?, 'future', now() + interval '1 day', now() + interval '2 days', 'gpu')"
+        @Language("SQL") val insertUpcoming = "INSERT INTO gpucodeforces.contests (id, title, start_at, end_at, processor) VALUES (?, 'future', now() + interval '1 day', now() + interval '2 days', 'rtl')"
         jdbc.update(insertUpcoming, upcoming)
         @Language("SQL") val addAuthor = "INSERT INTO gpucodeforces.contest_authors (contest_id, user_id) VALUES (?, ?)"
         jdbc.update(addAuthor, upcoming, author)
@@ -109,46 +125,56 @@ class QueryScalingIntegrationTest {
         val viewer = User(author, "scaleauthor", "scale@example.com", "hash")
         plans.assertRows("from gpucodeforces\\.contests", 1) {
             plans.check {
-                assertThat(contests.list(null, "upcoming", true, viewer).map { it.id }).containsExactly(upcoming)
+                assertThat(contests.list(null, "upcoming", true, "rtl", viewer).map { it.id }).containsExactly(upcoming)
             }
         }
         plans.assertRows("from gpucodeforces\\.contests", 1) {
             plans.check(mapOf("users" to "Only the single author may be scanned; the 1001 contests must be filtered by index")) {
-                assertThat(contests.list("scaleauthor", "upcoming", false, null).map { it.id }).containsExactly(upcoming)
+                assertThat(contests.list("scaleauthor", "upcoming", false, null, null).map { it.id }).containsExactly(upcoming)
             }
         }
-        val all = contests.list(null, null, false, null)
+        val all = contests.list(null, null, false, null, null)
         assertThat(all.map { it.startAt }).isSorted()
-        val finished = contests.list(null, "finished", false, null)
+        assertThat(contests.list(null, null, false, "rtl", null).map { it.id }).containsExactly(upcoming)
+        val finished = contests.list(null, "finished", false, null, null)
         assertThat(finished).hasSize(1000)
         assertThat(finished.map { it.startAt }).isSortedAccordingTo(reverseOrder())
     }
 
     @Test
     @AllowFullScan("users", "select count\\(.*from gpucodeforces\\.users", "An exact total without a search must count the complete user population")
-    @AllowFullScan("users", "strpos\\(lower\\(handle\\)", "One- and two-character substrings do not provide useful trigrams")
+    @AllowFullScan("users", "strpos\\(lower\\((u\\.)?handle\\)", "One- and two-character substrings do not provide useful trigrams")
     fun `user pages and selective substring search have separate query paths`() {
         @Language("SQL") val userRows = """
-            INSERT INTO gpucodeforces.users (id, handle, email, password_hash, rating, rank, created_at)
-            SELECT gen_random_uuid(), 'user' || lpad(n::text, 6, '0'), n || '@example.com', 'hash', n, 10001 - n, now()
-            FROM generate_series(1, 10000) n
+            WITH created AS (
+                INSERT INTO gpucodeforces.users (id, handle, email, password_hash, created_at)
+                SELECT gen_random_uuid(), 'user' || lpad(n::text, 6, '0'), n || '@example.com', 'hash', now()
+                FROM generate_series(1, 10000) n
+                RETURNING id, handle
+            )
+            INSERT INTO gpucodeforces.user_ratings (user_id, processor, rating, rank)
+            SELECT id, 'gpu-cuda', substring(handle from 5)::int, 10001 - substring(handle from 5)::int FROM created
         """
         jdbc.execute(userRows)
         @Language("SQL") val flushTrigrams = "SELECT gin_clean_pending_list('gpucodeforces.users_handle_trgm_idx'::regclass)"
         jdbc.queryForObject(flushTrigrams, Long::class.java)
         jdbc.execute("ANALYZE gpucodeforces.users")
-        for (rated in listOf(false, true)) {
-            plans.assertRows("SELECT \\* FROM gpucodeforces\\.users", 5) {
-                assertThat(users.search(null, rated, 0, 5).items).hasSize(5)
+        jdbc.execute("ANALYZE gpucodeforces.user_ratings")
+        for (ratingProcessor in listOf(null, GPU)) {
+            // the page itself: totals are counted by a query of their own
+            plans.assertRows("ORDER BY .* LIMIT", 5) {
+                assertThat(users.search(null, ratingProcessor, 0, 5).items).hasSize(5)
             }
             plans.checkNatural {
-                assertThat(users.search("009876", rated, 0, 5).items.map { it.handle }).containsExactly("user009876")
+                assertThat(users.search("009876", ratingProcessor, 0, 5).items.map { it.handle }).containsExactly("user009876")
             }
-            assertThat(users.search("u", rated, 0, 5).items).hasSize(5)
+            assertThat(users.search("u", ratingProcessor, 0, 5).items).hasSize(5)
         }
     }
 
     companion object {
+        private const val GPU = "gpu-cuda"
+
         @Container
         @ServiceConnection
         @JvmStatic

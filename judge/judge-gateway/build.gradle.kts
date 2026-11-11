@@ -24,8 +24,9 @@ val apiSchemaMappings = listOf(
     "SubmissionRequest", "SubmissionAccepted", "SubmissionStatus", "ProblemSpec", "Signature", "ParamSpec",
     "ParamRole", "MemorySpace", "DType", "GeneratorSpec", "GeneratorLanguage", "CheckerSpec", "CheckerMode",
     "LimitsSpec", "TimingSpec", "TimingMode", "CompileSpec", "PolicyOverrides", "ExecutorHeartbeat", "GpuSlotStatus",
+    "ProcessorSpec", "RtlSettings", "RtlDataMode", "ProcessorStatus", "ScoreType", "LanguageInfo",
 ).associateWith { "dev.gpucodeforces.judge.api.$it" } +
-    listOf("ExecutorView", "QueueView").associateWith { "dev.gpucodeforces.judge.gateway.service.$it" }
+    listOf("ExecutorView", "QueueView", "ProcessorView").associateWith { "dev.gpucodeforces.judge.gateway.service.$it" }
 
 val generateApi = tasks.named<GenerateTask>("openApiGenerate") {
     generatorName.set("spring")

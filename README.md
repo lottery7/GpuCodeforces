@@ -9,6 +9,7 @@ Multi-module Kotlin/Gradle project with a React frontend:
 | `frontend` | React application (npm, not part of the Gradle build), see [frontend/README.md](frontend/README.md) |
 
 Add future Gradle modules with `include(":module-name")` in `settings.gradle.kts`.
+UML diagrams of the architecture (in Russian) are in [docs/architecture.md](docs/architecture.md).
 
 ## Requirements
 
@@ -41,6 +42,13 @@ into `PROBLEMS_DIRECTORY`, pulls it every minute and imports `PROBLEMS_PATH`; wi
 is empty. The package format is described (in Russian) in
 [docs/backend/problem-package.md](docs/backend/problem-package.md).
 
+Supported formats are ordinary CUDA tasks, optimization of a supplied solution and guessing which of two
+solutions is faster. Duels match a random opponent or start after accepting an invitation; the shared task is selected by topic. Package metadata, participation
+and scoring are described in [docs/backend/formats.md](docs/backend/formats.md).
+Baseline and guessing variants are measured automatically by the judge. Hardware or test changes
+trigger fresh measurements; packages do not contain manually entered times. See
+[reference measurements](docs/backend/reference-measurements.md).
+
 ```sh
 PROBLEMS_GIT_URL=https://github.com/lottery7/GpuCodeforcesProblems.git PROBLEMS_DIRECTORY=build/problems   PROBLEMS_PATH=problems ./gradlew :backend:bootRun
 ```
@@ -64,10 +72,15 @@ Integration tests use a separate disposable database with random ports, independ
 of Docker Compose. Docker must be available; these tests fail rather than silently
 skip when it is unavailable. The executable jar is under `backend/build/libs/`.
 
+CI runs both backend test tasks ([backend.yml](.github/workflows/backend.yml)). `master` is protected:
+a pull request merges only after the `backend`, `frontend`, `tests` (judge) and `generated-java`
+(OpenAPI) checks pass. The required checks are listed by job name in the branch protection of the
+repository, so add a new CI job there too.
+
 ## Running the whole system
 
 ```sh
-docker compose --profile app --profile mock up -d --wait --build   # no GPU: mock executor
+JUDGE_MODE=mock docker compose --profile app --profile mock up -d --wait --build   # no GPU: mock executor
 docker compose --profile app --profile gpu up -d --wait --build    # real executor on an NVIDIA GPU
 ```
 
@@ -82,8 +95,11 @@ comment in the solution, see [Testing system](#testing-system).
 
 ## Testing system
 
-The judge accepts `.cu` submissions, compiles them, runs them on a GPU in an nsjail
-sandbox and reports verdicts asynchronously through RabbitMQ. Architecture, problem
+The judge accepts submissions for a processor in one of its languages: CUDA on a real
+NVIDIA GPU (`gpu-cuda`), or a processor in an emulator (`rtl`, `riscv-rvv`, `cuda-sim`,
+`coral-npu`). It compiles them, runs them in an nsjail sandbox and reports
+verdicts with a typed score (time, cycles, ...) asynchronously through RabbitMQ. The
+processors a deployment offers are listed in `JUDGE_PROCESSORS` (default `gpu-cuda`). Architecture, problem
 format, sandbox, verdicts and the backend contract are described (in Russian) in
 [judge/README.md](judge/README.md) and [judge/docs/problem-format.md](judge/docs/problem-format.md).
 
@@ -94,6 +110,8 @@ still starts only PostgreSQL:
 docker compose --profile judge up -d --wait          # RabbitMQ + judge gateway
 docker compose --profile mock up -d --wait --build   # + mock executor, no GPU needed
 docker compose --profile gpu up -d --wait --build    # + real executor on an NVIDIA GPU
+JUDGE_PROCESSORS=gpu-cuda,rtl docker compose --profile gpu --profile emu up -d --wait --build
+                                                     # + executor of the emulated processors (rtl), no GPU
 ```
 
 | Service | Address |
@@ -101,10 +119,11 @@ docker compose --profile gpu up -d --wait --build    # + real executor on an NVI
 | Gateway API, Swagger UI | <http://localhost:8090>, `/swagger-ui.html` |
 | RabbitMQ management UI | <http://localhost:15672> |
 | Executor actuator (`gpu` profile) | <http://localhost:8081/actuator/health> |
+| Emulator executor actuator (`emu` profile) | <http://localhost:8082/actuator/health> |
 
 The mock executor answers with the verdict requested in a source comment, for example
-`// judge-mock: verdict=WRONG_ANSWER test=2`, and `ACCEPTED` otherwise. Do not run it
-next to a real executor of the same GPU profile. Executors on other machines use
+`// judge-mock: verdict=WRONG_ANSWER test=2 score=3.5`, and `ACCEPTED` otherwise. Do not run it
+next to a real executor of the same processor. Executors on other machines use
 [judge/deploy/compose.executor.yaml](judge/deploy/compose.executor.yaml).
 
 Send a submission from the console (`--watch` needs `pip install pika`):
@@ -135,7 +154,8 @@ The React application is in [frontend](frontend/README.md).
 
 The contract is [docs/frontend/openapi.yaml](docs/frontend/openapi.yaml).
 It covers the MVP screens and actions, including example checks and retrying failed
-checks. Password recovery, private problems and GPU selection remain outside the MVP.
+checks, processors with per-processor ratings and contest processors. Password recovery
+and private problems remain outside the MVP.
 
 ```sh
 ./gradlew :backend:openApiValidate :backend:openApiGenerate

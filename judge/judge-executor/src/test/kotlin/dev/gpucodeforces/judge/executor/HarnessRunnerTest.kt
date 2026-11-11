@@ -7,6 +7,8 @@ import dev.gpucodeforces.judge.api.MemorySpace
 import dev.gpucodeforces.judge.api.ParamRole
 import dev.gpucodeforces.judge.api.ParamSpec
 import dev.gpucodeforces.judge.api.ProblemSpec
+import dev.gpucodeforces.judge.api.Score
+import dev.gpucodeforces.judge.api.ScoreType
 import dev.gpucodeforces.judge.api.Signature
 import dev.gpucodeforces.judge.api.SpecValidator
 import dev.gpucodeforces.judge.api.TimingSpec
@@ -14,12 +16,12 @@ import dev.gpucodeforces.judge.api.Verdict
 import dev.gpucodeforces.judge.executor.config.ExecutorProperties
 import dev.gpucodeforces.judge.executor.config.GpuSlotConfig
 import dev.gpucodeforces.judge.executor.config.RunConfig
-import dev.gpucodeforces.judge.executor.gpu.GpuSlot
+import dev.gpucodeforces.judge.executor.processor.gpucuda.GpuSlot
 import dev.gpucodeforces.judge.executor.problem.GeneratedTest
 import dev.gpucodeforces.judge.executor.problem.PreparedProblem
 import dev.gpucodeforces.judge.executor.problem.PreparedTest
-import dev.gpucodeforces.judge.executor.run.HarnessRunner
-import dev.gpucodeforces.judge.executor.run.RunOutcome
+import dev.gpucodeforces.judge.executor.processor.gpucuda.HarnessRunner
+import dev.gpucodeforces.judge.executor.processor.gpucuda.RunOutcome
 import dev.gpucodeforces.judge.executor.sandbox.DirectSandbox
 import dev.gpucodeforces.judge.executor.util.readBoundedLines
 import java.nio.ByteBuffer
@@ -69,7 +71,7 @@ class HarnessRunnerTest {
         Files.write(path, b.array())
     }
 
-    private fun prepared(): PreparedProblem {
+    private fun prepared(declared: List<GeneratedTest>): PreparedProblem {
         val dir = tmp.resolve("problem")
         val tests = declared.mapIndexed { i, t ->
             val idx = i + 1
@@ -134,18 +136,14 @@ class HarnessRunnerTest {
         return script
     }
 
-    private fun run(behaviour: String, lastBenchmark: Boolean = true): RunOutcome {
+    private fun run(behaviour: String, tests: List<GeneratedTest> = declared): RunOutcome {
         val runDir = Files.createDirectories(tmp.resolve("run"))
         val binary = fakeBinary(behaviour)
         Files.move(binary, runDir.resolve("solution.bin"))
         val progress = mutableListOf<Int>()
-        val prepared = prepared().let { data ->
-            data.copy(tests = data.tests.mapIndexed { i, test ->
-                if (i == data.tests.lastIndex) test.copy(spec = test.spec.copy(benchmark = lastBenchmark)) else test
-            })
-        }
         val outcome = HarnessRunner(props, DirectSandbox()).run(
-            problem, prepared, runDir.resolve("solution.bin"), runDir, GpuSlot(GpuSlotConfig(0)), { progress += it }, { false },
+            problem, prepared(tests), runDir.resolve("solution.bin"), runDir, GpuSlot(GpuSlotConfig(0)), problem.limits.timeLimitMs.toDouble(),
+            { progress += it }, { false },
         )
         if (outcome.verdict == Verdict.ACCEPTED) assertEquals(listOf(1, 2), progress)
         return outcome
@@ -156,7 +154,7 @@ class HarnessRunnerTest {
         val o = run("ok")
         assertEquals(Verdict.ACCEPTED, o.verdict, o.toString())
         assertEquals(2, o.tests.size)
-        assertEquals(1.234567, o.tests[0].timeMs!!, 1e-9)
+        assertEquals(Score(1.234567, ScoreType.TIME_MS), o.tests[0].score)
         assertEquals(false, o.needsHealthCheck)
     }
 
@@ -182,14 +180,15 @@ class HarnessRunnerTest {
         val o = run("ok,slow")
         assertEquals(Verdict.TIME_LIMIT_EXCEEDED, o.verdict)
         assertEquals(2, o.failedTest)
-        assertEquals(300.0, o.tests[1].timeMs!!, 1e-9)
+        assertEquals(300.0, o.tests[1].score!!.value, 1e-9)
     }
 
     @Test
-    fun `custom correctness test can exceed benchmark time within the safety wall limit`() {
-        val outcome = run("ok,slow", false)
-        assertEquals(Verdict.ACCEPTED, outcome.verdict)
-        assertEquals(2, outcome.tests.size)
+    fun `the time limit does not apply to a test that is not measured`() {
+        val o = run("ok,slow", declared.mapIndexed { i, t -> if (i == 1) t.copy(measure = false) else t })
+        assertEquals(Verdict.ACCEPTED, o.verdict, o.toString())
+        assertEquals(listOf(true, false), o.tests.map { it.measured })
+        assertEquals(300.0, o.tests[1].score!!.value, 1e-9)
     }
 
     @Test

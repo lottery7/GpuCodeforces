@@ -2,20 +2,23 @@ package dev.gpucodeforces.backend.submission
 
 import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.common.ForbiddenException
-import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.common.NotFoundApiException
 import dev.gpucodeforces.backend.common.toUuidOrNotFound
+import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
 import dev.gpucodeforces.backend.contest.ContestPhase
 import dev.gpucodeforces.backend.contest.ContestService
 import dev.gpucodeforces.backend.contest.ContestRepository
 import dev.gpucodeforces.backend.problem.ProblemCatalog
 import dev.gpucodeforces.backend.problem.ProblemContext
+import dev.gpucodeforces.backend.problem.ProblemEnvironments
+import dev.gpucodeforces.backend.problem.ProblemFormatData
 import dev.gpucodeforces.backend.problem.ProblemService
-import dev.gpucodeforces.backend.problem.environmentMarkdown
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.backend.user.UserRepository
 import dev.gpucodeforces.judge.api.JudgeEvent
+import dev.gpucodeforces.judge.api.JudgeResult
 import dev.gpucodeforces.judge.api.SpecValidator
+import dev.gpucodeforces.judge.api.Processors
 import dev.gpucodeforces.judge.api.SubmissionRequest
 import dev.gpucodeforces.judge.api.Verdict
 import org.slf4j.LoggerFactory
@@ -23,6 +26,7 @@ import org.slf4j.MDC
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
+import tools.jackson.databind.json.JsonMapper
 import java.math.BigDecimal
 import java.time.Duration
 import java.time.Instant
@@ -44,8 +48,10 @@ class SubmissionService(
     private val submissionStats: SubmissionStats,
     private val judgeGateway: JudgeGateway,
     private val judgeProperties: JudgeProperties,
-    private val gpuProperties: GpuProperties,
+    private val environments: ProblemEnvironments,
     private val transactionTemplate: TransactionTemplate,
+    private val jsonMapper: JsonMapper,
+    private val references: ReferenceMeasurements,
     private val contestRepository: ContestRepository,
     private val hacks: HackService,
     private val runs: JudgingRunRepository,
@@ -53,17 +59,26 @@ class SubmissionService(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    fun submit(problemId: String, contestId: String?, code: String, author: User, context: String? = null): Submission {
+    /**
+     * [context] is where the submission counts (`practice`, a contest, `upsolve:<contest>`, `virtual:<attempt>`);
+     * [contestId] is its older form for official participation.
+     */
+    fun submit(
+        problemId: String, contestId: String?, processor: String, language: String, code: String, author: User, context: String? = null,
+    ): Submission {
         val resolvedContext = submissionContext(context ?: contestId, author)
         val problem = problemService.problem(problemId, resolvedContext, author)
+        if (problem.version.format == ProblemFormatData.GUESS) throw BadRequestException("Выберите более быстрый код вместо отправки решения")
+        problemService.requireTarget(problem, processor, language)
         validateSource(code)
         val version = problem.version
         val contest = (problem.context as? ProblemContext.InContest)?.contest
-        val gpuProfile = contest?.gpuProfile ?: gpuProperties.profile
         if (contestId != null && contest?.id?.toString() != contestId) throw BadRequestException("Контест не соответствует контексту")
         val submission = transactionTemplate.execute {
+            // Under these locks the contest cannot be finalized and a virtual attempt cannot start meanwhile; the
+            // context is checked again at the moment the submission is taken.
             contest?.let { contestRepository.findForUpdate(it.id) }
-            users.lockForParticipation(author.id)
+            checkNotNull(users.findForUpdate(author.id)) { "User ${author.id} disappeared" }
             val acceptedAt = Instant.now()
             submissionContext(resolvedContext.key, author, acceptedAt)
             if (submissionRepository.countByUserIdAndStatusIn(author.id, SubmissionStatus.PENDING) >= judgeProperties.maxPendingPerUser) {
@@ -77,19 +92,23 @@ class SubmissionService(
                     problemVersionId = version.id,
                     contestId = contest?.id,
                     code = code,
-                    environmentMarkdown = environmentMarkdown(problemCatalog.spec(version), contest?.gpu ?: gpuProperties.name),
+                    environmentMarkdown = environments.markdown(problemCatalog.spec(version), version.judgeHash, processor),
                     judgeHash = version.judgeHash,
-                    gpuProfile = gpuProfile,
-                    previousBestTimeMs = submissionStats.bestTime(author.id, version.problemId, contest?.id, version.judgeHash, gpuProfile, resolvedContext.key),
-                    contextKey = resolvedContext.key,
+                    processor = processor,
+                    language = language,
+                    previousBestScore = submissionStats.bestScore(
+                        author.id, version.problemId, contest?.id, version.judgeHash, processor, benchmarkEnvironmentKey(processor),
+                        resolvedContext.key,
+                    ),
                     createdAt = acceptedAt,
+                    contextKey = resolvedContext.key,
                 ).also { it.testSuite = hacks.suite(contest?.id, version.problemId) },
             )
         }!!
         withSubmission(submission.id) {
             log.info(
-                "Submission created: problem={} version={} contest={} gpu={} code={} bytes",
-                submission.problemId, submission.problemVersionId, submission.contestId ?: "practice", submission.gpuProfile,
+                "Submission created: problem={} version={} contest={} processor={} language={} code={} bytes",
+                submission.problemId, submission.problemVersionId, submission.contestId ?: "practice", submission.processor, submission.language,
                 code.toByteArray().size,
             )
         }
@@ -99,13 +118,16 @@ class SubmissionService(
     fun get(id: String): Submission =
         submissionRepository.findById(id.toUuidOrNotFound("Посылка не найдена")).orElseThrow { NotFoundApiException("Посылка не найдена") }
 
-    /** Only after a judge failure: the same code, context, version and time are checked again. */
+    /**
+     * Only after a judge failure: the same code, context, version and time are checked again. Not for an official
+     * submission of a contest whose results are final.
+     */
     fun recheck(id: String, author: User): Submission {
         val initial = get(id)
         val submission = transactionTemplate.execute {
             initial.contestId?.let {
                 val contest = contestRepository.findForUpdate(it)!!
-                if (initial.contextKey == it.toString() && contest.finalizedAt != null) throw BadRequestException("Официальные результаты уже зафиксированы")
+                if (initial.official && contest.finalizedAt != null) throw BadRequestException("Официальные результаты уже зафиксированы")
             }
             val submission = submissionRepository.findForUpdate(initial.id)!!
             if (submission.userId != author.id) throw ForbiddenException("Повторить проверку может только автор посылки")
@@ -119,11 +141,16 @@ class SubmissionService(
         return send(submission)
     }
 
+    /** Back to the queue for another check; the result so far stays in the judging runs. */
     private fun reset(submission: Submission) {
         runs.save(JudgingRun(submission))
         submission.recheckCount++
         submission.status = SubmissionStatus.QUEUED
-        submission.timeMs = null
+        submission.score = null
+        submission.scoreType = null
+        submission.metrics = emptyMap()
+        submission.measurement = null
+        submission.benchmarkEnvironmentKey = null
         submission.passedTests = 0
         submission.totalTests = null
         submission.diagnostic = ""
@@ -143,8 +170,10 @@ class SubmissionService(
                 val current = contestRepository.findForUpdate(contest.id)!!
                 if (current.finalizedAt != null) return@executeWithoutResult
                 val budget = (2 - submissionRepository.countPendingRejudges(SubmissionStatus.PENDING)).coerceAtLeast(0).toInt()
+                // an answer to a guess ran no tests: there is nothing to judge again
                 submissionRepository.findByContestId(contest.id).filter {
-                    it.contextKey == contest.id.toString() && it.status == SubmissionStatus.ACCEPTED && it.testSuite != hacks.suite(contest.id, it.problemId)
+                    it.official && it.guessChoice == null && it.status == SubmissionStatus.ACCEPTED &&
+                        it.testSuite != hacks.suite(contest.id, it.problemId)
                 }.take(budget).forEach { candidate ->
                     val suite = hacks.suite(contest.id, candidate.problemId)
                     if (candidate.testSuite != suite) {
@@ -176,9 +205,9 @@ class SubmissionService(
             withSubmission(submission.id) {
                 log.warn(
                     "No news from the judge for {} min: status={} job={} lastEvent=a{}/#{} judgeId={}. Check the gateway " +
-                        "(GET /api/v1/queues: live executors of profile {}) and the executor log for this judge id",
+                        "(GET /api/v1/queues: live executors of processor {}) and the executor log for this judge id",
                     Duration.between(submission.updatedAt, Instant.now()).toMinutes(), submission.status.value, submission.jobId,
-                    submission.eventAttempt, submission.eventSeq, submission.judgeSubmissionId, submission.gpuProfile,
+                    submission.eventAttempt, submission.eventSeq, submission.judgeSubmissionId, submission.processor,
                 )
             }
         }
@@ -227,7 +256,8 @@ class SubmissionService(
             }
             event.progress?.let {
                 submission.totalTests = it.totalTests
-                submission.passedTests = it.currentTest - 1
+                // the judge reports test 0 of N before the first test starts
+                submission.passedTests = (it.currentTest - 1).coerceAtLeast(0)
             }
             if (previous != submission.status) {
                 log.info(
@@ -243,20 +273,60 @@ class SubmissionService(
         submission.status = result.verdict.toStatus()
         submission.passedTests = result.tests.count { it.verdict == Verdict.ACCEPTED }
         if (result.verdict == Verdict.ACCEPTED) {
-            submission.totalTests = result.tests.size
-            submission.timeMs = result.maxTimeMs?.let(BigDecimal::valueOf)
-                ?: error("Accepted result ${event.jobId} has no time")
+            val score = result.score ?: error("Accepted result ${event.jobId} has no score")
+            if (score.type != Processors.get(submission.processor).scoreType) {
+                error("Accepted result ${event.jobId} has a ${score.type} score, ${submission.processor} reports ${Processors.get(submission.processor).scoreType}")
+            }
+            val expectedTestCount = submission.totalTests
+            submission.totalTests = expectedTestCount ?: result.tests.size
+            submission.score = BigDecimal.valueOf(score.value)
+            submission.scoreType = score.type
+            submission.metrics = result.metrics
+            measure(submission, result, expectedTestCount)
+            // An accepted submission ran every test of its processor: the problem page can list them now. Not with
+            // custom tests of hacks: those belong to a contest, not to the problem.
+            if (submission.status == SubmissionStatus.ACCEPTED && submission.testSuite == TestSuite.BASE) {
+                environments.recordTests(submission.judgeHash, submission.processor, result.tests)
+            }
         }
-        submission.diagnostic = result.diagnostic()
+        if (submission.status != SubmissionStatus.MEASUREMENT_ERROR) submission.diagnostic = result.diagnostic()
         submission.finishedAt = event.timestamp
-        val format = "Verdict {} -> {}: passed {}/{} failedTest={} time={} ms, judged in {} ms on {}: {}"
+        val format = "Verdict {} -> {}: passed {}/{} failedTest={} score={}, judged in {} ms on {} ({}): {}"
         val args = arrayOf<Any?>(
             result.verdict, submission.status.value, submission.passedTests, submission.totalTests ?: "?", result.failedTest,
-            result.maxTimeMs, result.judgeTimeMs, result.gpu?.name ?: event.source, result.message,
+            result.score?.let { "${it.value} ${it.type}" }, result.judgeTimeMs, result.processor?.model ?: event.source,
+            result.processor?.executorId ?: event.source, result.message,
         )
         // A judge failure is not the contestant's fault: it has to stand out in the log.
         if (submission.status == SubmissionStatus.SYSTEM_ERROR) log.error(format, *args) else log.info(format, *args)
     }
+
+    /**
+     * The score under the problem's aggregation: the judge's maximum over the measured tests, or their geometric mean
+     * for the formats (docs/backend/formats.md). On the real GPU records count within the current reference environment.
+     */
+    private fun measure(submission: Submission, result: JudgeResult, expectedTestCount: Int?) {
+        val version = problemCatalog.versions(listOf(submission.problemVersionId)).getValue(submission.problemVersionId)
+        try {
+            val measurement = captureMeasurement(
+                result, problemCatalog.spec(version), problemCatalog.format(version).aggregation(), judgeProperties.synthetic, expectedTestCount,
+            )
+            submission.score = measurement.score
+            submission.measurement = jsonMapper.writeValueAsString(measurement.data)
+            submission.benchmarkEnvironmentKey = references.environmentKeyFor(result)
+        } catch (exception: InvalidMeasurementException) {
+            submission.status = SubmissionStatus.MEASUREMENT_ERROR
+            submission.score = null
+            submission.scoreType = null
+            submission.metrics = emptyMap()
+            submission.measurement = null
+            submission.diagnostic = exception.message!!
+        }
+    }
+
+    /** Results on the real GPU are compared within the current reference environment, the others within the processor. */
+    private fun benchmarkEnvironmentKey(processor: String): String? =
+        if (processor == Processors.GPU_CUDA) references.environmentKey(processor) ?: "unavailable" else null
 
     private fun send(submission: Submission): Submission = withSubmission(submission.id) {
         val request = SubmissionRequest(
@@ -264,7 +334,8 @@ class SubmissionService(
             problem = problemCatalog.spec(problemCatalog.versions(listOf(submission.problemVersionId)).getValue(submission.problemVersionId))
                 .copy(customTests = hacks.tests(submission.testSuite)),
             source = submission.code,
-            gpuProfile = submission.gpuProfile,
+            processor = submission.processor,
+            language = submission.language,
         )
         val outcome = judgeGateway.send(request)
         transactionTemplate.execute {
@@ -295,9 +366,11 @@ class SubmissionService(
         }!!
     }
 
-    private fun submissionContext(contestId: String?, author: User, now: Instant = Instant.now()): ProblemContext {
-        if (contestId == null || contestId == "practice") return ProblemContext.Practice
-        val context = problemService.context(contestId, author) as ProblemContext.InContest
+    /** The context [key] names, if [author] may send a solution to it now. */
+    fun submissionContext(key: String?, author: User): ProblemContext = submissionContext(key, author, Instant.now())
+
+    private fun submissionContext(key: String?, author: User, now: Instant): ProblemContext {
+        val context = problemService.context(key, author) as? ProblemContext.InContest ?: return ProblemContext.Practice
         val contest = context.contest
         if (context.virtual != null) {
             if (!context.virtual.activeAt(now)) throw BadRequestException("Время виртуального контеста истекло")

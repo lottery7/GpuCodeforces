@@ -25,7 +25,14 @@ class VirtualParticipation(
     @Column(name = "started_at") val startedAt: Instant,
     @Column(name = "ends_at") val endsAt: Instant,
 ) {
+    /** Context of the attempt's submissions, see [dev.gpucodeforces.backend.problem.ProblemContext]. */
+    val contextKey: String get() = "$CONTEXT_PREFIX$id"
+
     fun activeAt(now: Instant) = !now.isBefore(startedAt) && now.isBefore(endsAt)
+
+    companion object {
+        const val CONTEXT_PREFIX = "virtual:"
+    }
 }
 
 interface VirtualParticipationRepository : JpaRepository<VirtualParticipation, UUID> {
@@ -42,8 +49,9 @@ class VirtualParticipationService(
     @Transactional
     fun start(contestId: String, user: User): VirtualParticipation {
         // Serialize starts for this user, including requests handled by different backend instances.
-        users.lockForParticipation(user.id)
+        checkNotNull(users.findForUpdate(user.id)) { "User ${user.id} disappeared" }
         val contest = contests.get(contestId)
+        if (contest.format == "duel") throw BadRequestException("Дуэль нельзя пройти виртуально")
         if (contest.finalizedAt == null) throw BadRequestException("Дождитесь окончательных результатов контеста")
         val duration = Duration.between(contest.startAt, contest.endAt)
         if (duration.isNegative || duration.isZero) throw BadRequestException("У контеста неверная длительность")

@@ -26,6 +26,7 @@ class ProfileService(
                     contest.id.toString(),
                     contest.title,
                     GetUserProfile200ResponseContestsInner.PhaseEnum.fromValue(contest.phaseAt(now).value),
+                    history.processor,
                     history.rank,
                     history.ratingDelta,
                     history.ratingAfter,

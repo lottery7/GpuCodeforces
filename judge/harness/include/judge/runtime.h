@@ -67,7 +67,7 @@ struct ArraySpec {
 
 struct TestSpec {
     int index = 0;
-    bool benchmark = true;
+    bool measured = true;  // false: the time limit does not apply, only the wall limit
     std::vector<ArraySpec> arrays;
     std::vector<std::pair<int, std::string>> scalars;
 };
@@ -165,10 +165,10 @@ static Config parse_manifest(const char* path, int nparams) {
             cfg.tests.emplace_back();
             cur = &cfg.tests.back();
             cur->index = atoi(t[1].c_str());
-        } else if (k == "benchmark") {
+        } else if (k == "measure") {
             need(2);
-            if (!cur) fatal("manifest", "benchmark outside test");
-            cur->benchmark = (t[1] != "0");
+            if (!cur) fatal("manifest", "measure outside test");
+            cur->measured = (t[1] != "0");
         } else if (k == "array") {
             need(5);
             if (!cur) fatal("manifest", "array outside test");
@@ -543,7 +543,7 @@ static int run_harness(int argc, char** argv, const ParamDesc* params, int npara
         }
         long long med = median(metric), medWall = median(wall);
         status("test %d ok runs %d time_ns %lld wall_ns %lld", t.index, (int)metric.size(), med, medWall);
-        if ((t.benchmark && med > cfg.timeLimitNs) || medWall > cfg.wallLimitNs) _exit(0);
+        if ((t.measured && med > cfg.timeLimitNs) || medWall > cfg.wallLimitNs) _exit(0);
     }
     status("done");
     _exit(0);

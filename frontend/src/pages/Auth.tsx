@@ -47,7 +47,7 @@ export default function Auth({ mode }: { mode: 'login' | 'register' }) {
           <label className="field"><span>Почта</span><input name="email" type="email" required autoComplete="email" value={email} disabled={busy} onChange={event => setEmail(event.target.value)} /></label>
         </>}
         <label className="field"><span>Пароль</span><input name="password" type="password" required minLength={mode === 'register' ? 8 : undefined} autoComplete={mode === 'register' ? 'new-password' : 'current-password'} aria-describedby={mode === 'register' ? 'password-hint' : undefined} value={password} disabled={busy} onChange={event => setPassword(event.target.value)} />{mode === 'register' && <span id="password-hint" className="small muted">Не меньше 8 символов.</span>}</label>
-        <ErrorMessage error={error} />
+        <ErrorMessage error={error} reveal />
         <button className="btn primary" type="submit" disabled={busy}>{busy ? mode === 'register' ? 'Регистрация...' : 'Вход...' : mode === 'register' ? 'Зарегистрироваться' : 'Войти'}</button>
       </form>
     </div>

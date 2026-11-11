@@ -3,6 +3,9 @@ import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from
 import { useSession } from './auth';
 import { ErrorMessage, PageHeader } from './ui';
 import { userPath } from './utils';
+import Notifications from './components/Notifications';
+import RuntimeNotice from './components/RuntimeNotice';
+import './duels.css';
 const Problems = lazy(() => import('./pages/Problems'));
 const Problem = lazy(() => import('./pages/Problem'));
 const Submissions = lazy(() => import('./pages/Submissions'));
@@ -10,6 +13,7 @@ const Submission = lazy(() => import('./pages/Submission'));
 const Contests = lazy(() => import('./pages/Contests'));
 const Contest = lazy(() => import('./pages/Contest'));
 const ContestEditor = lazy(() => import('./pages/ContestEditor'));
+const Duels = lazy(() => import('./pages/Duels'));
 const Auth = lazy(() => import('./pages/Auth'));
 const Profile = lazy(() => import('./pages/Profile'));
 const Rating = lazy(() => import('./pages/Rating'));
@@ -55,7 +59,7 @@ export default function App() {
     finally { setLoggingOut(false); }
   }
   function links() {
-    return navigation.map(([to, title]) => <NavLink key={to} to={to} className={({ isActive }) => isActive || (to === '/contests' && location.pathname.startsWith('/contest/')) || (to === '/problems' && location.pathname.startsWith('/problem/')) || (to === '/submissions' && location.pathname.startsWith('/submission/')) ? 'active' : undefined}>{title}</NavLink>);
+    return navigation.map(([to, title]) => <NavLink key={to} to={to} className={({ isActive }) => isActive || (to === '/contests' && (location.pathname.startsWith('/contest/') || location.pathname.startsWith('/duels'))) || (to === '/problems' && location.pathname.startsWith('/problem/')) || (to === '/submissions' && location.pathname.startsWith('/submission/')) ? 'active' : undefined}>{title}</NavLink>);
   }
   function account() {
     if (session.isLoading) return <span className="muted" role="status">Загрузка...</span>;
@@ -67,12 +71,16 @@ export default function App() {
     <header className="site-header"><div className="header-inner">
       <Link className="brand" to="/problems">GPU Forces</Link>
       <nav className="main-nav" aria-label="Основная навигация">{links()}</nav>
+      <div className="header-notifications"><Notifications /></div>
       <div className="account">{account()}</div>
       <details ref={menu} className="mobile-nav"><summary>Меню</summary><nav aria-label="Мобильная навигация">{links()}{account()}</nav></details>
     </div></header>
     <main id="content" ref={main} tabIndex={-1} className="container">
+      <div className="global-feedback">
+      <RuntimeNotice />
       {Boolean(session.error) && <div className="session-error"><ErrorMessage error={session.error} /><button className="text-link" onClick={session.refresh}>Проверить соединение</button></div>}
-      <ErrorMessage error={logoutError} />
+      <ErrorMessage error={logoutError} reveal />
+      </div>
       <PageBoundary key={location.pathname}>
         <Suspense fallback={<div className="empty" role="status">Загрузка...</div>}>
         <Routes>
@@ -82,7 +90,9 @@ export default function App() {
           <Route path="/submissions" element={<Submissions />} />
           <Route path="/submission/:id" element={<Submission />} />
           <Route path="/contests" element={<Contests />} />
-          <Route path="/contests/new" element={<ContestEditor />} />
+          <Route path="/contests/new" element={new URLSearchParams(location.search).get('format') === 'duel' ? <Navigate to="/duels/new" replace /> : <ContestEditor />} />
+          <Route path="/duels" element={<Duels />} />
+          <Route path="/duels/new" element={<Duels />} />
           <Route path="/contest/:id" element={<Contest />} />
           <Route path="/contest/:id/edit" element={<ContestEditor />} />
           <Route path="/login" element={<Auth key="login" mode="login" />} />

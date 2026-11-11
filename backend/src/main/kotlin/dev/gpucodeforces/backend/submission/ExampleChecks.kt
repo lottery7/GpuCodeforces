@@ -1,10 +1,10 @@
 package dev.gpucodeforces.backend.submission
 
 import dev.gpucodeforces.backend.common.BadRequestException
-import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.common.ServiceUnavailableException
 import dev.gpucodeforces.backend.problem.ContextProblem
 import dev.gpucodeforces.backend.problem.ProblemCatalog
+import dev.gpucodeforces.backend.problem.ProblemFormatData
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.judge.api.JudgeResult
 import dev.gpucodeforces.judge.api.SubmissionRequest
@@ -30,17 +30,18 @@ class ExampleChecks(
     private val problemCatalog: ProblemCatalog,
     private val judgeGateway: JudgeGateway,
     private val judgeProperties: JudgeProperties,
-    private val gpuProperties: GpuProperties,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
     private val pending = ConcurrentHashMap<String, CompletableFuture<JudgeResult>>()
     private val runningUsers = ConcurrentHashMap.newKeySet<UUID>()
 
-    fun check(problem: ContextProblem, code: String, author: User): ExampleOutcome {
+    /** [processor] and [language] are checked by the caller (ProblemService.requireTarget). */
+    fun check(problem: ContextProblem, processor: String, language: String, code: String, author: User): ExampleOutcome {
+        if (problem.version.format == ProblemFormatData.GUESS) throw BadRequestException("Проверка примера недоступна для угадывания")
         SubmissionService.validateSource(code)
         if (!runningUsers.add(author.id)) throw BadRequestException("Дождитесь окончания предыдущей проверки примера")
         val judgeId = "$EXAMPLE_PREFIX${UUID.randomUUID()}"
-        log.info("Example check {} of {} for {}", judgeId, problem.version.problemId, author.handle)
+        log.info("Example check {} of {} on {} ({}) for {}", judgeId, problem.version.problemId, processor, language, author.handle)
         val verdict = CompletableFuture<JudgeResult>()
         pending[judgeId] = verdict
         try {
@@ -49,7 +50,8 @@ class ExampleChecks(
                 submissionId = judgeId,
                 problem = spec.copy(generator = spec.generator.copy(source = spec.generator.source + SAMPLES_ONLY)),
                 source = code,
-                gpuProfile = problem.context.gpuProfile(gpuProperties.profile),
+                processor = processor,
+                language = language,
             )
             when (val outcome = judgeGateway.send(request)) {
                 is SendOutcome.Accepted -> Unit
@@ -86,7 +88,11 @@ class ExampleChecks(
     companion object {
         private const val EXAMPLE_PREFIX = "example-"
 
-        /** Appended to the problem's generator: the judge then generates and runs only the sample tests. */
+        /**
+         * Appended to the problem's generator: the judge then generates and runs only the sample tests. They are all
+         * measured, so a processor whose samples the author left unmeasured still has the measured test the judge
+         * requires; samples are small, their scores stay far below the limit.
+         */
         @Language("Python")
         private val SAMPLES_ONLY = """
 
@@ -95,7 +101,7 @@ _platform_all_tests = tests
 
 
 def tests():
-    return [test for test in _platform_all_tests() if test.get("sample")]
+    return [{**test, "measure": True} for test in _platform_all_tests() if test.get("sample")]
 """
     }
 }

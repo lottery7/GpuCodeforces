@@ -13,6 +13,12 @@ These instructions apply to the whole repository. Read any module-specific
   for repetitive or structured transformations, and review the resulting diff.
 - Preserve unrelated local changes. Do not commit, push, or discard changes unless asked.
 
+## Documentation
+
+- Update the documentation in the same change as the code it describes: the READMEs,
+  `docs/` (including the diagrams in `docs/architecture.md`), `judge/docs/` and the
+  OpenAPI contracts. Do not leave it for a follow-up.
+
 ## Kotlin
 
 - Use imports rather than unnecessary fully qualified names in code. Resolve name

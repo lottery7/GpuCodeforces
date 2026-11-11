@@ -16,7 +16,7 @@ class ContestMapperTest {
             title = "Контест",
             startAt = startAt,
             endAt = endAt,
-            gpu = "NVIDIA GeForce RTX 4090",
+            processor = "gpu-cuda",
             authors = mutableSetOf(author),
         )
 

@@ -5,6 +5,7 @@ import dev.gpucodeforces.backend.api.model.ContestInput
 import dev.gpucodeforces.backend.api.model.GetProblem200Response
 import dev.gpucodeforces.backend.api.model.ListProblems200Response
 import dev.gpucodeforces.backend.api.model.RegisterUserRequest
+import dev.gpucodeforces.backend.api.model.ScoreType
 import dev.gpucodeforces.backend.api.model.User
 import dev.gpucodeforces.backend.contest.ContestProblemRepository
 import dev.gpucodeforces.backend.problem.ProblemPackageReader
@@ -38,6 +39,7 @@ import java.time.Instant
 import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
 import kotlin.io.path.ExperimentalPathApi
+import kotlin.io.path.copyTo
 import kotlin.io.path.copyToRecursively
 import kotlin.io.path.deleteRecursively
 import kotlin.io.path.readText
@@ -90,7 +92,7 @@ class ProblemIntegrationTest {
             .apply { if (cookie != null) cookie("session", cookie) }
             .exchange().expectStatus().isOk.expectBody(ListProblems200Response::class.java).returnResult().responseBody!!
 
-    private fun createContest(cookie: String, authorId: String, problemIds: Set<String>) =
+    private fun createContest(cookie: String, authorId: String, problemIds: Set<String>, processor: String = "gpu-cuda") =
         client.post().uri("/contests").contentType(MediaType.APPLICATION_JSON).cookie("session", cookie)
             .body(
                 ContestInput(
@@ -99,6 +101,7 @@ class ProblemIntegrationTest {
                     Instant.now().plus(2, ChronoUnit.DAYS).atOffset(ZoneOffset.UTC),
                     setOf(authorId),
                     problemIds,
+                    processor,
                 ),
             )
             .exchange()
@@ -126,19 +129,37 @@ class ProblemIntegrationTest {
         assertThat(firstByDifficulty.items.map { it.id }).containsExactly("vector_add")
         client.get().uri("/problems?sort=title").exchange().expectStatus().isBadRequest
 
+        // Processors: vector_add is on gpu-cuda and rtl here, matmul_host only on gpu-cuda.
+        assertThat(list("?processor=rtl").items.map { it.id }).containsExactly("vector_add")
+        assertThat(list().items.first { it.id == "vector_add" }.processors.map { it.id }).containsExactly("gpu-cuda", "rtl")
+        client.get().uri("/problems?processor=coral-npu").exchange().expectStatus().isBadRequest
+        client.get().uri("/problems?sort=bestScore").exchange().expectStatus().isBadRequest
+        assertThat(list("?sort=bestScore&processor=gpu-cuda").total).isEqualTo(2)
+
         val problem = client.get().uri("/problems/vector_add").exchange().expectStatus().isOk
             .expectBody(GetProblem200Response::class.java).returnResult().responseBody!!
         assertThat(problem.code).isEqualTo("1")
-        assertThat(problem.timeLimitSeconds).isEqualByComparingTo(BigDecimal("0.02"))
         assertThat(problem.memoryLimitMb).isEqualTo(256)
-        assertThat(problem.starterCode).contains("void solve(const float* A, const float* B, float* C, int N)")
-        assertThat(problem.environmentMarkdown).contains("NVIDIA GeForce RTX 3060")
         assertThat(problem.statementMarkdown).startsWith("Даны два вектора")
+        val (gpu, rtl) = problem.processorDetails
+        assertThat(gpu.id).isEqualTo("gpu-cuda")
+        assertThat(gpu.limit.value).isEqualByComparingTo(BigDecimal("20"))
+        assertThat(gpu.limit.type).isEqualTo(ScoreType.TIME_MS)
+        assertThat(gpu.starters.getValue("cuda")).contains("void solve(const float* A, const float* B, float* C, int N)")
+        assertThat(gpu.environmentMarkdown).contains("NVIDIA GeForce RTX 3060").contains("20 мс")
+        assertThat(rtl.limit.type).isEqualTo(ScoreType.CYCLES_X_DEPTH_X_TRANSISTORS)
+        assertThat(rtl.starters.getValue("systemverilog")).startsWith("module solve (")
+        assertThat(rtl.environmentMarkdown).contains("тактов × глубины × транзисторов").contains("список появится после первой принятой посылки")
 
         createContest(authorCookie, author.id, setOf("missing")).expectStatus().isBadRequest
         createContest(authorCookie, author.id, setOf("draft_task")).expectStatus().isBadRequest
+        // matmul_host cannot be solved on rtl, so a contest on rtl cannot take it.
+        createContest(authorCookie, author.id, setOf("vector_add", "matmul_host"), "rtl").expectStatus().isBadRequest
         val contest = createContest(authorCookie, author.id, linkedSetOf("matmul_host", "vector_add"))
             .expectStatus().isCreated.expectBody(Contest::class.java).returnResult().responseBody!!
+        // In a contest a problem shows the contest's processor only.
+        assertThat(list("?context=${contest.id}", authorCookie).items.flatMap { problem -> problem.processors.map { it.id } }.distinct())
+            .containsExactly("gpu-cuda")
         client.get().uri("/problems?context=${contest.id}").cookie("session", otherCookie).exchange().expectStatus().isForbidden
         assertThat(list("?context=${contest.id}", authorCookie).items.map { it.id }).containsExactly("matmul_host", "vector_add")
 
@@ -206,6 +227,7 @@ class ProblemIntegrationTest {
         @DynamicPropertySource
         fun problemDirectory(registry: DynamicPropertyRegistry) {
             listOf("vector_add", "matmul_host").forEach { examples.resolve(it).copyToRecursively(problems.resolve(it), followLinks = false) }
+            TestProblems.withRtl().resolve("vector_add/problem.json").copyTo(problems.resolve("vector_add/problem.json"), overwrite = true)
             val draft = examples.resolve("vector_add").copyToRecursively(problems.resolve("draft_task"), followLinks = false)
                 .resolve("statement.md")
             draft.writeText(
