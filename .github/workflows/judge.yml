@@ -34,8 +34,10 @@ jobs:
       OSS_CAD_SUITE_DATE: 2026-11-01
       OSS_CAD_SUITE_STAMP: '20261101'
       OSS_CAD_SUITE_SHA256: c61fb5b91c72ecb1f2a61b166d65fd387d5ad51b12476078e96ef8db1c6f37a3
-      QEMU_VERSION: 11.1.3
-      QEMU_SHA256: 5a8289c7940dc77d3873c81a6c29ba3afe1446fc9d36e77fa1658cdbecb84b22
+      # not QEMU_*: qemu-user reads QEMU_<option> from its environment, and the tests below run it with this one
+      # (QEMU_VERSION alone makes it print its version and exit 0 instead of running the guest)
+      RISCV_QEMU_VERSION: 11.1.3
+      RISCV_QEMU_SHA256: 5a8289c7940dc77d3873c81a6c29ba3afe1446fc9d36e77fa1658cdbecb84b22
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -56,10 +58,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends gcc-riscv64-linux-gnu g++-riscv64-linux-gnu libglib2.0-dev \
             meson ninja-build
-          curl -fsSL -o "$RUNNER_TEMP/qemu.tar.xz" "https://download.qemu.org/qemu-$QEMU_VERSION.tar.xz"
-          echo "$QEMU_SHA256  $RUNNER_TEMP/qemu.tar.xz" | sha256sum -c -
+          curl -fsSL -o "$RUNNER_TEMP/qemu.tar.xz" "https://download.qemu.org/qemu-$RISCV_QEMU_VERSION.tar.xz"
+          echo "$RISCV_QEMU_SHA256  $RUNNER_TEMP/qemu.tar.xz" | sha256sum -c -
           tar -xJf "$RUNNER_TEMP/qemu.tar.xz" -C "$RUNNER_TEMP"
-          mkdir "$RUNNER_TEMP/qemu-$QEMU_VERSION/build" && cd "$RUNNER_TEMP/qemu-$QEMU_VERSION/build"
+          mkdir "$RUNNER_TEMP/qemu-$RISCV_QEMU_VERSION/build" && cd "$RUNNER_TEMP/qemu-$RISCV_QEMU_VERSION/build"
           ../configure --target-list=riscv64-linux-user --enable-plugins --disable-system --disable-docs \
             --disable-werror --disable-tools --prefix="$RUNNER_TEMP/qemu"
           make -j"$(nproc)" && make install
