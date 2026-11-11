@@ -12,6 +12,7 @@ import dev.gpucodeforces.judge.gateway.api.model.ValidationResult
 import dev.gpucodeforces.judge.gateway.config.GatewayProperties
 import dev.gpucodeforces.judge.gateway.service.ExecutorRegistry
 import dev.gpucodeforces.judge.gateway.service.ExecutorView
+import dev.gpucodeforces.judge.gateway.service.ProcessorView
 import dev.gpucodeforces.judge.gateway.service.QueueView
 import dev.gpucodeforces.judge.gateway.service.SubmissionService
 import dev.gpucodeforces.judge.gateway.service.SubmissionInProgressException
@@ -55,6 +56,8 @@ class MonitoringController(private val registry: ExecutorRegistry) : MonitoringA
     override fun listExecutors(): ResponseEntity<List<ExecutorView>> = ResponseEntity.ok(registry.all())
 
     override fun listQueues(): ResponseEntity<List<QueueView>> = ResponseEntity.ok(registry.queues())
+
+    override fun listProcessors(): ResponseEntity<List<ProcessorView>> = ResponseEntity.ok(registry.processors())
 }
 
 @RestControllerAdvice

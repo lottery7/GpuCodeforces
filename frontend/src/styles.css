@@ -112,6 +112,8 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
 .toolbar .search { flex: 1 1 240px; min-width: 180px; }
 .toolbar > .search-input { flex: 1 1 240px; width: auto; min-width: 180px; }
 .toolbar select { flex: 0 1 auto; width: auto; min-width: 125px; max-width: 220px; font-size: 13px; }
+.field-inline { display: inline-flex; align-items: center; gap: 8px; }
+.target-picker select { max-width: 320px; }
 .toolbar input:not([type="checkbox"]) { min-height: 34px; }
 .toolbar .filter-reset { margin-left: auto; }
 .rating-search { flex-wrap: nowrap; }
@@ -187,6 +189,10 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
 .metrics { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 26px; margin-bottom: 20px; }
 .metrics > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
 .metrics strong { font-family: var(--mono); font-size: 17px; font-weight: 500; }
+.metric-list { display: flex; flex-wrap: wrap; gap: 6px 26px; margin: 0 0 14px; }
+.metric-list > div { display: flex; align-items: baseline; gap: 8px; }
+.metric-list dt { color: var(--muted); }
+.metric-list dd { margin: 0; }
 .contest-form { max-width: 760px; }
 .contest-builder { max-width: none; }
 .contest-settings { display: flex; flex-direction: column; gap: 14px; min-width: 0; }

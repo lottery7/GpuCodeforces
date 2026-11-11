@@ -5,12 +5,12 @@ import dev.gpucodeforces.backend.api.model.ListSubmissions200Response
 import dev.gpucodeforces.backend.api.model.SubmitSolutionRequest
 import dev.gpucodeforces.backend.auth.CurrentUser
 import dev.gpucodeforces.backend.common.BadRequestException
-import dev.gpucodeforces.backend.common.GpuProperties
 import dev.gpucodeforces.backend.common.UnauthorizedException
 import dev.gpucodeforces.backend.common.toUuidOrBadRequest
 import dev.gpucodeforces.backend.contest.ContestRepository
 import dev.gpucodeforces.backend.contest.ContestService
 import dev.gpucodeforces.backend.problem.ProblemCatalog
+import dev.gpucodeforces.backend.processor.scoreApiModel
 import dev.gpucodeforces.backend.user.User
 import dev.gpucodeforces.backend.user.UserRepository
 import dev.gpucodeforces.backend.user.UserService
@@ -19,6 +19,8 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.stereotype.Component
 import org.springframework.web.bind.annotation.RestController
+import dev.gpucodeforces.judge.api.Processors
+import java.math.BigDecimal
 import java.time.ZoneOffset
 import java.util.UUID
 import dev.gpucodeforces.backend.api.model.Submission as SubmissionApiModel
@@ -48,7 +50,7 @@ class SubmissionsController(
     // SecurityConfig requires a session for submitting and rechecking.
     override fun submitSolution(submitSolutionRequest: SubmitSolutionRequest): ResponseEntity<SubmissionApiModel> {
         val author = CurrentUser.resolve()!!
-        val submission = with(submitSolutionRequest) { submissionService.submit(problemId, contestId, code, author) }
+        val submission = with(submitSolutionRequest) { submissionService.submit(problemId, contestId, processor, language, code, author) }
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(views.detail(submission, author))
     }
 
@@ -73,7 +75,6 @@ class SubmissionViews(
     private val contestService: ContestService,
     private val contestRepository: ContestRepository,
     private val userRepository: UserRepository,
-    private val gpuProperties: GpuProperties,
 ) {
     fun summaries(rows: List<SubmissionRow>): List<SubmissionApiModel> {
         val versions = problemCatalog.versions(rows.map { it.problemVersionId }.toSet())
@@ -93,8 +94,12 @@ class SubmissionViews(
                 contest?.title,
                 row.createdAt.atOffset(ZoneOffset.UTC),
                 SubmissionApiModel.StatusEnum.fromValue(row.status.value),
-                row.timeMs,
-                row.status == SubmissionStatus.ACCEPTED && row.judgeHash == contextHash && row.gpuProfile == gpuProperties.profile,
+                row.processor,
+                row.language,
+                // The judge sets a score and its type together, and SubmissionService stores them so.
+                row.score?.let { scoreApiModel(it, row.scoreType!!) },
+                // Scores are compared within a processor, so the processor needs no check here.
+                row.status == SubmissionStatus.ACCEPTED && row.judgeHash == contextHash,
             )
         }
     }
@@ -104,7 +109,8 @@ class SubmissionViews(
         val summary = summaries(listOf(submission.toRow())).single()
             .passedTests(submission.passedTests)
             .totalTests(submission.totalTests)
-            .previousBestTimeMs(submission.previousBestTimeMs)
+            .previousBestScore(submission.previousBestScore?.let { scoreApiModel(it, Processors.get(submission.processor).scoreType) })
+            .metrics(submission.metrics.mapValues { BigDecimal.valueOf(it.value) })
             .environmentMarkdown(submission.environmentMarkdown)
         return if (viewer?.id == submission.userId) summary.code(submission.code).diagnostic(submission.diagnostic) else summary
     }

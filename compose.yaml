@@ -19,10 +19,12 @@ services:
   #   docker compose --profile judge up -d --wait   # RabbitMQ + judge gateway
   #   docker compose --profile gpu up -d --wait     # + judge executor (NVIDIA GPU + nvidia-container-toolkit)
   #   docker compose --profile mock up -d --wait    # + mock executor: no GPU, verdicts from `judge-mock` comments
-  # Executors on other machines (one per GPU type) use judge/deploy/compose.executor.yaml and connect to this broker:
-  # set RABBITMQ_BIND=0.0.0.0, real RABBITMQ_USER/RABBITMQ_PASSWORD, and list every type in JUDGE_GPU_PROFILES.
+  #   JUDGE_PROCESSORS=gpu-cuda,rtl,riscv-rvv docker compose --profile gpu --profile emu up -d --wait
+  #                                                 # + executor of the emulated processors, no GPU needed
+  # Executors on other machines use judge/deploy/compose.executor.yaml and connect to this broker: set
+  # RABBITMQ_BIND=0.0.0.0, real RABBITMQ_USER/RABBITMQ_PASSWORD, and list every processor in JUDGE_PROCESSORS.
   rabbitmq:
-    profiles: [judge, gpu, mock, app]
+    profiles: [judge, gpu, mock, emu, cuda-sim, app]
     image: rabbitmq:4.1.8-management@sha256:e1763bfb4a15f9646f9bad2fbae857f4499614577d1165450331189efdb6ea3b
     hostname: rabbitmq
     environment:
@@ -44,7 +46,7 @@ services:
       retries: 20
 
   judge-gateway:
-    profiles: [judge, gpu, mock, app]
+    profiles: [judge, gpu, mock, emu, cuda-sim, app]
     build:
       context: .
       dockerfile: judge/deploy/gateway.Dockerfile
@@ -52,9 +54,8 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
-      # every GPU type submissions may ask for (comma-separated); each needs an executor with that JUDGE_GPU_PROFILE
-      JUDGE_GPU_PROFILES: ${JUDGE_GPU_PROFILES:-rtx3060}
-      JUDGE_DEFAULT_GPU_PROFILE: ${JUDGE_DEFAULT_GPU_PROFILE:-rtx3060}
+      # every processor submissions may ask for (comma-separated ids, see judge/README.md); each needs an executor
+      JUDGE_PROCESSORS: ${JUDGE_PROCESSORS:-gpu-cuda}
       SPRING_PROFILES_ACTIVE: ${JUDGE_LOG_PROFILE:-default}
     ports:
       - "127.0.0.1:8090:8090" # API + /swagger-ui.html
@@ -79,7 +80,9 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
-      # the GPU type of this machine; the executor checks it against the card and takes only its submissions
+      # this image judges on the real GPU only
+      JUDGE_PROCESSORS: gpu-cuda
+      # the GPU type of this machine; the executor checks it against the card. Every gpu-cuda executor must have it
       JUDGE_GPU_PROFILE: ${JUDGE_GPU_PROFILE:-rtx3060}
       JUDGE_GPU_ARCH: ${JUDGE_GPU_ARCH:-sm_86}
       JUDGE_GPU_NAME: ${JUDGE_GPU_NAME:-NVIDIA GeForce RTX 3060}
@@ -105,9 +108,69 @@ services:
       rabbitmq:
         condition: service_healthy
 
-  # Integration tests without a GPU: takes the submissions of its GPU profile like a real executor and answers with
-  # the verdict asked for in the source (`// judge-mock: verdict=WRONG_ANSWER test=2`), ACCEPTED by default.
-  # Do not run it next to a real executor of the same profile: the two would share the queue.
+  # Emulated processors (judge/README.md "Processors"): rtl, riscv-rvv. No GPU; every simulation takes one core of
+  # its own (JUDGE_RTL_WORKERS of them at once). Its processors have to be in JUDGE_PROCESSORS of the gateway.
+  judge-executor-emu:
+    profiles: [emu]
+    build:
+      context: .
+      dockerfile: judge/deploy/executor-emu.Dockerfile
+    # nsjail, as for judge-executor
+    cap_add: [SYS_ADMIN]
+    security_opt: [seccomp=unconfined, apparmor=unconfined, systempaths=unconfined]
+    stop_grace_period: 6m
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      JUDGE_PROCESSORS: rtl,riscv-rvv
+      JUDGE_RTL_WORKERS: ${JUDGE_RTL_WORKERS:-2}
+      JUDGE_RISCV_WORKERS: ${JUDGE_RISCV_WORKERS:-2}
+      JUDGE_EXECUTOR_ID: ${JUDGE_EMU_EXECUTOR_ID:-emu-node-1}
+      JUDGE_WORK_DIR: /run/judge/work
+      SPRING_PROFILES_ACTIVE: ${JUDGE_LOG_PROFILE:-default}
+    tmpfs:
+      - /run/judge:exec,size=2g
+    volumes:
+      - judge-emu-data:/var/lib/judge # synthesized circuits and generated tests survive restarts
+    ports:
+      - "127.0.0.1:8082:8081" # actuator
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  # cuda-sim: CUDA on GPGPU-Sim (QV100), no GPU. Builds natively on amd64 and arm64.
+  #   JUDGE_PROCESSORS=gpu-cuda,cuda-sim docker compose --profile judge --profile cuda-sim up -d --wait --build
+  judge-executor-cuda-sim:
+    profiles: [cuda-sim]
+    build:
+      context: .
+      dockerfile: judge/deploy/executor-cuda-sim.Dockerfile
+    cap_add: [SYS_ADMIN]
+    security_opt: [seccomp=unconfined, apparmor=unconfined, systempaths=unconfined]
+    stop_grace_period: 6m
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      JUDGE_PROCESSORS: cuda-sim
+      JUDGE_CUDA_SIM_WORKERS: ${JUDGE_CUDA_SIM_WORKERS:-2}
+      JUDGE_EXECUTOR_ID: ${JUDGE_CUDA_SIM_EXECUTOR_ID:-cuda-sim-node-1}
+      JUDGE_WORK_DIR: /run/judge/work
+      SPRING_PROFILES_ACTIVE: ${JUDGE_LOG_PROFILE:-default}
+    tmpfs:
+      - /run/judge:exec,size=4g
+    volumes:
+      - judge-cuda-sim-data:/var/lib/judge
+    ports:
+      - "127.0.0.1:8083:8081" # actuator
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  # Integration tests without a GPU: takes the submissions of its processors like a real executor and answers with
+  # the verdict asked for in the source (`// judge-mock: verdict=WRONG_ANSWER test=2 score=3.5`), ACCEPTED by default.
+  # Do not run it next to a real executor of the same processor: the two would share the queue.
   judge-executor-mock:
     profiles: [mock]
     build:
@@ -117,7 +180,7 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
-      JUDGE_GPU_PROFILE: ${JUDGE_GPU_PROFILE:-rtx3060}
+      JUDGE_PROCESSORS: ${JUDGE_PROCESSORS:-gpu-cuda}
       JUDGE_EXECUTOR_ID: ${JUDGE_MOCK_EXECUTOR_ID:-mock-executor-1}
       SPRING_PROFILES_ACTIVE: mock
     depends_on:
@@ -138,7 +201,9 @@ services:
       RABBITMQ_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
       JUDGE_GATEWAY_URL: http://judge-gateway:8090
-      GPU_PROFILE: ${JUDGE_GPU_PROFILE:-rtx3060}
+      # processors offered on the platform; the same list as the gateway's
+      PROCESSORS: ${JUDGE_PROCESSORS:-gpu-cuda}
+      # the model shown for gpu-cuda
       GPU_NAME: ${JUDGE_GPU_NAME:-NVIDIA GeForce RTX 3060}
       # the problem bank follows the problem repository (cloned into the volume, pulled every minute)
       PROBLEMS_GIT_URL: ${PROBLEMS_GIT_URL:-https://github.com/lottery7/GpuCodeforcesProblems.git}
@@ -179,4 +244,6 @@ volumes:
   postgres-data:
   rabbitmq-data:
   judge-data:
+  judge-emu-data:
+  judge-cuda-sim-data:
   problems-repo:

@@ -3,7 +3,8 @@ import { Link, useSearchParams } from 'react-router';
 import { api } from '../api/client';
 import type { ProblemQuery } from '../api/types';
 import { useSession } from '../auth';
-import { Empty, PageHeader, Pagination, QueryState, SearchInput, TimeValue } from '../ui';
+import { useProcessors } from '../processors';
+import { Empty, PageHeader, Pagination, QueryState, ScoreValue, SearchInput } from '../ui';
 import { difficultyLabels, problemPath } from '../utils';
 
 const limit = 20;
@@ -15,6 +16,8 @@ export default function Problems() {
   const difficulty = params.get('difficulty') || '';
   const sort = params.get('sort') || 'code';
   const status = params.get('status') || '';
+  const processor = params.get('processor') || '';
+  const catalog = useProcessors();
   const offset = Math.max(0, Number.parseInt(params.get('offset') || '0', 10) || 0);
   const query: ProblemQuery = {
     context: 'practice',
@@ -22,7 +25,9 @@ export default function Problems() {
     difficulty: difficulty === 'easy' || difficulty === 'medium' || difficulty === 'hard' ? difficulty : undefined,
     tag: params.get('tag') || undefined,
     solved: status === 'solved' ? true : status === 'unsolved' ? false : undefined,
-    sort: sort === 'difficulty' || sort === 'bestTime' ? sort : 'code',
+    processor: processor || undefined,
+    // the best score is the best on a processor: without one the list cannot be sorted by it
+    sort: sort === 'difficulty' || sort === 'bestScore' && processor ? sort : 'code',
     userId: target,
     offset,
     limit,
@@ -39,11 +44,20 @@ export default function Problems() {
     setParams(next, { replace: true });
   }
   const personal = Boolean(user || target);
-  const hasFilters = Boolean(params.get('q') || difficulty || params.get('tag') || status);
+  const hasFilters = Boolean(params.get('q') || difficulty || params.get('tag') || status || processor);
+  const scores = Boolean(processor);
   return <>
     <PageHeader title={target ? 'Задачи участника' : 'Задачи'} />
     <div className="toolbar">
       <SearchInput value={params.get('q') || ''} onChange={value => patch({ q: value })} placeholder="Название или номер задачи" label="Найти задачу" />
+      <select aria-label="Процессор" value={processor} onChange={event => {
+        const value = event.target.value;
+        // the best score needs a processor: without one the list goes back to the default order
+        patch({ processor: value, sort: !value && sort === 'bestScore' ? undefined : params.get('sort') || undefined });
+      }}>
+        <option value="">Все процессоры</option>
+        {catalog.processors.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
+      </select>
       <select aria-label="Сложность" value={difficulty} onChange={event => patch({ difficulty: event.target.value })}>
         <option value="">Сложность</option>
         {Object.entries(difficultyLabels).map(([value, title]) => <option key={value} value={value}>{title}</option>)}
@@ -61,13 +75,17 @@ export default function Problems() {
       {problems.data && <>{problems.data.items.length ?
         <div className="panel table-wrap">
           <table className={`data-table problem-table${personal ? '' : ' guest'}`} aria-label="Банк задач">
-            <thead><tr><th aria-label="Решена" /><th><button className="text-link" onClick={() => patch({ sort: 'code' })}>Задача</button></th><th><button className="text-link" onClick={() => patch({ sort: 'difficulty' })}>Сложность</button></th><th>Решили</th>{personal && <th><button className="text-link" onClick={() => patch({ sort: 'bestTime' })}>Личный рекорд, мс</button></th>}</tr></thead>
-            <tbody>{problems.data.items.map(problem => <tr key={problem.id}>
-              <td>{problem.solved && <span className="accepted" aria-label="Решена">✓</span>}</td>
-              <td><Link className="task-link" to={problemPath(problem.id)}>{problem.code}. {problem.title}</Link><div className="subline">{problem.tags.map((tag, index) => <span key={tag}>{index > 0 && ' / '}<button className="text-link tag" onClick={() => patch({ tag })}>{tag}</button></span>)}</div></td>
-              <td>{difficultyLabels[problem.difficulty]}</td><td>{problem.solvedCount}</td>
-              {personal && <td className="mono">{problem.bestSubmissionId ? <Link to={`/submission/${encodeURIComponent(problem.bestSubmissionId)}`}><TimeValue value={problem.bestTimeMs} /></Link> : <TimeValue value={problem.bestTimeMs} />}</td>}
-            </tr>)}</tbody>
+            <thead><tr><th aria-label="Решена" /><th><button className="text-link" onClick={() => patch({ sort: 'code' })}>Задача</button></th><th><button className="text-link" onClick={() => patch({ sort: 'difficulty' })}>Сложность</button></th><th>Решили</th>{scores && <th>Рекорд</th>}{scores && personal && <th><button className="text-link" onClick={() => patch({ sort: 'bestScore' })}>Личный рекорд</button></th>}</tr></thead>
+            <tbody>{problems.data.items.map(problem => {
+              const onProcessor = problem.processors.find(item => item.id === processor);
+              return <tr key={problem.id}>
+                <td>{problem.solved && <span className="accepted" aria-label="Решена">✓</span>}</td>
+                <td><Link className="task-link" to={problemPath(problem.id, 'practice', undefined, onProcessor ? { processor: onProcessor.id, language: onProcessor.languages[0] ?? '' } : undefined)}>{problem.code}. {problem.title}</Link><div className="subline">{problem.tags.map((tag, index) => <span key={tag}>{index > 0 && ' / '}<button className="text-link tag" onClick={() => patch({ tag })}>{tag}</button></span>)}{!processor && problem.processors.length > 0 && <span className="muted"> · {problem.processors.map(item => catalog.title(item.id)).join(', ')}</span>}</div></td>
+                <td>{difficultyLabels[problem.difficulty]}</td><td>{problem.solvedCount}</td>
+                {scores && <td><ScoreValue score={onProcessor?.recordScore} /></td>}
+                {scores && personal && <td className="mono">{onProcessor?.bestSubmissionId ? <Link to={`/submission/${encodeURIComponent(onProcessor.bestSubmissionId)}`}><ScoreValue score={onProcessor.bestScore} /></Link> : <ScoreValue score={onProcessor?.bestScore} />}</td>}
+              </tr>;
+            })}</tbody>
           </table>
         </div> : <Empty>{hasFilters ? 'Задачи не найдены. Измените запрос или сбросьте фильтры.' : 'В банке пока нет задач.'}</Empty>}
         <Pagination total={problems.data.total} offset={offset} limit={limit} onChange={value => { const next = new URLSearchParams(params); value ? next.set('offset', String(value)) : next.delete('offset'); setParams(next); }} />

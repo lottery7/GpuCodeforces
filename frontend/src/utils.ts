@@ -2,9 +2,9 @@ import type { Contest } from './api/types';
 
 export const pendingStatuses = new Set(['queued', 'compiling', 'checking', 'measuring']);
 export const statusLabels: Record<string, string> = {
-  queued: 'В очереди', compiling: 'Компиляция', checking: 'Проверка', measuring: 'Замер времени',
+  queued: 'В очереди', compiling: 'Компиляция', checking: 'Проверка', measuring: 'Замер',
   accepted: 'Принято', compile_error: 'Ошибка компиляции', wrong_answer: 'Неверный ответ',
-  runtime_error: 'Ошибка выполнения', time_limit: 'Превышено время', memory_limit: 'Превышена память',
+  runtime_error: 'Ошибка выполнения', time_limit: 'Превышен лимит', memory_limit: 'Превышена память',
   system_error: 'Ошибка системы', measurement_error: 'Замер недоступен',
 };
 export const difficultyLabels: Record<string, string> = { easy: 'Легкая', medium: 'Средняя', hard: 'Сложная' };
@@ -15,8 +15,14 @@ export function queryParams(values: Record<string, string | number | boolean | n
   Object.entries(values).forEach(([key, value]) => { if (value !== undefined && value !== null && value !== '') params.set(key, String(value)); });
   return params.toString();
 }
-export function problemPath(id: string, context = 'practice', tab?: string) {
-  const query = queryParams({ contest: context === 'practice' ? undefined : context, tab: tab && tab !== 'statement' ? tab : undefined });
+/** [target] keeps the processor and language chosen on the problem page. */
+export function problemPath(id: string, context = 'practice', tab?: string, target?: { processor: string; language: string }) {
+  const query = queryParams({
+    contest: context === 'practice' ? undefined : context,
+    tab: tab && tab !== 'statement' ? tab : undefined,
+    processor: target?.processor,
+    language: target?.language,
+  });
   return `/problem/${encodeURIComponent(id)}${query ? '?' + query : ''}`;
 }
 export const contextFromSearch = (params: URLSearchParams) => params.get('contest') || 'practice';

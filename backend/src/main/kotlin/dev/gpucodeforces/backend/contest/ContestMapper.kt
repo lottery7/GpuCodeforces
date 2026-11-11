@@ -29,7 +29,7 @@ fun Contest.toApiModel(
         visibleProblemIds,
         problems.size,
         registered,
-        gpu,
+        processor,
     ).rulesMarkdown(rulesMarkdown)
 }
 

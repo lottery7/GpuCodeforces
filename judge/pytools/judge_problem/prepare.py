@@ -1,12 +1,15 @@
 """Generates the tests of one problem version: the list from the module's tests(), their inputs and reference outputs.
 
-    python -m judge_problem.prepare --spec spec.json --source problem.py --out DIR
+    python -m judge_problem.prepare --spec spec.json --source problem.py --out DIR [--processor ID]
 
-spec.json is {"signature": ..., "limits": {"maxTests": ..., "maxTestBytes": ...}} (limits are optional).
+spec.json is {"signature": ..., "processors": [...], "limits": {"maxTests": ..., "maxTestBytes": ...}}; processors
+(ids, or the ProcessorSpec objects of problem.json) default to gpu-cuda, limits are optional. problem.json itself
+will do. With --processor only the tests that run on that processor are generated, numbered from 1 in order;
+every test is still checked, and every processor of the problem must have a measured test.
 Writes raw little-endian arrays:
     DIR/inputs/t<i>/<param>.bin     INPUT and INOUT params   (mounted read-only into the sandbox)
     DIR/expected/t<i>/<param>.bin   OUTPUT and INOUT params  (only the checker reads these)
-    DIR/tests.json                  [{name, sample, scalars}] in order, what the judge needs to run them
+    DIR/tests.json                  [{name, sample, scalars, measure, processors}] in order, what the judge needs
     DIR/meta.json                   timings and versions, informational
 Exit code 0 on success; on failure a traceback is printed to stderr and the exit code is 2.
 """
@@ -25,7 +28,7 @@ import traceback
 from pathlib import Path
 from typing import Dict
 
-from .spec import DTYPES, Param, Test, parse_params, parse_test
+from .spec import DTYPES, Param, Test, check_coverage, declared_processors, parse_params, parse_test
 
 # Must be set before CUDA is initialised for deterministic cuBLAS.
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
@@ -108,7 +111,7 @@ def as_tensors(what: str, test: Test, arrays: Dict[str, object], params: list[Pa
     return check_arrays(what, test, out, params)
 
 
-def declared_tests(module, params: list[Param], max_tests: int, max_test_bytes: int):
+def declared_tests(module, params: list[Param], max_tests: int, max_test_bytes: int, processors: list[str]):
     """Yields the module's tests one by one, so tests() may build hand-written tensors lazily."""
     # tests() runs once per executor, and two executors must agree on the list: no unseeded randomness
     random.seed(0)
@@ -118,7 +121,7 @@ def declared_tests(module, params: list[Param], max_tests: int, max_test_bytes: 
         if index > max_tests:
             raise ProblemError(f"tests() declares more than {max_tests} tests")
         try:
-            test = parse_test(index, raw, params, max_test_bytes)
+            test = parse_test(index, raw, params, max_test_bytes, processors)
         except (ValueError, ZeroDivisionError) as e:
             raise ProblemError(str(e)) from None
         if test.name in names:
@@ -136,20 +139,32 @@ def write_array(path: Path, t: torch.Tensor) -> int:
     return int(data.nbytes)
 
 
-def prepare(spec: dict, source: Path, out: Path, device: str) -> dict:
+def prepare(spec: dict, source: Path, out: Path, device: str, processor: str | None = None) -> dict:
     params = parse_params(spec["signature"])
+    processors = declared_processors(spec)
+    if processor is not None and processor not in processors:
+        raise ProblemError(f"processor {processor} is not one the problem declares: {', '.join(processors)}")
     limits = spec.get("limits") or {}
     inputs_p = [p for p in params if p.is_array and p.is_input]
     outputs_p = [p for p in params if p.is_array and p.is_output]
     module = load_module(source)
     generate = getattr(module, "generate", None)
 
-    meta = {"tests": [], "torch": torch.__version__, "device": device, "cuda": torch.version.cuda}
+    meta = {"tests": [], "torch": torch.__version__, "device": device, "cuda": torch.version.cuda, "processor": processor}
     declared = []
+    seen: list[Test] = []
     started = time.monotonic()
     with reference_context():
-        tests = declared_tests(module, params, int(limits.get("maxTests", 200)), int(limits.get("maxTestBytes", 4 << 30)))
+        tests = declared_tests(
+            module, params, int(limits.get("maxTests", 200)), int(limits.get("maxTestBytes", 4 << 30)), processors,
+        )
         for test in tests:
+            seen.append(test)
+            if processor is not None and not test.runs_on(processor):
+                test.inputs = test.expected = None
+                continue
+            # numbered among the generated tests: that is how the judge finds their files
+            n = len(declared) + 1
             t0 = time.monotonic()
             if test.inputs is not None:
                 inputs = as_tensors("inputs", test, test.inputs, inputs_p, device)
@@ -160,9 +175,9 @@ def prepare(spec: dict, source: Path, out: Path, device: str) -> dict:
                 gen.manual_seed(test.seed)
                 inputs = check_arrays("generate", test, generate(test, gen, device), inputs_p)
 
-            entry = {"index": test.index, "name": test.name, "inputs": {}, "expected": {}}
+            entry = {"index": n, "declared": test.index, "name": test.name, "inputs": {}, "expected": {}}
             for p in inputs_p:
-                entry["inputs"][p.name] = write_array(out / "inputs" / f"t{test.index}" / f"{p.name}.bin", inputs[p.name])
+                entry["inputs"][p.name] = write_array(out / "inputs" / f"t{n}" / f"{p.name}.bin", inputs[p.name])
 
             if test.expected is not None:
                 # the answer was written by hand (an example from the statement): the reference has no say
@@ -172,13 +187,17 @@ def prepare(spec: dict, source: Path, out: Path, device: str) -> dict:
                 ref_out = module.reference(test, {k: v.clone() for k, v in inputs.items()})
                 ref_out = check_arrays("reference", test, ref_out, outputs_p)
             for p in outputs_p:
-                entry["expected"][p.name] = write_array(out / "expected" / f"t{test.index}" / f"{p.name}.bin", ref_out[p.name])
+                entry["expected"][p.name] = write_array(out / "expected" / f"t{n}" / f"{p.name}.bin", ref_out[p.name])
             entry["seconds"] = round(time.monotonic() - t0, 3)
             meta["tests"].append(entry)
             declared.append(test.describe())
             print(f"test {test.index} '{test.name}' prepared in {entry['seconds']}s", file=sys.stderr, flush=True)
             del inputs, ref_out
             test.inputs = test.expected = None
+    try:
+        check_coverage(seen, processors)
+    except ValueError as e:
+        raise ProblemError(str(e)) from None
     meta["seconds"] = round(time.monotonic() - started, 3)
     (out / "tests.json").write_text(json.dumps(declared, indent=1))
     (out / "meta.json").write_text(json.dumps(meta, indent=1))
@@ -191,6 +210,7 @@ def main(argv=None) -> int:
     ap.add_argument("--source", required=True, type=Path)
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--device", default="auto", help="cuda, cpu or auto")
+    ap.add_argument("--processor", help="generate only the tests of this processor")
     args = ap.parse_args(argv)
     device = args.device
     if device == "auto":
@@ -198,7 +218,7 @@ def main(argv=None) -> int:
     try:
         spec = json.loads(args.spec.read_text())
         args.out.mkdir(parents=True, exist_ok=True)
-        prepare(spec, args.source, args.out, device)
+        prepare(spec, args.source, args.out, device, args.processor)
         return 0
     except ProblemError as e:
         print(f"problem error: {e}", file=sys.stderr)

@@ -37,7 +37,13 @@ data class SandboxSpec(
     val maxFileBytes: Long = 1L shl 30,
     /** Size of the private /tmp. */
     val tmpBytes: Long = 256L shl 20,
-)
+    /** `PATH` inside the sandbox; a processor whose tools live elsewhere (CUDA) adds their directories. */
+    val path: List<String> = DEFAULT_PATH,
+) {
+    companion object {
+        val DEFAULT_PATH = listOf("/usr/local/bin", "/usr/bin", "/bin")
+    }
+}
 
 interface Sandbox {
     val name: String

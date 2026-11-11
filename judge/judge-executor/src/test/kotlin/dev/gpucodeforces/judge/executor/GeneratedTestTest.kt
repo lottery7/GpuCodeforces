@@ -22,7 +22,9 @@ class GeneratedTestTest {
     )
     private val limits = SpecValidator.Limits()
 
-    private fun errors(vararg tests: GeneratedTest) = GeneratedTest.validate(sig, tests.toList(), limits)
+    private val declared = listOf("gpu-cuda", "rtl")
+
+    private fun errors(vararg tests: GeneratedTest) = GeneratedTest.validate(sig, tests.toList(), limits, declared, "gpu-cuda")
 
     @Test
     fun `declared tests with all scalars are valid`() {
@@ -53,11 +55,11 @@ class GeneratedTestTest {
 
     @Test
     fun `the list is bounded and names are unique`() {
-        assertEquals(listOf("the generator declares no tests"), errors())
+        assertEquals(listOf("the generator declares no tests for processor gpu-cuda"), errors())
         val ok = mapOf("N" to 1, "alpha" to 1)
         assertTrue(errors(GeneratedTest("a", scalars = ok), GeneratedTest("a", scalars = ok)).any { "duplicate test name" in it })
         assertTrue(errors(GeneratedTest(" ", scalars = ok)).any { "name is empty" in it })
-        val many = GeneratedTest.validate(sig, List(limits.maxTests + 1) { GeneratedTest("t$it", scalars = ok) }, limits)
+        val many = GeneratedTest.validate(sig, List(limits.maxTests + 1) { GeneratedTest("t$it", scalars = ok) }, limits, declared, "gpu-cuda")
         assertEquals(listOf("too many tests: ${limits.maxTests + 1} > ${limits.maxTests}"), many)
     }
 
@@ -65,5 +67,16 @@ class GeneratedTestTest {
     fun `test data size is limited`() {
         val big = GeneratedTest("huge", scalars = mapOf("N" to Int.MAX_VALUE, "alpha" to 1))
         assertTrue(errors(big).any { "'huge'" in it && "limit" in it })
+    }
+
+    @Test
+    fun `tests name processors of the problem and one of them is measured`() {
+        val ok = mapOf("N" to 1, "alpha" to 1)
+        assertEquals(emptyList(), errors(GeneratedTest("big", scalars = ok, processors = listOf("gpu-cuda")), GeneratedTest("one", scalars = ok, measure = false)))
+        val unmeasured = errors(GeneratedTest("one", scalars = ok, measure = false))
+        assertTrue(unmeasured.single().startsWith("processor gpu-cuda has no measured test"), unmeasured.toString())
+        val foreign = errors(GeneratedTest("small", scalars = ok, processors = listOf("gpu", "rtl")))
+        assertTrue(foreign.any { "'small': unknown processor \"gpu\"; the problem declares gpu-cuda, rtl" in it }, foreign.toString())
+        assertTrue(foreign.any { "'small': does not run on processor gpu-cuda" in it }, foreign.toString())
     }
 }

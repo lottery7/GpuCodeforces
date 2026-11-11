@@ -3,12 +3,13 @@ info:
   title: GPU Codeforces Frontend API
   version: 0.1.0
   description: |
-    Предлагаемый контракт MVP. Все даты в UTC, время GPU в миллисекундах.
+    Предлагаемый контракт MVP. Все даты в UTC. Посылка проверяется на процессоре (реальная GPU или эмулятор) и
+    получает score с типом (Score): меньше - лучше, сравнимы только score одного процессора.
     Только публичные задачи; подготовка задач и API воркера находятся вне этого контракта.
     Сессия в HttpOnly cookie с Secure и SameSite=Lax. Запросы с телом используют
     application/json; для изменяющих запросов сервер проверяет Origin. Фронт и API на одном origin.
     GET /submissions/{id} опрашивается, пока статус queued, compiling, checking или measuring.
-    Рекорды и места считает сервер по принятым решениям в одной конфигурации проверки.
+    Рекорды и места считает сервер по принятым решениям в одной конфигурации проверки и на одном процессоре.
     Практика и каждый контест имеют отдельные рекорды и результаты.
     Ошибки имеют вид {message}: 400 - неверный запрос, 401 - нужен вход,
     403 - нет доступа, 404 - не найдено, 500 - сбой.
@@ -55,14 +56,31 @@ paths:
       responses:
         '204': {description: Сессия завершена; cookie удалена}
         default: {$ref: '#/components/responses/Error'}
+  /processors:
+    get:
+      operationId: listProcessors
+      summary: Процессоры платформы
+      description: Включённые на платформе процессоры из каталога судьи, в порядке каталога.
+      responses:
+        '200':
+          description: Процессоры
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/Processor'}
+        default: {$ref: '#/components/responses/Error'}
   /users:
     get:
       operationId: listUsers
       summary: Поиск авторов или рейтинг участников
-      description: sort=rating возвращает только участников с рейтингом и их места до фильтрации по q.
+      description: |
+        sort=rating возвращает только участников с рейтингом на процессоре processor (обязателен при sort=rating)
+        и их места на нём до фильтрации по q.
       parameters:
         - {$ref: '#/components/parameters/Query'}
         - {name: sort, in: query, schema: {type: string, enum: [handle, rating], default: handle}}
+        - {name: processor, in: query, description: Процессор рейтинга; обязателен при sort=rating., schema: {type: string}}
         - {$ref: '#/components/parameters/Offset'}
         - {$ref: '#/components/parameters/Limit'}
       responses:
@@ -119,11 +137,12 @@ paths:
                     type: array
                     items:
                       type: object
-                      required: [id, title, phase, rank, ratingDelta, ratingAfter]
+                      required: [id, title, phase, processor, rank, ratingDelta, ratingAfter]
                       properties:
                         id: {type: string}
                         title: {type: string}
                         phase: {type: string, enum: [upcoming, live, finished]}
+                        processor: {type: string, description: Процессор контеста; рейтинг этого процессора изменился.}
                         rank: {type: integer, nullable: true}
                         ratingDelta: {type: integer, nullable: true}
                         ratingAfter: {type: integer, nullable: true}
@@ -132,20 +151,24 @@ paths:
     get:
       operationId: listProblems
       summary: Банк задач или задачи контеста с личными результатами
-      description: В контексте контеста возвращает его версии задач и порядок problemIds; sort действует только в практике. До начала задачи доступны только авторам.
+      description: |
+        В контексте контеста возвращает его версии задач и порядок problemIds; sort действует только в практике.
+        До начала задачи доступны только авторам. processor оставляет задачи, которые можно сдавать на нём;
+        sort=bestScore требует processor.
       parameters:
         - {$ref: '#/components/parameters/Context'}
         - {$ref: '#/components/parameters/Query'}
         - {name: difficulty, in: query, schema: {type: string, enum: [easy, medium, hard]}}
         - {name: tag, in: query, schema: {type: string}}
         - {name: solved, in: query, schema: {type: boolean}}
-        - {name: sort, in: query, schema: {type: string, enum: [code, difficulty, bestTime], default: code}}
+        - {name: processor, in: query, description: Только задачи этого процессора., schema: {type: string}}
+        - {name: sort, in: query, schema: {type: string, enum: [code, difficulty, bestScore], default: code}}
         - {name: userId, in: query, description: Чьи результаты показать; по умолчанию текущего пользователя., schema: {type: string}}
         - {$ref: '#/components/parameters/Offset'}
         - {$ref: '#/components/parameters/Limit'}
       responses:
         '200':
-          description: Сортировка по возрастанию; без времени задачи идут последними. tags содержит темы доступного пула до фильтрации.
+          description: Сортировка по возрастанию; без score задачи идут последними. tags содержит темы доступного пула до фильтрации.
           content:
             application/json:
               schema:
@@ -173,13 +196,14 @@ paths:
                 allOf:
                   - {$ref: '#/components/schemas/Problem'}
                   - type: object
-                    required: [statementMarkdown, starterCode, timeLimitSeconds, memoryLimitMb, environmentMarkdown]
+                    required: [statementMarkdown, memoryLimitMb, processorDetails]
                     properties:
                       statementMarkdown: {type: string, description: 'Условие с сигнатурой, примерами, ограничениями входа и допусками.'}
-                      starterCode: {type: string}
-                      timeLimitSeconds: {type: number}
                       memoryLimitMb: {type: integer}
-                      environmentMarkdown: {type: string, description: Оборудование и методика замера.}
+                      processorDetails:
+                        type: array
+                        description: По каждому процессору из processors, в том же порядке.
+                        items: {$ref: '#/components/schemas/ProblemProcessorDetail'}
         default: {$ref: '#/components/responses/Error'}
   /problems/{id}/example:
     parameters:
@@ -197,9 +221,11 @@ paths:
           application/json:
             schema:
               type: object
-              required: [code]
+              required: [code, processor, language]
               properties:
                 code: {type: string}
+                processor: {type: string, description: 'Процессор задачи; в контесте - процессор контеста.'}
+                language: {type: string, description: 'Язык, разрешённый задачей на этом процессоре.'}
       responses:
         '200':
           description: Результат проверки примера; diagnostic содержит пояснение ошибки
@@ -217,23 +243,24 @@ paths:
       - {$ref: '#/components/parameters/Id'}
     get:
       operationId: listProblemLeaders
-      summary: Лучшие принятые решения в одной конфигурации проверки
+      summary: Лучшие принятые решения в одной конфигурации проверки на одном процессоре
       parameters:
         - {$ref: '#/components/parameters/Context'}
+        - {name: processor, in: query, required: true, schema: {type: string}}
       responses:
         '200':
-          description: По времени GPU по возрастанию; равные результаты имеют одинаковое место
+          description: По score по возрастанию; равные результаты имеют одинаковое место
           content:
             application/json:
               schema:
                 type: array
                 items:
                   type: object
-                  required: [rank, user, timeMs, submissionId]
+                  required: [rank, user, score, submissionId]
                   properties:
                     rank: {type: integer}
                     user: {$ref: '#/components/schemas/User'}
-                    timeMs: {type: number}
+                    score: {$ref: '#/components/schemas/Score'}
                     submissionId: {type: string}
         default: {$ref: '#/components/responses/Error'}
   /submissions:
@@ -261,7 +288,7 @@ paths:
         default: {$ref: '#/components/responses/Error'}
     post:
       operationId: submitSolution
-      summary: Отправить решение на C++/CUDA
+      summary: Отправить решение на процессор задачи
       security: [{session: []}]
       requestBody:
         required: true
@@ -269,11 +296,13 @@ paths:
           application/json:
             schema:
               type: object
-              required: [problemId, code]
+              required: [problemId, code, processor, language]
               properties:
                 problemId: {type: string}
                 contestId: {type: string, description: Не указан - практика.}
                 code: {type: string}
+                processor: {type: string, description: 'Процессор задачи; в контесте - процессор контеста.'}
+                language: {type: string, description: 'Язык, разрешённый задачей на этом процессоре.'}
       responses:
         '202':
           description: Принято в очередь; конкурсная отправка требует регистрации и действующего контеста
@@ -290,7 +319,7 @@ paths:
       responses:
         '200':
           description: |
-            Всегда содержит passedTests, totalTests, previousBestTimeMs и environmentMarkdown.
+            Всегда содержит passedTests, totalTests, previousBestScore, metrics и environmentMarkdown.
             Автору также возвращаются code и diagnostic; diagnostic может быть пустой строкой.
             Для остальных пользователей code и diagnostic отсутствуют.
           content:
@@ -320,6 +349,7 @@ paths:
         - {$ref: '#/components/parameters/Query'}
         - {name: phase, in: query, schema: {type: string, enum: [upcoming, live, finished]}}
         - {name: mine, in: query, description: Только контесты текущего автора; требует входа., schema: {type: boolean, default: false}}
+        - {name: processor, in: query, description: Только контесты на этом процессоре., schema: {type: string}}
       responses:
         '200':
           description: По startAt по возрастанию; при phase=finished по убыванию
@@ -394,9 +424,9 @@ paths:
       summary: Таблица контеста
       description: |
         Сначала число решенных задач, затем меньшее суммарное время сдачи. Задача решена, если принята хотя бы одна
-        посылка (верный ответ в пределах лимита времени); время сдачи задачи — от начала контеста до первой принятой
-        посылки. Время работы решения на GPU и неверные попытки на место не влияют. Равные результаты имеют одинаковое
-        место. До начала список пуст.
+        посылка (верный ответ в пределах лимита score на процессоре контеста); время сдачи задачи — от начала
+        контеста до первой принятой посылки. Сам score и неверные попытки на место не влияют. Равные результаты
+        имеют одинаковое место. До начала список пуст.
       responses:
         '200':
           description: Только результаты этого контеста; обновление обычным GET
@@ -492,20 +522,85 @@ components:
             properties:
               message: {type: string}
   schemas:
-    User:
+    Score:
       type: object
-      required: [id, handle, rating, rank, ratingDelta, ratingContestId]
+      description: Результат на процессоре; меньше - лучше. Единица выводится из type.
+      required: [value, type]
+      properties:
+        value: {type: number}
+        type: {$ref: '#/components/schemas/ScoreType'}
+    ScoreType:
+      type: string
+      description: |
+        TIME_MS - время на реальной GPU, мс; CYCLES - такты; CYCLES_X_DEPTH_X_TRANSISTORS - такты × глубина логики × транзисторы схемы;
+        WEIGHTED_INSTRUCTIONS - условные такты (инструкции плюс взвешенные промахи кэша)
+      enum: [TIME_MS, CYCLES, CYCLES_X_DEPTH_X_TRANSISTORS, WEIGHTED_INSTRUCTIONS]
+    Language:
+      type: object
+      required: [id, title, extension]
       properties:
         id: {type: string}
-        handle: {type: string}
-        rating: {type: integer, nullable: true}
+        title: {type: string}
+        extension: {type: string, description: 'Расширение файла решения с точкой, например .cu'}
+    Processor:
+      type: object
+      required: [id, title, model, languages, scoreType, emulated]
+      properties:
+        id: {type: string, description: 'Например gpu-cuda, rtl'}
+        title: {type: string}
+        model: {type: string, description: 'Что показать человеку: модель GPU, эмулятор'}
+        languages: {type: array, items: {$ref: '#/components/schemas/Language'}}
+        scoreType: {$ref: '#/components/schemas/ScoreType'}
+        emulated: {type: boolean, description: 'false только у gpu-cuda'}
+    UserRating:
+      type: object
+      required: [rating, rank, ratingDelta, ratingContestId]
+      properties:
+        rating: {type: integer}
         rank: {type: integer, nullable: true}
         ratingDelta: {type: integer, nullable: true}
         ratingContestId: {type: string, nullable: true}
+    User:
+      type: object
+      required: [id, handle, ratings]
+      properties:
+        id: {type: string}
+        handle: {type: string}
+        ratings:
+          type: object
+          description: Процессор -> рейтинг на нём; процессоров без рейтинга в объекте нет.
+          additionalProperties: {$ref: '#/components/schemas/UserRating'}
+    ProblemProcessor:
+      type: object
+      description: Процессор задачи; best* - личные в контексте (null без userId и сессии), recordScore общий.
+      required: [id, languages, bestSubmissionId, bestScore, recordScore]
+      properties:
+        id: {type: string}
+        languages: {type: array, items: {type: string}, description: 'Языки, разрешённые задачей на этом процессоре.'}
+        bestSubmissionId: {type: string, nullable: true}
+        bestScore:
+          allOf: [{$ref: '#/components/schemas/Score'}]
+          nullable: true
+        recordScore:
+          allOf: [{$ref: '#/components/schemas/Score'}]
+          nullable: true
+    ProblemProcessorDetail:
+      type: object
+      required: [id, starters, limit, environmentMarkdown]
+      properties:
+        id: {type: string}
+        starters:
+          type: object
+          description: Язык -> шаблон решения.
+          additionalProperties: {type: string}
+        limit: {$ref: '#/components/schemas/Score'}
+        environmentMarkdown: {type: string, description: 'Процессор, модель, лимит, правила замера и тесты процессора.'}
     Problem:
       type: object
-      description: last* и best* относятся к контексту; без userId и сессии они null. solvedCount и recordTimeMs общие.
-      required: [id, code, title, difficulty, tags, solved, solvedCount, lastSubmissionId, lastStatus, bestSubmissionId, bestTimeMs, recordTimeMs]
+      description: |
+        last* относятся к контексту; без userId и сессии они null. solvedCount общий. В контесте processors
+        содержит только процессор контеста.
+      required: [id, code, title, difficulty, tags, solved, solvedCount, lastSubmissionId, lastStatus, processors]
       properties:
         id: {type: string}
         code: {type: string, description: Номер задачи в банке.}
@@ -516,12 +611,10 @@ components:
         solvedCount: {type: integer, description: Число участников с solved=true.}
         lastSubmissionId: {type: string, nullable: true}
         lastStatus: {type: string, nullable: true, description: Статус из Submission; null означает отсутствие посылок.}
-        bestSubmissionId: {type: string, nullable: true}
-        bestTimeMs: {type: number, nullable: true}
-        recordTimeMs: {type: number, nullable: true}
+        processors: {type: array, items: {$ref: '#/components/schemas/ProblemProcessor'}}
     Submission:
       type: object
-      required: [id, problemId, problemTitle, user, contestId, contestTitle, createdAt, status, timeMs, comparable]
+      required: [id, problemId, problemTitle, user, contestId, contestTitle, createdAt, status, processor, language, score, comparable]
       properties:
         id: {type: string}
         problemId: {type: string}
@@ -531,17 +624,29 @@ components:
         contestTitle: {type: string, nullable: true}
         createdAt: {type: string, format: date-time}
         status: {type: string, enum: [queued, compiling, checking, measuring, accepted, compile_error, wrong_answer, runtime_error, time_limit, memory_limit, system_error, measurement_error]}
-        timeMs: {type: number, nullable: true, description: Для accepted - измеренное время; для остальных статусов null.}
+        processor: {type: string}
+        language: {type: string}
+        score:
+          allOf: [{$ref: '#/components/schemas/Score'}]
+          nullable: true
+          description: Для accepted - score посылки (максимум по замерным тестам); для остальных статусов null.
         comparable: {type: boolean, description: Результат может участвовать в текущих рекордах своего контекста.}
         passedTests: {type: integer, description: В детали посылки; число пройденных тестов.}
         totalTests: {type: integer, nullable: true, description: В детали посылки; null до подготовки тестов.}
-        previousBestTimeMs: {type: number, nullable: true, description: В детали посылки; личный рекорд в том же контексте и конфигурации до этой отправки.}
+        previousBestScore:
+          allOf: [{$ref: '#/components/schemas/Score'}]
+          nullable: true
+          description: В детали посылки; личный рекорд в том же контексте, конфигурации и на том же процессоре до этой отправки.
+        metrics:
+          type: object
+          description: 'В детали посылки; дополнительные числа результата (например cycles и cells у rtl).'
+          additionalProperties: {type: number}
         environmentMarkdown: {type: string, description: В детали посылки; сохраненное оборудование и методика замера.}
         code: {type: string, description: 'Только автору в GET /submissions/{id}.'}
         diagnostic: {type: string, description: 'Только автору в GET /submissions/{id}.'}
     Contest:
       type: object
-      required: [id, title, startAt, endAt, authors, problemIds, problemCount, registered, gpu]
+      required: [id, title, startAt, endAt, authors, problemIds, problemCount, registered, processor]
       properties:
         id: {type: string}
         title: {type: string}
@@ -551,15 +656,18 @@ components:
         problemIds: {type: array, items: {type: string}, description: Порядок задач; до начала скрыт от обычных посетителей пустым массивом.}
         problemCount: {type: integer}
         registered: {type: boolean, description: Участие текущего пользователя; для гостя false.}
-        gpu: {type: string, description: Одна доступная GPU назначается сервером для всего контеста.}
+        processor: {type: string, description: 'Процессор всех посылок контеста; выбирается при создании, после начала не меняется.'}
         rulesMarkdown: {type: string, description: 'В детали контеста; правила подсчета и список задач. До начала обычным посетителям только общие правила без названий задач.'}
     ContestInput:
       type: object
-      description: startAt в будущем, endAt позже startAt. Только публичные задачи; их порядок задает problemIds.
-      required: [title, startAt, endAt, authorIds, problemIds]
+      description: |
+        startAt в будущем, endAt позже startAt. Только публичные задачи, которые можно сдавать на processor;
+        их порядок задает problemIds.
+      required: [title, startAt, endAt, authorIds, problemIds, processor]
       properties:
         title: {type: string, minLength: 1, maxLength: 100}
         startAt: {type: string, format: date-time}
         endAt: {type: string, format: date-time}
         authorIds: {type: array, minItems: 1, uniqueItems: true, items: {type: string}}
         problemIds: {type: array, minItems: 1, uniqueItems: true, items: {type: string}}
+        processor: {type: string, description: Процессор контеста из GET /processors.}

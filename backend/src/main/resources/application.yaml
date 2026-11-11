@@ -27,9 +27,16 @@ platform:
   admin:
     # Comma-separated handles of administrators (Groovy console, problem import).
     handles: ${ADMIN_HANDLES:}
-  gpu:
-    profile: ${GPU_PROFILE:rtx3060}
-    name: ${GPU_NAME:NVIDIA GeForce RTX 3060}
+  processors:
+    # Processors of the judge offered on this platform (judge-api Processors), comma-separated.
+    enabled: ${PROCESSORS:gpu-cuda}
+    # What a person is shown as the processor's model; the others show the processor's title. The emulators' versions
+    # are pinned in the judge's images (judge/README.md), so their models are fixed here.
+    models:
+      gpu-cuda: ${GPU_NAME:NVIDIA GeForce RTX 3060}
+      rtl: Yosys 0.70 + Verilator 5.053
+      riscv-rvv: QEMU 11.1.3, RV64GCV, VLEN 256
+      cuda-sim: GPGPU-Sim, NVIDIA Tesla V100 (QV100)
   problems:
     # Problem repository checkout (docs/backend/problem-package.md). Empty: the bank stays empty.
     directory: ${PROBLEMS_DIRECTORY:}

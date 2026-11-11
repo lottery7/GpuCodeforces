@@ -45,7 +45,22 @@ object SpecValidator {
         if (req.source.isBlank()) add("source is empty")
         if (sourceBytes > limits.maxSourceBytes) add("source is $sourceBytes bytes, limit ${limits.maxSourceBytes}")
         if (req.source.contains('\u0000')) add("source contains NUL bytes")
+        addAll(validateTarget(req.problem, req.processor, req.language))
         addAll(validateProblem(req.problem, limits).map { "problem: $it" })
+    }
+
+    /** Whether a submission in [language] can be judged on [processor] for this problem. */
+    fun validateTarget(problem: ProblemSpec, processor: String, language: String): List<String> = buildList {
+        val declared = problem.declaredProcessors()
+        val spec = problem.processorSpec(processor)
+        if (spec == null) {
+            add("processor '${processor.take(MAX_NAME_LENGTH)}' is not one the problem declares: ${declared.joinToString { it.id }}")
+            return@buildList
+        }
+        if (language !in spec.languages) {
+            add("language '${language.take(MAX_NAME_LENGTH)}' is not allowed on $processor, allowed: ${spec.languages.joinToString()}")
+        }
+        if (problem.scoreLimit(spec) == null) add("processor $processor has no limit in the problem")
     }
 
     fun validateProblem(spec: ProblemSpec, limits: Limits = Limits()): List<String> {
@@ -81,6 +96,7 @@ object SpecValidator {
             (allowHeaders + forbidHeaders).filter { !HEADER.matches(it) }.forEach { errors += "policy: invalid header '${it.take(MAX_NAME_LENGTH)}'" }
             (forbidSass + allowSass).filter { !SASS.matches(it) }.forEach { errors += "policy: invalid SASS opcode '${it.take(MAX_NAME_LENGTH)}'" }
         }
+        validateProcessors(spec, limits, errors)
         with(spec.compile) {
             if (arch != null && !CompileSpec.isArch(arch)) errors += "compile.arch '${arch.take(MAX_NAME_LENGTH)}' is not an architecture like sm_86"
             if (flags.orEmpty().size > MAX_LIST_ENTRIES) errors += "compile: more than $MAX_LIST_ENTRIES flags"
@@ -88,6 +104,59 @@ object SpecValidator {
                 .forEach { errors += "compile: flag '${it.take(MAX_NAME_LENGTH)}' is not allowed" }
         }
         return errors
+    }
+
+    /** Read ports of an array on `rtl`: each is a port pair of the judge's memory, so more than a few is pointless. */
+    val RTL_READ_PORTS = 1..8
+
+    private fun validateProcessors(spec: ProblemSpec, limits: Limits, errors: MutableList<String>) {
+        if (spec.processors.size > Processors.all.size) errors += "processors: more than ${Processors.all.size} entries"
+        val seen = mutableSetOf<String>()
+        for (p in spec.processors.take(MAX_LIST_ENTRIES)) {
+            val id = p.id.take(MAX_NAME_LENGTH)
+            val info = Processors.find(p.id)
+            if (info == null) {
+                errors += "processors: unknown processor '$id', known: ${Processors.ids.joinToString()}"
+                continue
+            }
+            val where = "processor $id"
+            if (!seen.add(p.id)) errors += "$where: declared twice"
+            if (p.languages.isEmpty()) errors += "$where: languages is empty"
+            p.languages.filter { info.language(it) == null }.distinct().forEach {
+                errors += "$where: language '${it.take(MAX_NAME_LENGTH)}' is not one of ${info.languages.joinToString { l -> l.id }}"
+            }
+            if (p.languages.size != p.languages.toSet().size) errors += "$where: a language is listed twice"
+            when {
+                p.limit == null -> if (p.id != Processors.GPU_CUDA) errors += "$where: limit is required"
+                !(p.limit > 0 && p.limit.isFinite()) -> errors += "$where: limit must be a positive number"
+                p.id == Processors.GPU_CUDA && p.limit > limits.maxTimeLimitMs -> errors += "$where: limit must be at most ${limits.maxTimeLimitMs} ms"
+            }
+            if (p.rtl != null && p.id != Processors.RTL) errors += "$where: rtl settings belong to processor ${Processors.RTL} only"
+            if (p.id == Processors.RTL) validateRtl(spec.signature, p.rtl ?: RtlSettings(), errors)
+            if (p.id == Processors.CUDA_SIM) {
+                // the simulator counts only the GPU's cycles: work on host data would be free
+                spec.signature.arrays.filter { it.memory != MemorySpace.DEVICE }.forEach {
+                    errors += "$where: array '${it.name}' must be in DEVICE memory: work on the host costs no cycles in the simulator"
+                }
+            }
+        }
+    }
+
+    private fun validateRtl(sig: Signature, settings: RtlSettings, errors: MutableList<String>) {
+        val where = "processor ${Processors.RTL}"
+        if (settings.readPorts !in RTL_READ_PORTS) errors += "$where: rtl.readPorts must be in $RTL_READ_PORTS"
+        if (settings.dataMode == RtlDataMode.STREAM) {
+            sig.params.filter { it.role == ParamRole.INOUT }.forEach {
+                errors += "$where: param '${it.name}' is INOUT, which the STREAM data mode has no ports for"
+            }
+        }
+        for (p in sig.params) {
+            if (p.name in RtlSignature.KEYWORDS) errors += "$where: param '${p.name}' is a SystemVerilog keyword"
+            if (p.name in RtlSignature.CONTROL_PORTS) errors += "$where: param '${p.name}' takes the name of a control port"
+        }
+        RtlSignature.ports(sig, settings).groupBy { it.name }.filterValues { it.size > 1 }.keys.forEach {
+            errors += "$where: two ports of the module would be named '$it'; rename a param"
+        }
     }
 
     private val HEADER = Regex("[A-Za-z0-9_./+-]{1,128}")

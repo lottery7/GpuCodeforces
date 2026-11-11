@@ -4,6 +4,7 @@ import { Link, useLocation, useSearchParams } from 'react-router';
 import { api } from '../api/client';
 import type { Contest, ContestQuery } from '../api/types';
 import { useSession } from '../auth';
+import { useProcessors } from '../processors';
 import { Empty, ErrorMessage, LoginRequired, PageHeader, SearchInput, Tabs } from '../ui';
 import { dateTime, phaseOf } from '../utils';
 
@@ -22,9 +23,11 @@ export default function Contests() {
   const queryClient = useQueryClient();
   const selected = phases.find(phase => phase === params.get('tabs')) ?? 'live';
   const query = params.get('q') ?? '';
-  const filter: ContestQuery = { q: query || undefined, ...(selected === 'mine' ? { mine: true } : { phase: selected }) };
+  const processor = params.get('processor') ?? '';
+  const catalog = useProcessors();
+  const filter: ContestQuery = { q: query || undefined, processor: processor || undefined, ...(selected === 'mine' ? { mine: true } : { phase: selected }) };
   const contests = useQuery({
-    queryKey: ['contests', user?.id, selected, query],
+    queryKey: ['contests', user?.id, selected, query, processor],
     queryFn: ({ signal }) => api.listContests(filter, signal),
     enabled: !isLoading && (selected !== 'mine' || Boolean(user)),
     refetchInterval: selected === 'live' ? 5000 : false,
@@ -38,8 +41,12 @@ export default function Contests() {
     },
   });
   const resetJoin = join.reset;
-  useEffect(() => resetJoin(), [selected, query, user?.id, resetJoin]);
-  const tabPath = (tab: string) => `/contests?${new URLSearchParams({ tabs: tab, ...(query ? { q: query } : {}) })}`;
+  useEffect(() => resetJoin(), [selected, query, processor, user?.id, resetJoin]);
+  const tabPath = (tab: string) => `/contests?${new URLSearchParams({ tabs: tab, ...(query ? { q: query } : {}), ...(processor ? { processor } : {}) })}`;
+  const filterBy = (values: { q?: string; processor?: string }) => {
+    const next = { q: query, processor, ...values };
+    setParams({ tabs: selected, ...(next.q ? { q: next.q } : {}), ...(next.processor ? { processor: next.processor } : {}) }, { replace: true });
+  };
   const returnTo = location.pathname + location.search;
   const entries = [
     { id: 'live', label: 'Текущие', to: tabPath('live') },
@@ -53,15 +60,20 @@ export default function Contests() {
     <Tabs items={entries} selected={selected} />
     {selected === 'mine' && !user && !isLoading ? <LoginRequired returnTo={returnTo}>Здесь будут контесты, в которых вы указаны автором.</LoginRequired> : <>
       <div className="toolbar">
-        <div className="search"><SearchInput label="Найти соревнование" placeholder="Название контеста" value={query} onChange={value => setParams({ tabs: selected, ...(value ? { q: value } : {}) }, { replace: true })} /></div>
-        {query && <Link className="filter-reset" to={`/contests?tabs=${selected}`}>Сбросить</Link>}
+        <div className="search"><SearchInput label="Найти соревнование" placeholder="Название контеста" value={query} onChange={value => filterBy({ q: value })} /></div>
+        <select aria-label="Процессор" value={processor} onChange={event => filterBy({ processor: event.target.value })}>
+          <option value="">Все процессоры</option>
+          {catalog.processors.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
+        </select>
+        {(query || processor) && <Link className="filter-reset" to={`/contests?tabs=${selected}`}>Сбросить</Link>}
       </div>
       {contests.isPending && <p className="loading" role="status">Загрузка соревнований...</p>}
       {contests.error && <div><ErrorMessage error={contests.error} /><button className="text-link" onClick={() => void contests.refetch()}>Повторить</button></div>}
       {contests.data && (contests.data.length ? <div className="table-wrap"><table className="data-table contest-list" aria-label="Список соревнований">
-        <thead><tr><th>Название</th><th>Начало, МСК</th><th>Длительность</th><th>Задачи</th>{selected === 'mine' ? <th>Статус</th> : selected !== 'finished' && <th>Участие</th>}</tr></thead>
+        <thead><tr><th>Название</th><th>Процессор</th><th>Начало, МСК</th><th>Длительность</th><th>Задачи</th>{selected === 'mine' ? <th>Статус</th> : selected !== 'finished' && <th>Участие</th>}</tr></thead>
         <tbody>{contests.data.map(contest => <tr key={contest.id}>
           <td><Link to={`/contest/${encodeURIComponent(contest.id)}`}>{contest.title}</Link></td>
+          <td>{catalog.title(contest.processor)}</td>
           <td><time dateTime={contest.startAt}>{dateTime(contest.startAt)}</time></td>
           <td>{duration(contest)}</td><td>{contest.problemCount}</td>
           {selected === 'mine' ? <td>{({ upcoming: 'До начала', live: 'Идет', finished: 'Завершен' })[phaseOf(contest)]}</td> : selected !== 'finished' && <td className="contest-registration">
@@ -69,7 +81,7 @@ export default function Contests() {
             {join.variables === contest.id && <ErrorMessage error={join.error} reveal />}
           </td>}
         </tr>)}</tbody>
-      </table></div> : <Empty>{query.trim() ? 'Соревнования не найдены. Измените запрос или выберите другую вкладку.' : selected === 'mine' ? 'У вас пока нет контестов.' : selected === 'live' ? 'Сейчас нет активных соревнований.' : selected === 'upcoming' ? 'Новые соревнования еще не объявлены.' : 'Завершенных соревнований пока нет.'}</Empty>)}
+      </table></div> : <Empty>{query.trim() || processor ? 'Соревнования не найдены. Измените запрос или выберите другую вкладку.' : selected === 'mine' ? 'У вас пока нет контестов.' : selected === 'live' ? 'Сейчас нет активных соревнований.' : selected === 'upcoming' ? 'Новые соревнования еще не объявлены.' : 'Завершенных соревнований пока нет.'}</Empty>)}
     </>}
   </>;
 }

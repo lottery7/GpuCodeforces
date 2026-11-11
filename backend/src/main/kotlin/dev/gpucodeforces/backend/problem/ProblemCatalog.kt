@@ -5,6 +5,7 @@ import dev.gpucodeforces.judge.api.ProblemSpec
 import org.springframework.stereotype.Service
 import tools.jackson.databind.json.JsonMapper
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 /** Read access to the bank shared by the problem, contest and submission modules. */
 @Service
@@ -20,7 +21,11 @@ class ProblemCatalog(
 
     fun versions(ids: Collection<UUID>): Map<UUID, ProblemVersion> = versionRepository.findAllById(ids).associateBy { it.id }
 
-    fun spec(version: ProblemVersion): ProblemSpec = jsonMapper.readValue(version.judgeSpec, ProblemSpec::class.java)
+    /** Versions never change, so their parsed specs are kept: lists of problems read every one of them. */
+    private val specs = ConcurrentHashMap<UUID, ProblemSpec>()
+
+    fun spec(version: ProblemVersion): ProblemSpec =
+        specs.computeIfAbsent(version.id) { jsonMapper.readValue(version.judgeSpec, ProblemSpec::class.java) }
 
     /** Contests take only published problems from the bank; returns the versions in the given order. */
     fun publishedVersions(problemIds: Collection<String>): List<ProblemVersion> = problemIds.map { id ->

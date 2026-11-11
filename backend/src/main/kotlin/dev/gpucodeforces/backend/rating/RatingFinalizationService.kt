@@ -3,6 +3,7 @@ package dev.gpucodeforces.backend.rating
 import dev.gpucodeforces.backend.contest.ContestRepository
 import dev.gpucodeforces.backend.contest.ContestService
 import dev.gpucodeforces.backend.submission.SubmissionStats
+import dev.gpucodeforces.backend.user.UserRating
 import dev.gpucodeforces.backend.user.UserRepository
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -22,9 +23,9 @@ class RatingFinalizationService(
     private val log = LoggerFactory.getLogger(javaClass)
 
     /**
-     * Applies the contest result to ratings once its submissions are judged. Only users who sent at least one
-     * submission are rated: registering without taking part changes nothing. Idempotent: a contest with
-     * ratingAppliedAt already set is left untouched. Returns whether the rating is applied now.
+     * Applies the contest result to the ratings of its processor once its submissions are judged. Only users who
+     * sent at least one submission are rated: registering without taking part changes nothing. Idempotent: a contest
+     * with ratingAppliedAt already set is left untouched. Returns whether the rating is applied now.
      */
     @Transactional
     fun finalize(contestId: UUID, now: Instant): Boolean {
@@ -40,21 +41,27 @@ class RatingFinalizationService(
             log.warn("Contest {}: {} submission(s) still unjudged {} after the end, rating is applied without them", contest.id, pending, VERDICT_GRACE)
         }
 
+        val processor = contest.processor
         val participants = submissionStats.contestParticipants(contest.id)
         val standings = contestService.standings(contestId.toString()).filter { UUID.fromString(it.user.id) in participants }
         if (standings.isNotEmpty()) {
-            val results = standings.map { row -> ParticipantResult(UUID.fromString(row.user.id), row.user.rating, row.rank) }
+            val users = userRepository.findAllById(standings.map { UUID.fromString(it.user.id) }).associateBy { it.id }
+            val results = standings.map { row ->
+                val userId = UUID.fromString(row.user.id)
+                ParticipantResult(userId, users.getValue(userId).ratings[processor]?.rating, row.rank)
+            }
             RatingCalculator.compute(results).forEach { (userId, outcome) ->
                 val rank = standings.first { UUID.fromString(it.user.id) == userId }.rank
-                ratingHistoryRepository.save(RatingHistory(contest.id, userId, rank, outcome.delta, outcome.ratingAfter))
-                val user = userRepository.findById(userId).orElseThrow()
-                user.rating = outcome.ratingAfter
-                user.ratingDelta = outcome.delta
-                user.ratingContestId = contest.id
+                ratingHistoryRepository.save(RatingHistory(contest.id, userId, rank, outcome.delta, outcome.ratingAfter, processor))
+                val user = users.getValue(userId)
+                val rating = user.ratings.getOrPut(processor) { UserRating(outcome.ratingAfter) }
+                rating.rating = outcome.ratingAfter
+                rating.ratingDelta = outcome.delta
+                rating.ratingContestId = contest.id
             }
             userRepository.recomputeRanks()
         }
-        log.info("Contest {} rating applied to {} participant(s)", contest.id, standings.size)
+        log.info("Contest {} rating of {} applied to {} participant(s)", contest.id, processor, standings.size)
         contest.ratingAppliedAt = now
         contestRepository.save(contest)
         return true

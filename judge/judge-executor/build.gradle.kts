@@ -35,7 +35,21 @@ dependencies {
 }
 
 tasks.test {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        excludeTags("emulator")
+    }
+}
+
+// Needs the OSS CAD Suite (RTL_HOME) and a Python with torch (JUDGE_PYTHON); see judge/README.md.
+tasks.register<Test>("emulatorTest") {
+    description = "Runs the processor tests against real emulators and toolchains."
+    group = "verification"
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform {
+        includeTags("emulator")
+    }
+    shouldRunAfter(tasks.test)
 }
 
 tasks.named<BootJar>("bootJar") {

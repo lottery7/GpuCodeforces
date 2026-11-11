@@ -7,10 +7,10 @@ import dev.gpucodeforces.judge.api.ParamSpec
 import dev.gpucodeforces.judge.api.PolicyOverrides
 import dev.gpucodeforces.judge.api.Signature
 import dev.gpucodeforces.judge.api.TimingMode
-import dev.gpucodeforces.judge.executor.compile.Builder
-import dev.gpucodeforces.judge.executor.compile.EffectivePolicy
-import dev.gpucodeforces.judge.executor.compile.HarnessGenerator
-import dev.gpucodeforces.judge.executor.compile.SourceChecks
+import dev.gpucodeforces.judge.executor.processor.gpucuda.Builder
+import dev.gpucodeforces.judge.executor.processor.gpucuda.EffectivePolicy
+import dev.gpucodeforces.judge.executor.processor.gpucuda.HarnessGenerator
+import dev.gpucodeforces.judge.executor.processor.gpucuda.SourceChecks
 import dev.gpucodeforces.judge.executor.config.ProfilePolicyConfig
 import kotlin.test.Test
 import kotlin.test.assertEquals

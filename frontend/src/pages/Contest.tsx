@@ -4,6 +4,7 @@ import { Link, useLocation, useParams, useSearchParams } from 'react-router';
 import { api } from '../api/client';
 import type { Problem } from '../api/types';
 import { useSession } from '../auth';
+import { useProcessors } from '../processors';
 import { Empty, ErrorMessage, Markdown, PageHeader, Status, Tabs, UserLink } from '../ui';
 import { dateTime, difficultyLabels, phaseOf, problemPath, solveTime, statusLabels } from '../utils';
 
@@ -26,13 +27,15 @@ function taskLabel(index: number) {
 }
 
 function PersonalStatus({ problem }: { problem: Problem }) {
-  const accepted = problem.bestSubmissionId !== null && problem.bestTimeMs !== null;
-  const mainId = accepted ? problem.bestSubmissionId : problem.lastSubmissionId;
+  // in a contest a problem shows the contest's processor only
+  const best = problem.processors[0]?.bestSubmissionId ?? null;
+  const accepted = best !== null;
+  const mainId = accepted ? best : problem.lastSubmissionId;
   if (!mainId) return <span className="muted">Не решена</span>;
   const old = !accepted && problem.lastStatus === 'accepted';
   return <>
-    <Link to={`/submission/${encodeURIComponent(mainId)}`} className={old ? 'muted' : undefined}>{old ? 'Принято, старый профиль' : <Status status={accepted ? 'accepted' : problem.lastStatus ?? ''} />}</Link>
-    {accepted && problem.lastSubmissionId && problem.lastSubmissionId !== problem.bestSubmissionId && problem.lastStatus !== 'accepted' && <div className="small"><Link to={`/submission/${encodeURIComponent(problem.lastSubmissionId)}`}>Последняя: {statusLabels[problem.lastStatus ?? ''] ?? problem.lastStatus}</Link></div>}
+    <Link to={`/submission/${encodeURIComponent(mainId)}`} className={old ? 'muted' : undefined}>{old ? 'Принято, старая версия задачи' : <Status status={accepted ? 'accepted' : problem.lastStatus ?? ''} />}</Link>
+    {accepted && problem.lastSubmissionId && problem.lastSubmissionId !== best && problem.lastStatus !== 'accepted' && <div className="small"><Link to={`/submission/${encodeURIComponent(problem.lastSubmissionId)}`}>Последняя: {statusLabels[problem.lastStatus ?? ''] ?? problem.lastStatus}</Link></div>}
   </>;
 }
 
@@ -42,6 +45,7 @@ export default function Contest() {
   const { user, isLoading } = useSession();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const catalog = useProcessors();
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -107,7 +111,7 @@ export default function Contest() {
     <div className="toolbar small contest-meta">
       <span className="muted">{dateTime(item.startAt)} - {dateTime(item.endAt)} МСК</span>
       <span>{phase === 'finished' ? 'Завершен' : <>{phase === 'upcoming' ? 'До начала' : 'До конца'} <time>{countdown(phase === 'upcoming' ? item.startAt : item.endAt, now)}</time></>}</span>
-      <span className="muted">{item.gpu}</span>
+      <span className="muted">Процессор: {catalog.title(item.processor)}{catalog.find(item.processor) && <> · {catalog.find(item.processor)?.model}</>}</span>
       <span className="muted">Авторы: {item.authors.map((person, index) => <span key={person.id}>{index > 0 && ', '}<UserLink user={person} /></span>)}</span>
     </div>
     {join.error && <ErrorMessage error={join.error} />}

@@ -5,6 +5,8 @@ import dev.gpucodeforces.backend.api.model.GetUserProfile200Response
 import dev.gpucodeforces.backend.api.model.ListUsers200Response
 import dev.gpucodeforces.backend.api.model.RegisterUserRequest
 import dev.gpucodeforces.backend.auth.SessionIssuer
+import dev.gpucodeforces.backend.common.BadRequestException
+import dev.gpucodeforces.backend.processor.ProcessorCatalog
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.RestController
@@ -15,6 +17,7 @@ class UsersController(
     private val userService: UserService,
     private val profileService: ProfileService,
     private val sessionIssuer: SessionIssuer,
+    private val processorCatalog: ProcessorCatalog,
 ) : UsersApi {
     override fun registerUser(registerUserRequest: RegisterUserRequest): ResponseEntity<UserApiModel> {
         val user = userService.register(
@@ -26,8 +29,13 @@ class UsersController(
         return ResponseEntity.status(HttpStatus.CREATED).body(user.toApiModel())
     }
 
-    override fun listUsers(q: String?, sort: String, offset: Int, limit: Int): ResponseEntity<ListUsers200Response> {
-        val page = userService.search(q, sortByRating = sort == "rating", offset = offset, limit = limit)
+    override fun listUsers(q: String?, sort: String, processor: String?, offset: Int, limit: Int): ResponseEntity<ListUsers200Response> {
+        val ratingProcessor = if (sort == "rating") {
+            processorCatalog.require(processor ?: throw BadRequestException("Рейтинг требует процессор")).id
+        } else {
+            null
+        }
+        val page = userService.search(q, ratingProcessor, offset = offset, limit = limit)
         return ResponseEntity.ok(ListUsers200Response(page.items.map { it.toApiModel() }, page.total))
     }
 

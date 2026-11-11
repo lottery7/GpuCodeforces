@@ -1,6 +1,12 @@
 import type { components, operations } from './schema';
 
 export type User = components['schemas']['User'];
+export type UserRating = components['schemas']['UserRating'];
+export type Processor = components['schemas']['Processor'];
+export type Score = components['schemas']['Score'];
+export type ScoreType = components['schemas']['ScoreType'];
+export type ProblemProcessor = components['schemas']['ProblemProcessor'];
+export type ProblemProcessorDetail = components['schemas']['ProblemProcessorDetail'];
 export type Problem = components['schemas']['Problem'];
 export type Submission = components['schemas']['Submission'];
 export type Contest = components['schemas']['Contest'];
@@ -15,3 +21,4 @@ export type UserQuery = NonNullable<operations['listUsers']['parameters']['query
 export type LoginInput = operations['login']['requestBody']['content']['application/json'];
 export type RegisterInput = operations['registerUser']['requestBody']['content']['application/json'];
 export type SubmitInput = operations['submitSolution']['requestBody']['content']['application/json'];
+export type ExampleInput = operations['checkExample']['requestBody']['content']['application/json'];
