@@ -352,6 +352,7 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
 .metric-list dt { color: var(--muted); }
 .metric-list dd { margin: 0; }
 .contest-form { max-width: 912px; }
+.hack-warning { color: var(--pending); }
 .contest-builder { max-width: none; }
 .contest-settings { display: flex; flex-direction: column; gap: 21.6px; min-width: 0; padding: 19.2px; border: 1.2px solid var(--border); border-radius: 4.8px; background: var(--surface); }
 .contest-task-picker { min-width: 0; padding: 19.2px; border: 1.2px solid var(--border); border-radius: 4.8px; background: var(--surface); }

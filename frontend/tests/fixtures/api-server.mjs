@@ -821,8 +821,9 @@ export function createApiServer({ referenceMeasurements = new Map() } = {}) {
           return send(response, 200, items.map(contest => contestDto(contest)));
         }
         if (method === 'POST') {
-          requireUser();
+          const creator = requireUser();
           const values = validateContestInput(body);
+          if (!values.authorIds.includes(creator.id)) throw new ApiError(400, 'Создатель контеста должен быть среди его авторов.');
           const result = model.saveContest(null, values);
           if (!result.ok) throw new ApiError(400, result.error);
           contestProcessors.set(result.contest.id, values.processor);

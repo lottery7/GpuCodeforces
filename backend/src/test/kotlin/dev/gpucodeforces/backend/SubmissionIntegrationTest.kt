@@ -284,6 +284,9 @@ class SubmissionIntegrationTest {
         assertThat(bank.totalCount).isEqualTo(bank.items.size)
         assertThat(bank.streak).isEqualTo(1)
         val vectorAdd = bank.items.single { it.id == "vector_add" }
+        // the package of vector_add takes custom tests, matmul_host does not: the contest editor shows it
+        assertThat(vectorAdd.hacksAllowed).isTrue()
+        assertThat(bank.items.single { it.id == "matmul_host" }.hacksAllowed).isFalse()
         assertThat(vectorAdd.solved).isTrue()
         assertThat(vectorAdd.solvedCount).isEqualTo(1)
         assertThat(vectorAdd.lastStatus).isEqualTo("wrong_answer")

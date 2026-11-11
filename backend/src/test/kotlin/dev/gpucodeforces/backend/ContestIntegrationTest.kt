@@ -146,6 +146,9 @@ class ContestIntegrationTest {
         client.post().uri("/contests").contentType(MediaType.APPLICATION_JSON).cookie("session", authorCookie).body(unnamed)
             .exchange().expectStatus().isBadRequest
         client.get().uri("/contests?phase=someday").exchange().expectStatus().isBadRequest
+        // A contest is created by one of its authors: nobody signs it with somebody else's name alone.
+        client.post().uri("/contests").contentType(MediaType.APPLICATION_JSON).cookie("session", outsiderCookie).body(input)
+            .exchange().expectStatus().isBadRequest
 
         // Anonymous visitors see no problem ids before the contest starts.
         val anonymousView = client.get().uri("/contests/${created.id}")

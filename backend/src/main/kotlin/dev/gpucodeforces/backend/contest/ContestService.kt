@@ -81,6 +81,8 @@ class ContestService(
     @Transactional
     fun create(input: ContestInputApi, creator: User): Contest {
         validate(input)
+        // Nobody signs a contest with somebody else's name alone; an author may leave it later, when editing.
+        if (creator.id.toString() !in input.authorIds) throw BadRequestException("Создатель контеста должен быть среди его авторов")
         val versions = problemsFor(input)
         val contest = contestRepository.save(
             Contest(

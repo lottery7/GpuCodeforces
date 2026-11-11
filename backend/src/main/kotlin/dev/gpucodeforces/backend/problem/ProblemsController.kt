@@ -251,6 +251,8 @@ class ProblemsController(
                 })
         },
     ).format(ProblemApiModel.FormatEnum.fromValue(version.format))
+        // as HackService and the submission page decide it: the package takes custom tests, and there is code to run
+        .hacksAllowed(problemCatalog.spec(version).allowCustomTests && version.format != ProblemFormatData.GUESS)
 
     // records and leaders hold scored submissions only (SubmissionStats): an answer to a guess has none
     private fun AcceptedSubmission.scoreModel(): ScoreApiModel = scoreApiModel(score!!, Processors.get(processor).scoreType)

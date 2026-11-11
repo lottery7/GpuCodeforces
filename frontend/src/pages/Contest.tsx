@@ -18,6 +18,13 @@ function countdown(value: string, now: number) {
   return days ? `${days} д ${time}` : time;
 }
 
+/** Which problems of a contest take hacks: without it a hack period looks open where nothing can be hacked. */
+function hackNote(problems: Problem[]) {
+  if (!problems.length) return '';
+  const hackable = problems.flatMap((problem, index) => problem.hacksAllowed ? [taskLabel(index)] : []);
+  return hackable.length ? ` Взламывать можно принятые решения задач: ${hackable.join(', ')}.` : ' Задачи этого контеста взломы не допускают.';
+}
+
 function taskLabel(index: number) {
   let value = index + 1;
   let label = '';
@@ -148,7 +155,7 @@ export default function Contest() {
     {join.error && <ErrorMessage error={join.error} />}
     <ErrorMessage error={startVirtual.error} />
     {upsolving && <p className="notice">Дорешивание. Ваши новые отправки не изменяют официальный зачет.</p>}
-    {item.format !== 'duel' && phase === 'finished' && item.finalized === false && <p className="notice">{item.hackEndAt && Date.parse(item.hackEndAt) > serverNow ? `Период взломов до ${dateTime(item.hackEndAt)} МСК.` : 'Ожидаем окончания проверок. Результаты предварительные.'}</p>}
+    {item.format !== 'duel' && phase === 'finished' && item.finalized === false && <p className="notice">{item.hackEndAt && Date.parse(item.hackEndAt) > serverNow ? `Период взломов до ${dateTime(item.hackEndAt)} МСК.${hackNote(columns)}` : 'Ожидаем окончания проверок. Результаты предварительные.'}</p>}
     {item.format === 'duel' && !upsolving ? <>
       <DuelBoard contest={item} finished={phase === 'finished'} clockOffset={clockOffset} contestUpdatedAt={contestSnapshot.current?.id === id && contestSnapshot.current.userId === user?.id ? contestSnapshot.current.startedAt : 0} showHeading={false} />
       {tasks.isPending && <p role="status">Загрузка задачи...</p>}
