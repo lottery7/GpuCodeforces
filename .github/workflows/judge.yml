@@ -38,6 +38,8 @@ jobs:
       # (QEMU_VERSION alone makes it print its version and exit 0 instead of running the guest)
       RISCV_QEMU_VERSION: 11.1.3
       RISCV_QEMU_SHA256: 5a8289c7940dc77d3873c81a6c29ba3afe1446fc9d36e77fa1658cdbecb84b22
+      RENODE_VERSION: 1.17.0
+      RENODE_SHA256: 4ba7c68b59e2447f188ef4b4b112fcccd2802582c460beedceb63b84e5605a5f
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -53,6 +55,19 @@ jobs:
             "https://github.com/YosysHQ/oss-cad-suite-build/releases/download/$OSS_CAD_SUITE_DATE/oss-cad-suite-linux-x64-$OSS_CAD_SUITE_STAMP.tgz"
           echo "$OSS_CAD_SUITE_SHA256  $RUNNER_TEMP/oss.tgz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/oss.tgz" -C "$RUNNER_TEMP"
+      # The names of Ubuntu's archive and of its Azure mirror, which the runner uses, at times do not resolve on the
+      # runners, and apt-get then retries for half an hour and fails. apt takes the first mirror of this list that
+      # answers.
+      - name: More mirrors of Ubuntu's packages
+        run: |
+          printf '%b\n' \
+            'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1' \
+            'http://archive.ubuntu.com/ubuntu/\tpriority:2' \
+            'https://mirrors.edge.kernel.org/ubuntu/\tpriority:3' \
+            'https://mirrors.ocf.berkeley.edu/ubuntu/\tpriority:4' | sudo tee /etc/apt/apt-mirrors.txt
+          printf 'Acquire::Retries "2";\nAcquire::http::Timeout "15";\nAcquire::https::Timeout "15";\n' \
+            | sudo tee /etc/apt/apt.conf.d/80-judge-ci
+          cat /etc/apt/sources.list.d/ubuntu.sources
       - name: RISC-V cross compilers, QEMU with plugins, the judge plugin
         run: |
           sudo apt-get update
@@ -67,6 +82,13 @@ jobs:
           make -j"$(nproc)" && make install
           gcc -O2 -shared -fPIC -I"$RUNNER_TEMP/qemu/include" $(pkg-config --cflags glib-2.0) \
             -o "$RUNNER_TEMP/judge_plugin.so" "$GITHUB_WORKSPACE/judge/riscv/judge_plugin.c" $(pkg-config --libs glib-2.0)
+      - name: Bare-metal RISC-V cross compilers with picolibc, Renode
+        run: |
+          sudo apt-get install -y --no-install-recommends gcc-riscv64-unknown-elf picolibc-riscv64-unknown-elf
+          curl -fsSL -o "$RUNNER_TEMP/renode.tgz" \
+            "https://github.com/renode/renode/releases/download/v$RENODE_VERSION/renode-$RENODE_VERSION.linux-portable.tar.gz"
+          echo "$RENODE_SHA256  $RUNNER_TEMP/renode.tgz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/renode" && tar -xzf "$RUNNER_TEMP/renode.tgz" -C "$RUNNER_TEMP/renode" --strip-components=1
       - name: PyTorch for the CPU, for the generators
         run: |
           python3 -m venv "$RUNNER_TEMP/venv"
@@ -77,4 +99,5 @@ jobs:
           RTL_HOME: ${{ runner.temp }}/oss-cad-suite
           RISCV_QEMU: ${{ runner.temp }}/qemu/bin/qemu-riscv64
           RISCV_PLUGIN: ${{ runner.temp }}/judge_plugin.so
+          CORAL_RENODE: ${{ runner.temp }}/renode/renode
           JUDGE_PYTHON: ${{ runner.temp }}/venv/bin/python

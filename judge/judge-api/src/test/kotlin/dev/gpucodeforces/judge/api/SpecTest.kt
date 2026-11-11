@@ -98,6 +98,13 @@ class ProcessorsTest {
         assertEquals(listOf(Processors.GPU_CUDA), Processors.all.filter { !it.emulated }.map { it.id })
         assertEquals(ScoreType.CYCLES_X_DEPTH_X_TRANSISTORS, Processors.get(Processors.RTL).scoreType)
     }
+
+    @Test
+    fun `C++ includes the C header of the fixed-width types where there is no C++ standard library`() {
+        assertEquals(listOf("cstdint"), CSignature.includes(Processors.RISCV_RVV, cpp = true))
+        assertEquals(listOf("stdint.h"), CSignature.includes(Processors.RISCV_RVV, cpp = false))
+        assertEquals(listOf("stdint.h"), CSignature.includes(Processors.CORAL_NPU, cpp = true))
+    }
 }
 
 class ProcessorSpecTest {

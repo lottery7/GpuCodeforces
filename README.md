@@ -84,7 +84,13 @@ repository, so add a new CI job there too.
 ```sh
 JUDGE_MODE=mock docker compose --profile app --profile mock up -d --wait --build   # no GPU: mock executor
 docker compose --profile app --profile gpu up -d --wait --build    # real executor on an NVIDIA GPU
+JUDGE_PROCESSORS=rtl,riscv-rvv,coral-npu,cuda-sim docker compose --profile app --profile emu --profile cuda-sim up -d --wait --build
+                                                                   # no GPU: real judging on the emulated processors
 ```
+
+`JUDGE_PROCESSORS` lists the processors the platform offers; each needs the profile of its executor (`gpu` for
+`gpu-cuda`, `emu` for `rtl`, `riscv-rvv` and `coral-npu`, `cuda-sim` for `cuda-sim`). A problem is shown with the
+processors from that list only. The first build of the emulator images takes a while: they compile QEMU and GPGPU-Sim.
 
 | Service | Address |
 |---|---|

@@ -11,6 +11,7 @@ export const scoreUnits: Record<ScoreType, string> = {
   CYCLES: 'такты',
   CYCLES_X_DEPTH_X_TRANSISTORS: 'такты × глубина × транзисторы',
   WEIGHTED_INSTRUCTIONS: 'усл. такты',
+  INSTRUCTIONS: 'инструкции',
 };
 
 /** What the limit of a score type is called. */
@@ -19,6 +20,7 @@ export const limitLabels: Record<ScoreType, string> = {
   CYCLES: 'Лимит тактов',
   CYCLES_X_DEPTH_X_TRANSISTORS: 'Лимит тактов × глубины × транзисторов',
   WEIGHTED_INSTRUCTIONS: 'Лимит условных тактов',
+  INSTRUCTIONS: 'Лимит инструкций',
 };
 
 /** Times keep up to four decimals; counts of cycles are grouped by thousands. */

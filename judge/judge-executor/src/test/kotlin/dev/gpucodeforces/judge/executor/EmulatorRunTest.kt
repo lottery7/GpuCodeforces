@@ -15,6 +15,7 @@ import dev.gpucodeforces.judge.api.Verdict
 import dev.gpucodeforces.judge.executor.processor.EmulatorOutcome
 import dev.gpucodeforces.judge.executor.processor.EmulatorRun
 import dev.gpucodeforces.judge.executor.processor.JudgeHooks
+import dev.gpucodeforces.judge.executor.processor.Refused
 import dev.gpucodeforces.judge.executor.processor.SimulatorLaunch
 import dev.gpucodeforces.judge.executor.processor.SimulatorOutcome
 import dev.gpucodeforces.judge.executor.problem.GeneratedTest
@@ -82,7 +83,7 @@ class EmulatorRunTest {
         })
     }
 
-    /** `behaviours` per test: `<score>` copies A to C and reports the score; wrong, hang, fail, forge. */
+    /** `behaviours` per test: `<score>` copies A to C and reports the score; wrong, hang, fail, forge; refuse runs nothing. */
     private fun run(vararg behaviours: String, limit: Double = 1000.0): Pair<EmulatorOutcome, List<Int>> {
         val simulator = tmp.resolve("simulator.py")
         @Language("Python")
@@ -109,6 +110,9 @@ class EmulatorRunTest {
         }
         val runDir = Files.createDirectories(tmp.resolve("run"))
         val outcome = EmulatorRun(DirectSandbox()).run(problem, prepared(), ScoreType.CYCLES, limit, runDir, hooks, Duration.ofSeconds(3)) { test, outDir, nonce ->
+            if (behaviours[test.index - 1] == "refuse") {
+                return@run Refused(SimulatorOutcome.Failed(Verdict.MEMORY_LIMIT_EXCEEDED, "Memory limit exceeded", "the arrays take 99 bytes"))
+            }
             val output = outDir.resolve("C.bin")
             val command = listOf(simulator.toString(), behaviours[test.index - 1], nonce, test.inputs.getValue("A").toString(), output.toString())
             SimulatorLaunch(SandboxSpec(command, workDir = outDir, wallTimeLimit = Duration.ofSeconds(10)), mapOf("C" to output)) { exit ->
@@ -156,6 +160,17 @@ class EmulatorRunTest {
         assertEquals(Verdict.RUNTIME_ERROR, sample.verdict)
         assertTrue("done before start" in sample.tests.single().debug!!, sample.tests.single().debug)
         val (hidden, _) = run("1", "fail", "1")
+        assertNull(hidden.tests[1].debug)
+    }
+
+    @Test
+    fun `a test the processor refuses fails without a simulator run`() {
+        val (sample, _) = run("refuse", "1", "1")
+        assertEquals(Verdict.MEMORY_LIMIT_EXCEEDED, sample.verdict)
+        assertEquals("Memory limit exceeded on test 1", sample.message)
+        assertEquals("the arrays take 99 bytes", sample.tests.single().debug)
+        val (hidden, _) = run("1", "refuse", "1")
+        assertEquals(listOf(Verdict.ACCEPTED, Verdict.MEMORY_LIMIT_EXCEEDED), hidden.tests.map { it.verdict })
         assertNull(hidden.tests[1].debug)
     }
 

@@ -30,6 +30,10 @@ object CSignature {
     fun declaration(sig: Signature): String =
         "void ${sig.function}(${sig.params.joinToString(", ") { paramDecl(it) }})"
 
-    /** `stdint.h` for C, `cstdint` for C++. */
-    fun includes(cpp: Boolean): List<String> = listOf(if (cpp) "cstdint" else "stdint.h")
+    /**
+     * The header of the fixed-width types on [processor]: `stdint.h` for C and `cstdint` for C++, except that the
+     * bare-metal toolchain of `coral-npu` has no C++ standard library, so C++ includes the C header there.
+     */
+    fun includes(processor: String, cpp: Boolean): List<String> =
+        listOf(if (cpp && processor != Processors.CORAL_NPU) "cstdint" else "stdint.h")
 }

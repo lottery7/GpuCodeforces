@@ -1019,8 +1019,9 @@ components:
       type: string
       description: |
         TIME_MS - время на реальной GPU, мс; CYCLES - такты; CYCLES_X_DEPTH_X_TRANSISTORS - такты × глубина логики × транзисторы схемы;
-        WEIGHTED_INSTRUCTIONS - условные такты (инструкции плюс взвешенные промахи кэша)
-      enum: [TIME_MS, CYCLES, CYCLES_X_DEPTH_X_TRANSISTORS, WEIGHTED_INSTRUCTIONS]
+        WEIGHTED_INSTRUCTIONS - условные такты (инструкции плюс взвешенные промахи кэша);
+        INSTRUCTIONS - выполненные инструкции
+      enum: [TIME_MS, CYCLES, CYCLES_X_DEPTH_X_TRANSISTORS, WEIGHTED_INSTRUCTIONS, INSTRUCTIONS]
     Language:
       type: object
       required: [id, title, extension]

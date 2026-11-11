@@ -22,6 +22,7 @@ fun ScoreType.unit(): String = when (this) {
     ScoreType.CYCLES -> "тактов"
     ScoreType.CYCLES_X_DEPTH_X_TRANSISTORS -> "тактов × глубины × транзисторов"
     ScoreType.WEIGHTED_INSTRUCTIONS -> "усл. тактов"
+    ScoreType.INSTRUCTIONS -> "инструкций"
 }
 
 /** What "the limit" is called on a processor: "лимит времени", "лимит тактов". */
@@ -30,6 +31,7 @@ fun ScoreType.limitName(): String = when (this) {
     ScoreType.CYCLES -> "лимит тактов"
     ScoreType.CYCLES_X_DEPTH_X_TRANSISTORS -> "лимит тактов × глубины × транзисторов"
     ScoreType.WEIGHTED_INSTRUCTIONS -> "лимит условных тактов"
+    ScoreType.INSTRUCTIONS -> "лимит инструкций"
 }
 
 private fun ScoreType.meaning(): String = when (this) {
@@ -38,6 +40,7 @@ private fun ScoreType.meaning(): String = when (this) {
     ScoreType.CYCLES_X_DEPTH_X_TRANSISTORS ->
         "такты до `done` × глубина логики (ячеек на самом длинном пути между регистрами) × транзисторы схемы после синтеза"
     ScoreType.WEIGHTED_INSTRUCTIONS -> "инструкции + 10 × промахи L1 + 100 × промахи последнего уровня кэша"
+    ScoreType.INSTRUCTIONS -> "инструкции, выполненные ядром до остановки"
 }
 
 /**
@@ -79,7 +82,9 @@ fun environmentMarkdown(spec: ProblemSpec, processor: ProcessorSpec, model: Stri
             else -> add("| Замер | один прогон в эмуляторе на тест, результат не зависит от нагрузки машины |")
         }
         if (info.id == Processors.RTL) addAll(rtlRows(processor.rtl ?: RtlSettings()))
-        add("| Память | ${spec.limits.memoryLimitMb} МБ RAM сверх данных теста |")
+        // the memory of the Coral NPU core is the processor's, not a limit of the problem
+        if (info.id == Processors.CORAL_NPU) add("| Память | 8 КБ кода и 32 КБ данных вместе с массивами теста |")
+        else add("| Память | ${spec.limits.memoryLimitMb} МБ RAM сверх данных теста |")
     }
     val signature = when (info.id) {
         Processors.GPU_CUDA, Processors.CUDA_SIM -> "Сигнатура: `${CudaSignature.declaration(spec.signature)}`."

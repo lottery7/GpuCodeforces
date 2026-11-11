@@ -45,6 +45,8 @@ data class ExecutorProperties(
     val riscv: RiscvConfig = RiscvConfig(),
     /** Simulator and limits of `cuda-sim`. */
     val cudaSim: CudaSimConfig = CudaSimConfig(),
+    /** Simulator, toolchain and limits of `coral-npu`. */
+    val coralNpu: CoralNpuConfig = CoralNpuConfig(),
     val sandbox: SandboxConfig = SandboxConfig(),
     val compile: CompileConfig = CompileConfig(),
     val prepare: PrepareConfig = PrepareConfig(),
@@ -197,6 +199,28 @@ data class RiscvConfig(
     val simulationTimeLimit: Duration = Duration.ofSeconds(120),
     /** Memory of one simulation on top of the test data. */
     val simulationMemoryLimitMb: Long = 2048,
+)
+
+data class CoralNpuConfig(
+    /** Renode's launcher; its directory is mounted read-only in the sandbox. */
+    val renode: Path = Path.of("/opt/renode/renode"),
+    /** The judge's Renode script of the machine (judge/coralnpu/platform.resc), with judge_run.py next to it. */
+    val platform: Path = Path.of("/opt/judge/coralnpu/platform.resc"),
+    /** Bare-metal cross compilers: they run in the sandbox, so absolute paths. */
+    val cc: String = "/usr/bin/riscv64-unknown-elf-gcc",
+    val cxx: String = "/usr/bin/riscv64-unknown-elf-g++",
+    /** Prefix of the version `renode --version` must report, e.g. "1.17.0"; null = not checked. */
+    val expectedRenodeVersion: String? = null,
+    /** Prefix of `gcc -dumpfullversion`, e.g. "13.2"; null = not checked. */
+    val expectedGccVersion: String? = null,
+    val compileTimeLimit: Duration = Duration.ofSeconds(60),
+    val compileMemoryLimitMb: Long = 2048,
+    /** Instructions a test may run when the score limit allows more, and on tests that are not measured. */
+    val maxInstructions: Long = 2_000_000_000,
+    /** Host time one simulation may take; Renode alone starts in about a second. */
+    val simulationTimeLimit: Duration = Duration.ofSeconds(60),
+    /** Memory of one Renode process: the machine itself is 40 KB. */
+    val simulationMemoryLimitMb: Long = 1024,
 )
 
 data class CudaSimConfig(

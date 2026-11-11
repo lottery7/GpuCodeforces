@@ -9,6 +9,9 @@ import dev.gpucodeforces.judge.executor.pipeline.JobProcessor
 import dev.gpucodeforces.judge.executor.pipeline.JudgePipeline
 import dev.gpucodeforces.judge.executor.processor.ProcessorBackend
 import dev.gpucodeforces.judge.executor.processor.ProcessorBackends
+import dev.gpucodeforces.judge.executor.processor.coralnpu.CoralNpuBackend
+import dev.gpucodeforces.judge.executor.processor.coralnpu.CoralNpuBuilder
+import dev.gpucodeforces.judge.executor.processor.coralnpu.CoralNpuToolchain
 import dev.gpucodeforces.judge.executor.processor.cudasim.CudaSimBackend
 import dev.gpucodeforces.judge.executor.processor.cudasim.CudaSimBuilder
 import dev.gpucodeforces.judge.executor.processor.gpucuda.Builder
@@ -105,6 +108,9 @@ class ExecutorConfig(private val props: ExecutorProperties) {
                 }
                 id == Processors.CUDA_SIM -> CudaSimBackend.probe(props).let { version ->
                     CudaSimBackend(props, version, CudaSimBuilder(props, version, sandbox), problems, sandbox)
+                }
+                id == Processors.CORAL_NPU -> CoralNpuToolchain.probe(props.coralNpu).let { toolchain ->
+                    CoralNpuBackend(props, toolchain, CoralNpuBuilder(props, toolchain, sandbox), problems, sandbox)
                 }
                 else -> error("processor $id is not implemented by this executor yet: remove it from judge.executor.processors")
             }

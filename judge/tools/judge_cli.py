@@ -86,7 +86,7 @@ def open_events_channel(host: str):
 def fmt_score(score: dict | None) -> str:
     if not score:
         return "-"
-    unit = {"TIME_MS": "ms", "CYCLES": "cycles", "CYCLES_X_DEPTH_X_TRANSISTORS": "cycles x depth x transistors", "WEIGHTED_INSTRUCTIONS": "weighted instructions"}
+    unit = {"TIME_MS": "ms", "CYCLES": "cycles", "CYCLES_X_DEPTH_X_TRANSISTORS": "cycles x depth x transistors", "WEIGHTED_INSTRUCTIONS": "weighted instructions", "INSTRUCTIONS": "instructions"}
     return f"{score['value']:.3f} {unit.get(score['type'], score['type'])}"
 
 

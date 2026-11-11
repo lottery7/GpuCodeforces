@@ -36,7 +36,7 @@ Backend ◀── RabbitMQ: judge.events (QUEUED → COMPILING → PREPARING →
 | `rtl` | схема участника, Verilator + Yosys | `systemverilog` | `CYCLES_X_DEPTH_X_TRANSISTORS` | есть |
 | `riscv-rvv` | векторный RISC-V, QEMU user-mode | `c`, `cpp`, `asm` | `WEIGHTED_INSTRUCTIONS` | есть |
 | `cuda-sim` | GPU NVIDIA в GPGPU-Sim (QV100) | `cuda` | `CYCLES` | есть |
-| `coral-npu` | Coral NPU (MPACT, Verilator) | `c`, `cpp` | `CYCLES` | отложен: тулчейн и симулятор собираются только Bazel-сборкой проекта, а симулятор не умеет принимать входы и отдавать выходы — их пришлось бы вшивать в программу и печатать из неё же, то есть подделываемо |
+| `coral-npu` | ядро Coral NPU в Renode, без ОС | `c`, `cpp` | `INSTRUCTIONS` | есть |
 
 Каталог статический и общий для gateway, executor и бэкенда (`judge-api`, `Processors`); `GET /api/v1/processors` показывает его вместе с тем, принимает ли gateway посылки на процессор и есть ли живой executor. Gateway принимает посылки только на процессоры из `JUDGE_PROCESSORS`, executor обслуживает процессоры из своего `JUDGE_PROCESSORS` и не запускается, если реализации процессора у него нет.
 
@@ -70,6 +70,21 @@ Backend ◀── RabbitMQ: judge.events (QUEUED → COMPILING → PREPARING →
 **Ограничения, принятые пользователем.** Симулятор живёт в одном процессе с решением и печатает статистику в общий stdout: решение может напечатать поддельные строки, отдельного канала у GPGPU-Sim нет. Работа на CPU тактов не стоит, поэтому все массивы — `DEVICE`, а `cudaMemcpy*` в решении запрещены проверкой символов: это рекомендательная проверка, граница безопасности — nsjail. На прототипе такты совпадали на повторных прогонах (и между amd64 и arm64); `__shfl_*_sync` симулятор считает молча неверно, поэтому `shfl.sync` в PTX посылки запрещён, а CUDA Graphs и текстурных объектов в его `libcudart` нет — такая посылка не линкуется.
 
 Детерминизм: гость видит пути своих файлов, аргументы и окружение, и их длина сдвигает стек. Под nsjail всё это одинаково при каждом запуске (`/work`, `/data`, `/sim`, фиксированное окружение), поэтому повторная посылка даёт тот же score. QEMU запускается из `/bin/sh`: nsjail делает команду PID 1 пространства имён, а PID 1 игнорирует сигнал, которым QEMU сообщает о падении гостя, и QEMU зависал бы.
+
+### `coral-npu`
+
+Посылка — `solve` на C или C++ для ядра Coral NPU (RvvCoreMini: RV32IMF, Zbb, векторы Zve32x с VLEN = 128; 8 КБ памяти кода и 32 КБ памяти данных), без операционной системы (интерфейс и метрика — в [docs/problem-format.md](docs/problem-format.md#процессор-coral-npu)). Исполняет его модель ядра из Renode (`CPU.CoralNPU`). Реализация — `processor/coralnpu/`:
+
+1. Кросс-компилятор в песочнице собирает посылку с обвязкой судьи (`CoralNpuHarness`: стартовый код, карта памяти, `judge_main`) и picolibc в один ELF; результат кэшируется. Код, не поместившийся в 8 КБ, — ошибка компоновщика, то есть `COMPILATION_ERROR`. Из заголовков ELF судья берёт, где кончаются собственные данные программы.
+2. Массивы теста судья раскладывает в памяти данных сразу за данными программы (выравнивание 16 байт); наверху остаётся не меньше 1 КБ под стек. Не поместилось — `MEMORY_LIMIT_EXCEEDED` без запуска симулятора.
+3. Тест — один процесс Renode со сценарием судьи (`coralnpu/platform.resc` и `coralnpu/judge_run.py`). Сценарий играет роль хоста ядра, как в руководстве по интеграции Coral NPU: загружает ELF, пишет входы и слова аргументов (адреса массивов, биты скаляров) прямо в память ядра, снимает сброс, ждёт остановки (`mpause` в стартовом коде после `solve`) и читает выходы из памяти.
+4. Score — выполненные ядром инструкции (`ExecutedInstructions`), вместе с двумя десятками инструкций стартового кода.
+
+**Канал отчёта.** У программы нет ни вывода, ни файлов, ни системных вызовов: вся её вселенная — две памяти ядра, которые Renode моделирует целиком, а счётчик инструкций и строка отчёта принадлежат Renode. Подделать score так, как на `riscv-rvv` и `cuda-sim`, здесь нечем.
+
+**Особенности модели, которые обходит сценарий.** Обращение мимо памяти ядра поднимает флаг FAULT, но ядро после этого из библиотеки трансляции не возвращается, и штатная остановка Renode ждала бы его вечно: сценарий опрашивает состояние ядра со стороны и завершает процесс сам. Обработчиков исключений в программе нет, поэтому первое же исключение (недопустимая инструкция, `ecall`) сценарий превращает в остановку. Виртуальное время отвязано от времени хоста, иначе Renode не обгонял бы настоящие часы. VLEN модели по умолчанию 512 бит — сценарий ставит 128, как у настоящего ядра. Кэш трансляции Renode держит в файле (по умолчанию 32 МБ с ростом до 128 МБ): судья задаёт ему 16 МБ в файле настроек запуска и учитывает их в лимите размера файлов песочницы.
+
+**Ограничения.** Это счётчик инструкций, а не тактов: суперскалярность ядра и многотактные векторные операции не моделируются, векторная инструкция стоит столько же, сколько сложение. Потактовая модель у Coral NPU есть только в Verilator под Bazel-сборкой проекта и на порядки медленнее. Модель Renode не знает Zba (в настоящем ядре оно есть), поэтому и компилятор его не использует. Стандартной библиотеки C++ для этой цели в Ubuntu 24.04 нет: C++ — без неё, исключений и RTTI.
 
 **Score посылки** — максимум по замерным тестам (`TestResult.measured`), задан только при `ACCEPTED`. Тест генератора может быть незамерным (`"measure": False`): с него берётся только проверка ответа, его score не идёт в результат и не сравнивается с лимитом (на `gpu-cuda` для него действует только страховочный wall-лимит). Превышение лимита score — `TIME_LIMIT_EXCEEDED`, в сообщении названа единица («Cycle limit exceeded»).
 
@@ -177,12 +192,14 @@ Thrust, CUB, cuBLAS, cuDNN, CUTLASS, cuRAND, driver API (`cuda.h`) и inline PTX
 | OSS CAD Suite | сборка 2026-11-01 (архивы linux-x64 и linux-arm64 по sha256) |
 | QEMU (`riscv-rvv`) | 11.1.3 из исходников с `--enable-plugins` (по sha256), плагин судьи — `riscv/judge_plugin.c` |
 | Кросс-компилятор RISC-V | GCC 13.3 (`gcc-riscv64-linux-gnu` Ubuntu 24.04), RV64GCV, VLEN 256 |
+| Renode (`coral-npu`) | 1.17.0, portable-архивы linux и linux-arm64 по sha256; сценарии судьи — `coralnpu/` |
+| Компилятор Coral NPU | GCC 13.2 (`gcc-riscv64-unknown-elf` Ubuntu 24.04) с picolibc 1.8.6, RV32IMF + Zve32f + Zbb |
 | GPGPU-Sim (`cuda-sim`, `deploy/executor-cuda-sim.Dockerfile`) | accel-sim/gpgpu-sim_distribution, ветка `dev`, коммит `4195dd4f`; модель `SM7_QV100`; CUDA 12.8.1 |
 | Yosys / Verilator | 0.70+286 / 5.053 |
 | Компилятор симулятора | g++ 13 (`-std=c++17`) |
 | Python / PyTorch / NumPy | 3.12 / 2.9.1+cpu / 2.2.6 |
 
-Executor при старте сверяет версии CUDA, g++ и torch (`judge.executor.toolchain.expected-*`), на `rtl` — Yosys и Verilator (`judge.executor.rtl.expected-*`), на `riscv-rvv` — QEMU и GCC (`judge.executor.riscv.expected-*`), на `cuda-sim` — коммит GPGPU-Sim. При расхождении он не запустится. Строка с версиями пишется в каждый результат (`JudgeResult.processor.version`), хэш тулчейна входит в ключ кэша компиляции.
+Executor при старте сверяет версии CUDA, g++ и torch (`judge.executor.toolchain.expected-*`), на `rtl` — Yosys и Verilator (`judge.executor.rtl.expected-*`), на `riscv-rvv` — QEMU и GCC (`judge.executor.riscv.expected-*`), на `coral-npu` — Renode и GCC (`judge.executor.coral-npu.expected-*`), на `cuda-sim` — коммит GPGPU-Sim. При расхождении он не запустится. Строка с версиями пишется в каждый результат (`JudgeResult.processor.version`), хэш тулчейна входит в ключ кэша компиляции.
 
 Heartbeat передает ту же строку у каждого процессора (`ExecutorHeartbeat.processors[].version`). Backend включает
 версию `gpu-cuda` в ключ окружения эталонных замеров и принимает результат только при точном совпадении
@@ -231,11 +248,11 @@ HTTP API описан в [docs/openapi.yaml](docs/openapi.yaml); ниже — т
 
 Тестам executor нужен `python3`: поддельное решение в `HarnessRunnerTest` и поддельный симулятор в `EmulatorRunTest` написаны на Python. GPU, Docker и эмуляторы тестам не нужны. Тесты генератора: `cd judge/pytools && python3 -m unittest discover -s tests`.
 
-Тесты с настоящими эмуляторами помечены тегом JUnit `emulator` и идут отдельной задачей (обычный `test` их пропускает): `RtlEmulatorTest` и `RiscvEmulatorTest` судят все решения `problems/examples/vector_add_rtl` и `vector_add_riscv` настоящими тулчейнами, без песочницы. Нужны OSS CAD Suite (`RTL_HOME` — корень архива), QEMU с плагинами и собранный плагин судьи (`RISCV_QEMU`, `RISCV_PLUGIN`; только Linux), кросс-компиляторы `riscv64-linux-gnu-gcc/g++` и Python с torch (`JUDGE_PYTHON`); в CI это задание `emulators` в `.github/workflows/judge.yml`. Проще всего — внутри образа эмуляторов, где всё это уже есть (нужен только JDK 26):
+Тесты с настоящими эмуляторами помечены тегом JUnit `emulator` и идут отдельной задачей (обычный `test` их пропускает): `RtlEmulatorTest`, `RiscvEmulatorTest` и `CoralNpuEmulatorTest` судят все решения `problems/examples/vector_add_rtl`, `vector_add_riscv` и `vector_add_coral` настоящими тулчейнами, без песочницы. Нужны OSS CAD Suite (`RTL_HOME` — корень архива), QEMU с плагинами и собранный плагин судьи (`RISCV_QEMU`, `RISCV_PLUGIN`; только Linux), кросс-компиляторы `riscv64-linux-gnu-gcc/g++`, Renode (`CORAL_RENODE` — его запускающий файл) с `riscv64-unknown-elf-gcc/g++` и picolibc, и Python с torch (`JUDGE_PYTHON`); в CI это задание `emulators` в `.github/workflows/judge.yml`. Проще всего — внутри образа эмуляторов, где всё это уже есть (нужен только JDK 26):
 
 ```bash
 RTL_HOME=/opt/oss-cad-suite RISCV_QEMU=/opt/qemu/bin/qemu-riscv64 RISCV_PLUGIN=/opt/judge/riscv/judge_plugin.so \
-JUDGE_PYTHON=/opt/venv/bin/python ./gradlew :judge-executor:emulatorTest
+CORAL_RENODE=/opt/renode/renode JUDGE_PYTHON=/opt/venv/bin/python ./gradlew :judge-executor:emulatorTest
 ```
 
 `cuda-sim` проверяется иначе: решения примера `vector_add_cudasim` судятся через стенд с его образом (`--profile cuda-sim`, ниже). Задания в CI для него нет: образ CUDA и сборка GPGPU-Sim для него слишком тяжелы.
@@ -271,14 +288,14 @@ JUDGE_LOCK_CLOCKS=1320,1320 docker compose --profile gpu up -d --wait
 python3 judge/tools/judge_cli.py submit judge/problems/examples/vector_add judge/problems/examples/vector_add/solutions/accepted.cu --watch
 ```
 
-Эмулируемые процессоры (`rtl`, `riscv-rvv` — профиль `emu`; `cuda-sim` — профиль `cuda-sim`), без GPU. Процессоры должны быть и в `JUDGE_PROCESSORS` gateway:
+Эмулируемые процессоры (`rtl`, `riscv-rvv`, `coral-npu` — профиль `emu`; `cuda-sim` — профиль `cuda-sim`), без GPU. Процессоры должны быть и в `JUDGE_PROCESSORS` gateway:
 
 ```bash
-JUDGE_PROCESSORS=gpu-cuda,rtl,riscv-rvv,cuda-sim docker compose --profile judge --profile emu --profile cuda-sim up -d --wait --build
+JUDGE_PROCESSORS=gpu-cuda,rtl,riscv-rvv,coral-npu,cuda-sim docker compose --profile judge --profile emu --profile cuda-sim up -d --wait --build
 python3 judge/tools/judge_cli.py submit judge/problems/examples/vector_add_rtl judge/problems/examples/vector_add_rtl/solutions/accepted.sv --processor rtl --watch
 ```
 
-`JUDGE_RTL_WORKERS`, `JUDGE_RISCV_WORKERS`, `JUDGE_CUDA_SIM_WORKERS` (по умолчанию 2) — сколько симуляций каждого процессора идёт одновременно, по ядру на каждую.
+`JUDGE_RTL_WORKERS`, `JUDGE_RISCV_WORKERS`, `JUDGE_CORAL_NPU_WORKERS`, `JUDGE_CUDA_SIM_WORKERS` (по умолчанию 2) — сколько симуляций каждого процессора идёт одновременно, по ядру на каждую.
 
 GPU-машина, Windows + WSL2:
 - **Docker:** нужен Docker Desktop с WSL2-backend (или Docker Engine внутри WSL2 + `nvidia-container-toolkit`). GPU прокидывается через `/dev/dxg`, executor определяет это сам.

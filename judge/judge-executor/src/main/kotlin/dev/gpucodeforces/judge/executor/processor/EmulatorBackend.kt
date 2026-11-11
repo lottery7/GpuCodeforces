@@ -107,8 +107,8 @@ abstract class EmulatorBackend<B>(
     /** Builds the submission of [job]; [processor] is what the problem declares for this processor. */
     protected abstract fun build(job: JudgeJob, processor: ProcessorSpec): EmulatorBuild<B>
 
-    /** How to simulate one test of the submission built into [artifact]. */
-    protected abstract fun launch(run: TestRun, artifact: B): SimulatorLaunch
+    /** How to simulate one test of the submission built into [artifact], or why the test fails without a run. */
+    protected abstract fun launch(run: TestRun, artifact: B): TestLaunch
 
     final override fun judge(job: JudgeJob, runDir: Path, hooks: JudgeHooks): JudgeResult {
         val problem = job.problem

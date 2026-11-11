@@ -252,7 +252,7 @@ class ProblemPackageReader(jsonMapper: JsonMapper) {
         Languages.CUDA -> cudaStarter(spec)
         Languages.SYSTEMVERILOG -> RtlSignature.template(spec.signature, processor.rtl ?: RtlSettings())
         Languages.C, Languages.CPP -> {
-            val includes = CSignature.includes(cpp = language == Languages.CPP).joinToString("\n") { "#include <$it>" }
+            val includes = CSignature.includes(processor.id, cpp = language == Languages.CPP).joinToString("\n") { "#include <$it>" }
             "$includes\n\n// Массивы лежат в памяти процессора.\n${CSignature.declaration(spec.signature)} {\n}\n"
         }
         Languages.ASM -> """

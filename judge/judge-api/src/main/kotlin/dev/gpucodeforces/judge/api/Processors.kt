@@ -13,6 +13,9 @@ enum class ScoreType {
 
     /** Instructions plus weighted cache misses, an estimate of cycles in the spirit of Cachegrind. */
     WEIGHTED_INSTRUCTIONS,
+
+    /** Instructions an instruction-level simulator executed, each counted once. */
+    INSTRUCTIONS,
 }
 
 /** A result of a submission or a test: less is better, and only scores of one processor are comparable. */
@@ -69,7 +72,7 @@ object Processors {
         ProcessorInfo(RTL, "RTL (Verilator + Yosys)", ScoreType.CYCLES_X_DEPTH_X_TRANSISTORS, listOf(SYSTEMVERILOG), emulated = true),
         ProcessorInfo(RISCV_RVV, "RISC-V RVV (QEMU)", ScoreType.WEIGHTED_INSTRUCTIONS, listOf(C, CPP, ASM), emulated = true),
         ProcessorInfo(CUDA_SIM, "NVIDIA GPU simulator (GPGPU-Sim)", ScoreType.CYCLES, listOf(CUDA), emulated = true),
-        ProcessorInfo(CORAL_NPU, "Coral NPU", ScoreType.CYCLES, listOf(C, CPP), emulated = true),
+        ProcessorInfo(CORAL_NPU, "Coral NPU (Renode)", ScoreType.INSTRUCTIONS, listOf(C, CPP), emulated = true),
     )
 
     private val byId = all.associateBy { it.id }

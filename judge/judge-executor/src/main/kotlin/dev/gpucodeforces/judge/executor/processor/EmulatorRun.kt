@@ -40,6 +40,12 @@ sealed interface SimulatorOutcome {
     data class Failed(val verdict: Verdict, val message: String, val details: String? = null) : SimulatorOutcome
 }
 
+/** What a processor answers for one test of a job. */
+sealed interface TestLaunch
+
+/** The test fails without a simulator run, e.g. because its data cannot be placed in the processor's memory. */
+class Refused(val failure: SimulatorOutcome.Failed) : TestLaunch
+
 /** How to simulate one test: the sandboxed command, where it leaves each output array, how to read its result. */
 class SimulatorLaunch(
     val spec: SandboxSpec,
@@ -49,7 +55,7 @@ class SimulatorLaunch(
     val keep: (String) -> Boolean = { false },
     /** May throw [JudgeInfrastructureException] when the simulator itself broke. */
     val readOutcome: (SimulatorExit) -> SimulatorOutcome,
-)
+) : TestLaunch
 
 /** Kept lines of one run; a simulator prints its statistics once per kernel, the last ones are what counts. */
 const val MAX_KEPT_LINES = 64
@@ -84,7 +90,7 @@ class EmulatorRun(private val sandbox: Sandbox) {
         hooks: JudgeHooks,
         /** Host time one simulator run may take. */
         hostTimeLimit: Duration,
-        launch: (test: PreparedTest, outDir: Path, nonce: String) -> SimulatorLaunch,
+        launch: (test: PreparedTest, outDir: Path, nonce: String) -> TestLaunch,
     ): EmulatorOutcome {
         val results = mutableListOf<TestResult>()
         val total = prepared.tests.size
@@ -95,11 +101,13 @@ class EmulatorRun(private val sandbox: Sandbox) {
             val outDir = Files.createDirectories(runDir.resolve("out").resolve("t${test.index}"))
             FileTrees.makeWritableByAll(outDir)
             val nonce = random.nextNonce()
-            val sim = launch(test, outDir, nonce)
-            val result = try {
-                runTest(problem, test, sim, nonce, scoreType, limit, hostTimeLimit)
-            } finally {
-                sim.outputs.values.forEach { it.deleteIfExists() }
+            val result = when (val sim = launch(test, outDir, nonce)) {
+                is Refused -> failed(test, sim.failure, stderrTail = "")
+                is SimulatorLaunch -> try {
+                    runTest(problem, test, sim, nonce, scoreType, limit, hostTimeLimit)
+                } finally {
+                    sim.outputs.values.forEach { it.deleteIfExists() }
+                }
             }
             results += result
             if (result.verdict != Verdict.ACCEPTED) {
@@ -110,11 +118,19 @@ class EmulatorRun(private val sandbox: Sandbox) {
         return EmulatorOutcome(Verdict.ACCEPTED, results, score = best?.score, metrics = best?.metrics.orEmpty())
     }
 
+    private fun result(test: PreparedTest, verdict: Verdict, message: String? = null, debug: String? = null) =
+        TestResult(test.index, test.spec.name, test.spec.sample, verdict, measured = test.spec.measure, message = message, debug = debug)
+
+    /** A failure of the contestant's code: what went wrong is shown on sample tests only, and logged for the hidden ones. */
+    private fun failed(test: PreparedTest, failure: SimulatorOutcome.Failed, stderrTail: String): TestResult {
+        val details = listOfNotNull(failure.details, stderrTail.ifEmpty { null }?.let { "stderr:\n$it" }).joinToString("\n")
+        if (!test.spec.sample && details.isNotEmpty()) log.info("Hidden test {} '{}': {}", test.index, test.spec.name, details.take(4000))
+        return result(test, failure.verdict, failure.message, debug = details.takeIf { test.spec.sample && it.isNotEmpty() })
+    }
+
     private fun runTest(
         problem: ProblemSpec, test: PreparedTest, sim: SimulatorLaunch, nonce: String, scoreType: ScoreType, limit: Double, hostTimeLimit: Duration,
     ): TestResult {
-        fun result(verdict: Verdict, message: String? = null, debug: String? = null) =
-            TestResult(test.index, test.spec.name, test.spec.sample, verdict, measured = test.spec.measure, message = message, debug = debug)
 
         val prefix = "$nonce "
         val status = mutableListOf<String>()
@@ -132,16 +148,12 @@ class EmulatorRun(private val sandbox: Sandbox) {
         }
         if (res.timedOut) {
             log.info("Test {}: simulator exceeded {} s of host time", test.index, hostTimeLimit.seconds)
-            return result(Verdict.TIME_LIMIT_EXCEEDED, "${failureTitle(Verdict.TIME_LIMIT_EXCEEDED, scoreType)} (the simulation ran out of host time)")
+            return result(test, Verdict.TIME_LIMIT_EXCEEDED, "${failureTitle(Verdict.TIME_LIMIT_EXCEEDED, scoreType)} (the simulation ran out of host time)")
         }
         val outcome = sim.readOutcome(SimulatorExit(res.exitCode, status, res.stderr, kept.toList()))
         val stderrTail = res.stderr.trim().takeLast(2000)
         return when (outcome) {
-            is SimulatorOutcome.Failed -> {
-                val details = listOfNotNull(outcome.details, stderrTail.ifEmpty { null }?.let { "stderr:\n$it" }).joinToString("\n")
-                if (!test.spec.sample && details.isNotEmpty()) log.info("Hidden test {} '{}': {}", test.index, test.spec.name, details.take(4000))
-                result(outcome.verdict, outcome.message, debug = details.takeIf { test.spec.sample && it.isNotEmpty() })
-            }
+            is SimulatorOutcome.Failed -> failed(test, outcome, stderrTail)
             is SimulatorOutcome.Finished -> {
                 val score = Score(outcome.score, scoreType)
                 val wall = res.durationMs.toDouble()
@@ -180,7 +192,7 @@ fun failureTitle(verdict: Verdict, scoreType: ScoreType): String = when (verdict
         ScoreType.TIME_MS -> "Time limit exceeded"
         ScoreType.CYCLES -> "Cycle limit exceeded"
         ScoreType.CYCLES_X_DEPTH_X_TRANSISTORS -> "Cycles x depth x transistors limit exceeded"
-        ScoreType.WEIGHTED_INSTRUCTIONS -> "Instruction limit exceeded"
+        ScoreType.WEIGHTED_INSTRUCTIONS, ScoreType.INSTRUCTIONS -> "Instruction limit exceeded"
     }
     Verdict.WRONG_ANSWER -> "Wrong answer"
     Verdict.MEMORY_LIMIT_EXCEEDED -> "Memory limit exceeded"
