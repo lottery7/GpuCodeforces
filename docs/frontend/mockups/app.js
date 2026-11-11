@@ -22,7 +22,7 @@
   }
 
   function route() {
-    const raw = location.hash.slice(1) || '/problems';
+    const raw = location.hash.slice(1) || '/';
     const separator = raw.indexOf('?');
     return {path: separator < 0 ? raw : raw.slice(0, separator), params: new URLSearchParams(separator < 0 ? '' : raw.slice(separator + 1))};
   }
@@ -132,7 +132,7 @@
     const navigation = entries.map(([target, label]) => `<a href="#${target}" ${active(target) ? 'class="active" aria-current="page"' : ''}>${label}</a>`).join('');
     const account = current ? link('/profile', current.handle) : '<button class="text-link" data-action="signin">Войти</button>';
     const footer = new URLSearchParams(location.search).get('presentation') === '1' ? '' : `<footer class="site-footer"><details class="prototype-tools" ${view.previewOpen ? 'open' : ''}><summary>Состояния шаблонов</summary>${prototypePanel(path)}</details></footer>`;
-    return `<header class="site-header"><div class="header-inner">${link('/problems', 'GPU Forces', 'brand')}<nav class="main-nav" aria-label="Основная навигация">${navigation}</nav><div class="account">${account}</div><details class="mobile-nav"><summary>Меню</summary><nav aria-label="Мобильная навигация">${navigation}${account}</nav></details></div></header><main class="container" id="content" tabindex="-1">${view.connection === 'offline' ? '<div class="error" role="alert">Связь потеряна. Новые отправки недоступны; показаны последние полученные результаты. <button class="text-link" data-action="reconnect">Подключиться снова</button></div>' : ''}${content}</main>${footer}`;
+    return `<header class="site-header"><div class="header-inner">${link('/', 'GPU Forces', 'brand')}<nav class="main-nav" aria-label="Основная навигация">${navigation}</nav><div class="account">${account}</div><details class="mobile-nav"><summary>Меню</summary><nav aria-label="Мобильная навигация">${navigation}${account}</nav></details></div></header><main class="container" id="content" tabindex="-1">${view.connection === 'offline' ? '<div class="error" role="alert">Связь потеряна. Новые отправки недоступны; показаны последние полученные результаты. <button class="text-link" data-action="reconnect">Подключиться снова</button></div>' : ''}${content}</main>${footer}`;
   }
 
   function prototypePanel(path) {
@@ -174,6 +174,39 @@
       const problem = M.problem(item.problemId, item.contestId || null);
       return `<tr><td class="mono">${link('/submission/' + item.id, '#' + item.id, '')}</td>${inProblem ? '' : `<td>${link(problemUrl(item.problemId, item.contestId || 'practice'), problem?.title || item.problemId)}<div class="subline">${item.contestId ? escape(M.contest(item.contestId)?.title || item.contestId) : 'Практика'}</div></td>`}${showUser ? `<td>${link('/profile?user=' + encodeURIComponent(item.userId), userName(item.userId))}</td>` : ''}<td>${verdict(item)}${item.status === 'accepted' && !M.canCompare(item) ? '<div class="subline">Старый профиль проверки</div>' : ''}</td><td class="mono">${item.status === 'accepted' ? time(item.timeMs) : '-'}</td><td>${date(item.createdAt)}</td></tr>`;
     }).join('')}</tbody></table></div>`;
+  }
+
+  function mainPage() {
+    const current = M.user();
+    const latest = M.submissions({}).slice(0, 8);
+    const submissionsList = latest.length ? submissionTable(latest, {showUser: true}) : '<div class="panel"><div class="empty">Посылок пока нет.</div></div>';
+    const upcoming = M.contests().filter(item => M.phase(item.id) === 'upcoming').sort((a, b) => new Date(a.startAt) - new Date(b.startAt))[0] || null;
+    let contestBlock;
+    if (upcoming) {
+      const minutes = Math.max(0, Math.round((new Date(upcoming.endAt) - new Date(upcoming.startAt)) / 60000));
+      const hours = Math.floor(minutes / 60);
+      const rest = minutes % 60;
+      const durationText = `${hours ? hours + ' ч' : ''}${hours && rest ? ' ' : ''}${rest ? rest + ' мин' : ''}` || '0 мин';
+      const meta = [['Начало', date(upcoming.startAt) + ' МСК'], ['Длительность', durationText], ['Задачи', String(upcoming.problemIds.length)]].map(([label, value]) => `<li><span>${label}</span><span>${escape(value)}</span></li>`).join('');
+      const register = !upcoming.registrationOpen ? '<p class="muted contest-register">Регистрация закрыта</p>' : current && M.joined(upcoming.id, current.id) ? '<p class="success contest-register">Вы зарегистрированы</p>' : `<button class="btn primary contest-register" data-action="join-contest" data-id="${escape(upcoming.id)}">Зарегистрироваться</button>`;
+      contestBlock = `<div class="panel dashboard-contest"><h2>Ближайший контест</h2><div class="dashboard-contest-title">${link('/contest/' + encodeURIComponent(upcoming.id), upcoming.title, 'task-link')}</div><ul class="contest-meta">${meta}</ul><div class="contest-countdown">До начала <time data-countdown="${escape(upcoming.startAt)}">--:--:--</time></div>${register}</div>`;
+    } else {
+      contestBlock = '<div class="panel dashboard-contest"><h2>Ближайший контест</h2><p class="muted">Ближайших контестов пока нет.</p></div>';
+    }
+    const top = M.users().filter(user => user.rating !== null && user.rating !== undefined).sort((a, b) => b.rating - a.rating || a.handle.localeCompare(b.handle));
+    const rankOf = value => top.findIndex(item => item.rating === value) + 1;
+    const ownIndex = current ? top.findIndex(user => user.id === current.id) : -1;
+    let ratingTitle = 'Лучшие по рейтингу';
+    let ratingUsers;
+    if (ownIndex >= 0) {
+      ratingTitle = 'Ваш рейтинг';
+      ratingUsers = top.slice(Math.max(0, Math.min(top.length - 5, ownIndex - 2)), Math.max(5, Math.min(top.length, ownIndex + 3))).slice(0, 5);
+    } else {
+      ratingUsers = top.slice(0, 5);
+    }
+    const ratingRows = ratingUsers.map(user => `<tr${user.id === current?.id ? ' class="own-row"' : ''}><td>${rankOf(user.rating)}</td><td>${link('/profile?user=' + encodeURIComponent(user.id), user.handle)}${user.id === current?.id ? ' <span class="small muted">вы</span>' : ''}</td><td class="mono">${user.rating}</td></tr>`);
+    const ratingsBlock = top.length ? `<div class="panel"><h2>${ratingTitle}</h2><div class="table-wrap"><table class="data-table"><thead><tr><th scope="col">Место</th><th scope="col">Участник</th><th scope="col">Рейтинг</th></tr></thead><tbody>${ratingRows.join('')}</tbody></table></div></div>` : '<div class="panel"><h2>Ваш рейтинг</h2><p class="muted">Рейтингов пока нет.</p></div>';
+    return `${header('Главная')}<div class="dashboard"><section class="dashboard-main"><div class="dashboard-head"><h2>Последние посылки</h2>${link('/submissions', 'Все посылки')}</div>${submissionsList}</section><aside class="dashboard-side">${contestBlock}${ratingsBlock}</aside></div>`;
   }
 
   function submissions(params, problem = null, context = 'practice') {
@@ -304,7 +337,8 @@
     const current = route();
     const path = current.path;
     let content;
-    if (path === '/auth') content = bank(new URLSearchParams());
+    if (path === '/') content = mainPage();
+    else if (path === '/auth') content = bank(new URLSearchParams());
     else if (path === '/problems') content = bank(current.params);
     else if (path === '/submissions') content = submissions(current.params);
     else if (path.startsWith('/problem/')) content = problemScreen(decodeURIComponent(path.split('/')[2]), current.params);
@@ -719,7 +753,7 @@
   });
 
   window.addEventListener('hashchange', () => {saveEditor(); lastPhase = null; render(); document.getElementById('content')?.focus({preventScroll: true}); window.scrollTo({top: 0, behavior: 'instant'});});
-  if (!location.hash) history.replaceState(null, '', '#/problems');
+  if (!location.hash) history.replaceState(null, '', '#/');
   render();
   M.submissions().filter(item => pending.includes(item.status)).forEach(item => simulate(item.id));
   setInterval(updateCountdowns, 1000);

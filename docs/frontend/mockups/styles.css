@@ -176,6 +176,20 @@ h1, .task-link { overflow-wrap: anywhere; }
 .breadcrumbs a:hover { color: var(--text-strong); }
 .inline { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
 .stack { display: flex; flex-direction: column; gap: 16px; }
+.dashboard { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr); align-items: start; gap: 16px; }
+.dashboard-main, .dashboard-side { min-width: 0; }
+.dashboard-side { display: flex; flex-direction: column; gap: 16px; }
+.dashboard-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.dashboard-head h2 { margin: 0; }
+.dashboard-contest h2 { margin-bottom: 12px; }
+.dashboard-contest-title { font-size: var(--font-base); font-weight: 500; }
+.contest-meta { display: grid; gap: 6px; margin: 12px 0 0; padding: 0; list-style: none; font-size: var(--font-base); }
+.contest-meta li { display: flex; justify-content: space-between; gap: 12px; }
+.contest-meta li span:first-child { color: var(--muted); }
+.contest-countdown { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); color: var(--muted); font-size: var(--font-base); }
+.contest-countdown time { color: var(--text-strong); font-family: var(--mono); }
+.contest-register { margin-top: 12px; }
+@media (max-width: 900px) { .dashboard { grid-template-columns: 1fr; } }
 .muted { color: var(--muted); }
 .small, small { font-size: var(--font-sm); }
 .subline { display: block; margin-top: 3px; color: var(--muted); font-size: var(--font-sm); line-height: 1.5; }

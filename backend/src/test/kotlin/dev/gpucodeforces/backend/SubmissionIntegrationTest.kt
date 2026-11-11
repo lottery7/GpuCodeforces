@@ -166,6 +166,14 @@ class SubmissionIntegrationTest {
                 .expectBody(ListSubmissions200Response::class.java).returnResult().responseBody!!.total,
         ).isEqualTo(1)
 
+        // Latest submissions of all users, newest first, without code, limited by limit.
+        val latest = client.get().uri("/submissions/latest?limit=2").exchange()
+            .expectStatus().isOk.expectBody(ListSubmissions200Response::class.java).returnResult().responseBody!!
+        assertThat(latest.items.map { it.id }).containsExactly(second.id, first.id)
+        assertThat(latest.items.first().code).isNull()
+        assertThat(latest.items.first().user.id).isEqualTo(alice.id)
+        assertThat(latest.total).isEqualTo(2)
+
         val bank = client.get().uri("/problems").cookie("session", aliceCookie).exchange()
             .expectBody(ListProblems200Response::class.java).returnResult().responseBody!!
         val vectorAdd = bank.items.single { it.id == "vector_add" }

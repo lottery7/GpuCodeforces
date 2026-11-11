@@ -128,6 +128,25 @@ paths:
                         ratingDelta: {type: integer, nullable: true}
                         ratingAfter: {type: integer, nullable: true}
         default: {$ref: '#/components/responses/Error'}
+  /users/{id}/rating-history:
+    parameters:
+      - {$ref: '#/components/parameters/Id'}
+    get:
+      operationId: getUserRatingHistory
+      summary: История рейтинга участника для графика
+      description: Рейтинг участника после каждого завершённого контеста, который менял его рейтинг, по возрастанию старта контеста. Ограничена параметрами after и before.
+      parameters:
+        - {name: after, in: query, description: 'Включительно: только контесты, начавшиеся не раньше этого момента.', schema: {type: string, format: date-time}}
+        - {name: before, in: query, description: 'Включительно: только контесты, начавшиеся не позже этого момента.', schema: {type: string, format: date-time}}
+      responses:
+        '200':
+          description: Точки рейтинга; сортировка по startAt по возрастанию
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/RatingHistoryPoint'}
+        default: {$ref: '#/components/responses/Error'}
   /problems:
     get:
       operationId: listProblems
@@ -311,6 +330,26 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/Submission'}
+        default: {$ref: '#/components/responses/Error'}
+  /submissions/latest:
+    get:
+      operationId: listLatestSubmissions
+      summary: Последние посылки всех участников
+      description: Свежие посылки по всему сайту, новые первыми. Без кода и диагностики. Размер окна ограничен параметром limit.
+      parameters:
+        - {$ref: '#/components/parameters/Offset'}
+        - {$ref: '#/components/parameters/Limit'}
+      responses:
+        '200':
+          description: Посылки всех пользователей, отсортированные по времени отправки по убыванию
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items: {type: array, items: {$ref: '#/components/schemas/Submission'}}
+                  total: {type: integer}
         default: {$ref: '#/components/responses/Error'}
   /contests:
     get:
@@ -502,6 +541,16 @@ components:
         rank: {type: integer, nullable: true}
         ratingDelta: {type: integer, nullable: true}
         ratingContestId: {type: string, nullable: true}
+    RatingHistoryPoint:
+      type: object
+      required: [contestId, title, startAt, rank, ratingDelta, ratingAfter]
+      properties:
+        contestId: {type: string}
+        title: {type: string}
+        startAt: {type: string, format: date-time}
+        rank: {type: integer}
+        ratingDelta: {type: integer}
+        ratingAfter: {type: integer}
     Problem:
       type: object
       description: last* и best* относятся к контексту; без userId и сессии они null. solvedCount и recordTimeMs общие.

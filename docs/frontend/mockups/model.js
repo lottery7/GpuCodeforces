@@ -54,9 +54,18 @@
       {id:'kernel_panic',handle:'kernel_panic',email:'kernel@example.com',role:'participant',rating:2348,ratingDelta:86,ratingContestId:'weekly-11'},
       {id:'warp_speed',handle:'warp_speed',email:'warp@example.com',role:'participant',rating:2261,ratingDelta:42,ratingContestId:'weekly-11'},
       {id:'shared_memory',handle:'shared_memory',email:'shared@example.com',role:'participant',rating:2187,ratingDelta:65,ratingContestId:'weekly-11'},
+      {id:'grid_coalesce',handle:'grid_coalesce',email:'grid@example.com',role:'participant',rating:2240,ratingDelta:51,ratingContestId:'weekly-11'},
+      {id:'warp_guru',handle:'warp_guru',email:'warp.guru@example.com',role:'participant',rating:2195,ratingDelta:33,ratingContestId:'weekly-11'},
+      {id:'cache_line',handle:'cache_line',email:'cache@example.com',role:'participant',rating:2110,ratingDelta:58,ratingContestId:'weekly-11'},
+      {id:'unroll_me',handle:'unroll_me',email:'unroll@example.com',role:'participant',rating:2055,ratingDelta:44,ratingContestId:'weekly-11'},
+      {id:'occupancy_king',handle:'occupancy_king',email:'occupancy@example.com',role:'participant',rating:1980,ratingDelta:29,ratingContestId:'weekly-11'},
+      {id:'sm_hero',handle:'sm_hero',email:'sm@example.com',role:'participant',rating:1925,ratingDelta:40,ratingContestId:'weekly-11'},
+      {id:'tensor_tornado',handle:'tensor_tornado',email:'tensor@example.com',role:'participant',rating:1876,ratingDelta:22,ratingContestId:'weekly-11'},
       {id:'alex_cuda',handle:'alex_cuda',email:'alex@example.com',role:'participant',rating:1842,ratingDelta:124,ratingContestId:'weekly-11'},
       {id:'parallel_mind',handle:'parallel_mind',email:'parallel@example.com',role:'participant',rating:1786,ratingDelta:-18,ratingContestId:'weekly-11'},
       {id:'thread_block',handle:'thread_block',email:'thread@example.com',role:'participant',rating:1743,ratingDelta:37,ratingContestId:'weekly-11'},
+      {id:'block_dim',handle:'block_dim',email:'block@example.com',role:'participant',rating:1690,ratingDelta:31,ratingContestId:'weekly-11'},
+      {id:'stream_merger',handle:'stream_merger',email:'stream@example.com',role:'participant',rating:1612,ratingDelta:18,ratingContestId:'weekly-11'},
       {id:'author_cuda',handle:'author_cuda',email:'author@example.com',role:'participant',rating:null,ratingDelta:null,ratingContestId:null},
       {id:'new_cuda',handle:'new_cuda',email:'new@example.com',role:'participant',rating:null,ratingDelta:null,ratingContestId:null}
     ];
@@ -78,7 +87,7 @@
     add(1005,'alex_cuda','relu',0.018,null,date(-3*day));
     Object.assign(records[records.length-1],{profileId:'gpu-a100-v0',testVersion:'demo-v0',benchmark:{...copy(baseProblem('relu').benchmark),profileId:'gpu-a100-v0',testVersion:'demo-v0'}});
     let id = 1100;
-    const rivals = [['kernel_panic',0.63],['warp_speed',0.68],['shared_memory',0.71],['parallel_mind',0.9],['thread_block',1.05]];
+    const rivals = [['kernel_panic',0.63],['warp_speed',0.68],['grid_coalesce',0.65],['warp_guru',0.69],['shared_memory',0.71],['cache_line',0.73],['unroll_me',0.78],['occupancy_king',0.83],['sm_hero',0.86],['tensor_tornado',0.89],['parallel_mind',0.9],['thread_block',1.05],['block_dim',1.12],['stream_merger',1.2]];
     rivals.forEach(([userId,factor],personIndex)=>{
       ['vector-addition','matrix-transpose','relu','reduction','matrix-multiplication'].forEach((problemId,index)=>add(id++,userId,problemId,Number((baseProblem(problemId).benchmark.referenceMs*factor).toFixed(4)),null,date(-day-index*60000-personIndex*1000)));
     });

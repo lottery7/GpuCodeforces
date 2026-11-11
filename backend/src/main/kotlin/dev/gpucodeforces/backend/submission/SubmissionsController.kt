@@ -17,6 +17,7 @@ import dev.gpucodeforces.backend.user.UserService
 import dev.gpucodeforces.backend.user.toApiModel
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
+import org.springframework.data.domain.PageRequest
 import org.springframework.stereotype.Component
 import org.springframework.web.bind.annotation.RestController
 import java.time.ZoneOffset
@@ -50,6 +51,11 @@ class SubmissionsController(
         val author = CurrentUser.resolve()!!
         val submission = with(submitSolutionRequest) { submissionService.submit(problemId, contestId, code, author) }
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(views.detail(submission, author))
+    }
+
+    override fun listLatestSubmissions(offset: Int, limit: Int): ResponseEntity<ListSubmissions200Response> {
+        val rows = submissionRepository.findLatest(PageRequest.of(offset, limit))
+        return ResponseEntity.ok(ListSubmissions200Response(views.summaries(rows), submissionRepository.count().toInt()))
     }
 
     override fun getSubmission(id: String): ResponseEntity<SubmissionApiModel> =

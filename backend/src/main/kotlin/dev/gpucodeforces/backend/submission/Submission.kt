@@ -10,6 +10,7 @@ import jakarta.persistence.Table
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Query
+import org.springframework.data.domain.Pageable
 import java.math.BigDecimal
 import java.time.Instant
 import java.util.UUID
@@ -162,4 +163,15 @@ interface SubmissionRepository : JpaRepository<Submission, UUID> {
         """,
     )
     fun search(userId: UUID, problemId: String?, status: SubmissionStatus?, practiceOnly: Boolean, contestId: UUID?): List<SubmissionRow>
+
+    /** Newest submissions across all users, newest first; paginated in SQL, no code or diagnostic. */
+    @Query(
+        """
+        SELECT new dev.gpucodeforces.backend.submission.SubmissionRow(
+            s.id, s.userId, s.problemId, s.problemVersionId, s.contestId, s.status, s.timeMs, s.judgeHash, s.gpuProfile, s.createdAt)
+        FROM Submission s
+        ORDER BY s.createdAt DESC
+        """,
+    )
+    fun findLatest(pageable: Pageable): List<SubmissionRow>
 }
