@@ -1,5 +1,5 @@
 import { Component, lazy, Suspense, useEffect, useRef, type ReactNode } from 'react';
-import { Link, NavLink, Navigate, Route, Routes, useLocation } from 'react-router';
+import { Link, NavLink, Route, Routes, useLocation } from 'react-router';
 import { useSession } from './auth';
 import { AuthDialogProvider, AuthLanding, useAuthDialog } from './auth-dialog';
 import { ErrorMessage, PageHeader } from './ui';
@@ -13,6 +13,7 @@ const Contest = lazy(() => import('./pages/Contest'));
 const ContestEditor = lazy(() => import('./pages/ContestEditor'));
 const Profile = lazy(() => import('./pages/Profile'));
 const Rating = lazy(() => import('./pages/Rating'));
+const Home = lazy(() => import('./pages/Home'));
 
 const navigation = [
   ['/problems', 'Задачи'], ['/contests', 'Соревнования'],
@@ -54,7 +55,7 @@ function Shell() {
   return <>
     <a className="skip-link" href="#content">К содержимому</a>
     <header className="site-header"><div className="header-inner">
-      <Link className="brand" to="/problems">GPU Forces</Link>
+      <Link className="brand" to="/">GPU Forces</Link>
       <nav className="main-nav" aria-label="Основная навигация">{links()}</nav>
       <div className="account">{account()}</div>
       <details ref={menu} className="mobile-nav"><summary>Меню</summary><nav aria-label="Мобильная навигация">{links()}{account()}</nav></details>
@@ -66,7 +67,7 @@ function Shell() {
       <PageBoundary key={location.pathname}>
         <Suspense fallback={<div className="empty" role="status">Загрузка...</div>}>
         <Routes>
-          <Route path="/" element={<Navigate to="/problems" replace />} />
+          <Route path="/" element={<Home />} />
           <Route path="/problems" element={<Problems />} />
           <Route path="/problem/:id" element={<Problem />} />
           <Route path="/submissions" element={<Submissions />} />
