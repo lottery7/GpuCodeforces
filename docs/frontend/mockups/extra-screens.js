@@ -272,17 +272,25 @@
       const contest = ctx.M.contest(item.contestId);
       return `<tr><td>${ctx.link(`/contest/${encodeURIComponent(item.contestId)}?tab=standings`, contest?.title || item.contestId)}</td><td>${item.phase === 'finished' ? item.rank ?? '-' : item.phase === 'upcoming' ? 'До начала' : 'Идет'}</td><td>${signed(item.ratingDelta)}</td><td>${item.ratingAfter ?? (item.phase === 'finished' ? 'Ожидает расчета' : '-')}</td></tr>`;
     });
-    return `${ctx.header(person.handle, '', ctx.link(`/submissions?user=${userQuery}`, ctx.user?.id === person.id ? 'Мои посылки' : 'Посылки участника', 'btn secondary'))}${summary}<section class="stack"><h2>Последние посылки</h2>${recentRows.length ? table(['Посылка', 'Задача', 'Вердикт', 'Время GPU, мс', 'Отправлено, МСК'], recentRows, 'Последние посылки участника') : empty('Посылок пока нет', ctx.user?.id === person.id ? 'Выберите задачу и отправьте первое решение.' : 'Участник еще не отправлял решений.', ctx.user?.id === person.id ? ctx.link('/problems', 'Выбрать задачу', 'btn primary') : '')}<h2>Соревнования</h2>${historyRows.length ? table(['Соревнование', 'Место', 'Изменение рейтинга', 'Рейтинг после контеста'], historyRows, 'История соревнований участника') : '<p class="muted">Еще не участвовал в соревнованиях.</p>'}</section>`;
+    const ownProfile = ctx.user && person.id === ctx.user.id;
+    const actions = `${ctx.link(`/submissions?user=${userQuery}`, ownProfile ? 'Мои посылки' : 'Посылки участника', 'btn secondary')}${ownProfile ? '<button type="button" class="btn secondary" data-action="logout">Выйти</button>' : ''}`;
+    return `${ctx.header(person.handle, '', actions)}${summary}<section class="stack"><h2>Последние посылки</h2>${recentRows.length ? table(['Посылка', 'Задача', 'Вердикт', 'Время GPU, мс', 'Отправлено, МСК'], recentRows, 'Последние посылки участника') : empty('Посылок пока нет', ownProfile ? 'Выберите задачу и отправьте первое решение.' : 'Участник еще не отправлял решений.', ownProfile ? ctx.link('/problems', 'Выбрать задачу', 'btn primary') : '')}<h2>Соревнования</h2>${historyRows.length ? table(['Соревнование', 'Место', 'Изменение рейтинга', 'Рейтинг после контеста'], historyRows, 'История соревнований участника') : '<p class="muted">Еще не участвовал в соревнованиях.</p>'}</section>`;
   }
 
-  function auth(ctx) {
-    const mode = ['login', 'register', 'reset'].includes(param(ctx, 'mode', 'login')) ? param(ctx, 'mode', 'login') : 'login';
-    const returnTo = param(ctx, 'return');
+  function authModeFrom(value) {
+    return ['login', 'register', 'reset'].includes(value) ? value : 'login';
+  }
+
+  function authDialog(ctx) {
+    const mode = authModeFrom(ctx.view?.authMode);
+    const returnTo = ctx.view?.authReturn || '';
     const suffix = returnTo ? `&return=${encodeURIComponent(returnTo)}` : '';
-    const nav = tabs(ctx, [['login', 'Вход', `/auth?mode=login${suffix}`], ['register', 'Регистрация', `/auth?mode=register${suffix}`]], mode, 'Доступ к аккаунту');
+    const nav = mode !== 'reset' ? `<nav class="tabs auth-tabs" aria-label="Доступ к аккаунту">${[['login', 'Вход'], ['register', 'Регистрация']].map(([id, title]) => `<button type="button" class="tab${mode === id ? ' active' : ''}" data-action="auth-mode" data-mode="${id}">${title}</button>`).join('')}</nav>` : '';
+    const title = mode === 'reset' ? 'Восстановление доступа' : 'Вход в аккаунт';
     const password = mode !== 'reset' ? `<label class="field"><span>Пароль</span><input id="auth-password" type="password" name="password" required minlength="8" autocomplete="${mode === 'register' ? 'new-password' : 'current-password'}" aria-describedby="password-hint"><span id="password-hint" class="small muted">Не меньше 8 символов.</span></label>` : '';
     const fields = mode === 'login' ? `<label class="field"><span>Ник или почта</span><input name="identifier" required autocomplete="username" value="${ctx.escape(ctx.view?.authIdentifier || '')}"></label>` : `${mode === 'register' ? '<label class="field"><span>Ник участника</span><input name="handle" required minlength="3" maxlength="24" pattern="[A-Za-z0-9_]{3,24}" autocomplete="username" aria-describedby="handle-hint"><span id="handle-hint" class="small muted">Латинские буквы, цифры и _.</span></label>' : ''}<label class="field"><span>Почта</span><input name="email" type="email" required autocomplete="email"></label>`;
-    return `${ctx.header(mode === 'reset' ? 'Восстановление доступа' : 'Аккаунт')}<div class="auth-form">${mode !== 'reset' ? nav : ''}<form class="form" data-form="${mode}">${fields}${password}${message(ctx, mode)}<button class="btn primary" type="submit">${mode === 'register' ? 'Зарегистрироваться' : mode === 'reset' ? 'Отправить инструкцию' : 'Войти'}</button></form>${mode === 'login' ? `<p>${ctx.link(`/auth?mode=reset${suffix}`, 'Забыли пароль?')}</p><p class="small muted">Демо-аккаунты: alex_cuda (с историей), new_cuda (пустой аккаунт). Пароль произвольный, от 8 символов. Он не сохраняется.</p>` : mode === 'reset' ? `<p>${ctx.link(`/auth?mode=login${suffix}`, 'Вернуться ко входу')}</p><p class="small muted">В прототипе письма не отправляются.</p>` : '<p class="small muted">Регистрация создает локальный демо-профиль. Пароль не сохраняется.</p>'}</div>`;
+    const foot = mode === 'login' ? `<p><button type="button" class="text-link" data-action="auth-mode" data-mode="reset">Забыли пароль?</button></p><p class="small muted">Демо-аккаунты: alex_cuda (с историей), new_cuda (пустой аккаунт). Пароль произвольный, от 8 символов. Он не сохраняется.</p>` : mode === 'reset' ? `<p><button type="button" class="text-link" data-action="auth-mode" data-mode="login">Вернуться ко входу</button></p><p class="small muted">В прототипе письма не отправляются.</p>` : '<p class="small muted">Регистрация создает локальный демо-профиль. Пароль не сохраняется.</p>';
+    return `<div class="auth-dialog-head"><h2>${title}</h2><button type="button" class="auth-close" data-action="close-auth" aria-label="Закрыть">×</button></div>${nav}<form class="form" data-form="${mode}">${fields}${password}${message(ctx, mode)}<button class="btn primary" type="submit">${mode === 'register' ? 'Зарегистрироваться' : mode === 'reset' ? 'Отправить инструкцию' : 'Войти'}</button></form><div class="auth-dialog-foot">${foot}</div>`;
   }
 
   window.ExtraScreens = {
@@ -293,8 +301,8 @@
       if (route.startsWith('/contest/')) return contest(ctx, decodeURIComponent(route.slice('/contest/'.length)));
       if (route === '/rating') return rating(ctx);
       if (route === '/profile') return profile(ctx);
-      if (route === '/auth') return auth(ctx);
       return null;
-    }
+    },
+    authDialog
   };
 })();

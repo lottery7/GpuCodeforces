@@ -12,7 +12,7 @@
   const difficultyNames = {easy: 'Легкая', medium: 'Средняя', hard: 'Сложная'};
   const difficultyClass = d => d === 'easy' ? 'difficulty-easy' : d === 'medium' ? 'difficulty-medium' : d === 'hard' ? 'difficulty-hard' : '';
   const difficultyTag = d => `<span class="difficulty ${difficultyClass(d)}">${escape(difficultyNames[d] || d)}</span>`;
-  const view = {previewOpen: false, listState: 'filled', outcome: 'accepted', runOutcome: 'accepted', connection: 'online', contestValues: {}, authorQuery: '', contestPicker: {q: '', difficulty: 'all', tag: 'all', visibility: 'all', selectedOnly: false}, runs: {}, undo: {}, formMessages: {}};
+  const view = {previewOpen: false, listState: 'filled', outcome: 'accepted', runOutcome: 'accepted', connection: 'online', contestValues: {}, authorQuery: '', contestPicker: {q: '', difficulty: 'all', tag: 'all', visibility: 'all', selectedOnly: false}, runs: {}, undo: {}, formMessages: {}, authMode: 'login', authReturn: ''};
   const jobs = new Map();
   let toastTimer;
   let lastPhase;
@@ -130,7 +130,7 @@
     const entries = [['/problems', 'Задачи'], ['/contests', 'Соревнования'], ['/submissions', 'Посылки'], ['/rating', 'Рейтинг']];
     const active = target => path === target || (target === '/problems' && path.startsWith('/problem/')) || (target === '/submissions' && path.startsWith('/submission/')) || (target === '/contests' && (path.startsWith('/contest/') || path.startsWith('/contests/')));
     const navigation = entries.map(([target, label]) => `<a href="#${target}" ${active(target) ? 'class="active" aria-current="page"' : ''}>${label}</a>`).join('');
-    const account = current ? `${link('/profile', current.handle)}<button class="text-link" data-action="logout">Выйти</button>` : link(path === '/auth' ? url('/auth', {return: route().params.get('return')}) : url('/auth', {return: location.hash.slice(1)}), 'Войти');
+    const account = current ? link('/profile', current.handle) : '<button class="text-link" data-action="signin">Войти</button>';
     const footer = new URLSearchParams(location.search).get('presentation') === '1' ? '' : `<footer class="site-footer"><details class="prototype-tools" ${view.previewOpen ? 'open' : ''}><summary>Состояния шаблонов</summary>${prototypePanel(path)}</details></footer>`;
     return `<header class="site-header"><div class="header-inner">${link('/problems', 'GPU Forces', 'brand')}<nav class="main-nav" aria-label="Основная навигация">${navigation}</nav><div class="account">${account}</div><details class="mobile-nav"><summary>Меню</summary><nav aria-label="Мобильная навигация">${navigation}${account}</nav></details></div></header><main class="container" id="content" tabindex="-1">${view.connection === 'offline' ? '<div class="error" role="alert">Связь потеряна. Новые отправки недоступны; показаны последние полученные результаты. <button class="text-link" data-action="reconnect">Подключиться снова</button></div>' : ''}${content}</main>${footer}`;
   }
@@ -304,12 +304,14 @@
     const current = route();
     const path = current.path;
     let content;
-    if (path === '/problems') content = bank(current.params);
+    if (path === '/auth') content = bank(new URLSearchParams());
+    else if (path === '/problems') content = bank(current.params);
     else if (path === '/submissions') content = submissions(current.params);
     else if (path.startsWith('/problem/')) content = problemScreen(decodeURIComponent(path.split('/')[2]), current.params);
     else if (path.startsWith('/submission/')) content = submissionScreen(path.split('/')[2]);
     else content = window.ExtraScreens.render(path, {M, user: M.user(), params: current.params, escape, header, link, view, renderList: listState}) || notFound();
     app.innerHTML = shell(path, content);
+    if (path === '/auth') openAuth(current.params.get('mode') || 'login', current.params.get('return') || location.hash.slice(1));
     if (M.storageError()) document.getElementById('content').insertAdjacentHTML('afterbegin', '<div class="error" role="alert">Хранилище браузера недоступно. Изменения сохранятся только до обновления страницы.</div>');
     document.title = 'GPU Forces - ' + (document.querySelector('h1')?.textContent || 'Платформа');
     document.querySelector('.prototype-tools')?.addEventListener('toggle', event => {view.previewOpen = event.target.open;});
@@ -361,8 +363,25 @@
   }
 
   function requestLogin(returnTo) {
-    M.setReturnTo(returnTo);
-    navigate(url('/auth', {return: returnTo}));
+    openAuth('login', returnTo || location.hash.slice(1) || '');
+  }
+
+  function openAuth(mode, returnTo) {
+    view.authMode = ['login', 'register', 'reset'].includes(mode) ? mode : 'login';
+    view.authReturn = returnTo || '';
+    const dialog = document.getElementById('auth-dialog');
+    dialog.innerHTML = window.ExtraScreens.authDialog({M, user: M.user(), params: new URLSearchParams(), escape, header, link, view, renderList: listState});
+    if (dialog.open) {
+      dialog.querySelector('.form input')?.focus({preventScroll: true});
+    } else {
+      dialog.showModal();
+      dialog.querySelector('.form input')?.focus({preventScroll: true});
+    }
+  }
+
+  function closeAuth() {
+    const dialog = document.getElementById('auth-dialog');
+    if (dialog.open) dialog.close();
   }
 
   function currentProblem() {
@@ -528,12 +547,24 @@
   }
 
   document.addEventListener('click', event => {
+    const authLink = event.target.closest('a[href^="#/auth"], a[href^="#auth"], a[href^="auth"]');
+    if (authLink) {
+      event.preventDefault();
+      const raw = authLink.getAttribute('href').replace(/^#/, '');
+      const sep = raw.indexOf('?');
+      const params = new URLSearchParams(sep < 0 ? '' : raw.slice(sep + 1));
+      openAuth(params.get('mode') || 'login', params.get('return') || location.hash.slice(1));
+      return;
+    }
     const anchor = event.target.closest('[data-anchor], .skip-link');
     if (anchor) {event.preventDefault(); const target = document.getElementById(anchor.dataset.anchor || 'content'); target?.scrollIntoView({behavior: 'smooth'}); target?.focus({preventScroll: true}); return;}
     const actionElement = event.target.closest('[data-action]');
     if (!actionElement) return;
     const action = actionElement.dataset.action;
     if (action === 'submit') sendSolution();
+    else if (action === 'signin') openAuth('login', location.hash.slice(1));
+    else if (action === 'close-auth') closeAuth();
+    else if (action === 'auth-mode') openAuth(actionElement.dataset.mode || 'login', view.authReturn);
     else if (action === 'add-contest-author') changeContestAuthor('add', actionElement.dataset.id);
     else if (action === 'remove-contest-author') changeContestAuthor('remove', actionElement.dataset.id);
     else if (action === 'reset-contest-filters') {
@@ -671,13 +702,14 @@
     event.preventDefault();
     const values = Object.fromEntries(new FormData(form));
     if (name === 'login' || name === 'register') {
-      const requestedReturn = route().params.get('return');
+      const requestedReturn = view.authReturn;
       if (requestedReturn?.startsWith('/') && !requestedReturn.startsWith('//')) M.setReturnTo(requestedReturn);
       const result = name === 'login' ? M.login(values.identifier) : M.register({handle: values.handle, email: values.email});
       if (!result.ok) {formError(result.error); return;}
       resetAccountViews();
       form.reset();
-      const target = M.takeReturnTo() || route().params.get('return') || '/profile';
+      closeAuth();
+      const target = M.takeReturnTo() || requestedReturn || '/profile';
       navigate(target.startsWith('/') && !target.startsWith('//') ? target : '/profile');
     } else if (name === 'reset') {
       const message = document.getElementById('form-message');

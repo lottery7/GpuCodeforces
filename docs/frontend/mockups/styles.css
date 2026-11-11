@@ -275,6 +275,23 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
 .auth-form .tabs { margin-bottom: 0; }
 .auth-form .primary { align-self: flex-start; min-width: 110px; }
 .auth-form .notice { margin-top: 4px; }
+.auth-dialog { width: 100%; max-width: 400px; padding: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); box-shadow: 0 24px 60px #000c; }
+.auth-dialog[open] { display: block; }
+.auth-dialog::backdrop { background: #0009; }
+.auth-dialog .auth-dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 20px 12px; }
+.auth-dialog .auth-dialog-head h2 { margin: 0; font-size: var(--font-xl); }
+.auth-dialog .auth-close { flex-shrink: 0; min-width: 30px; height: 30px; padding: 0 6px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font-size: 22px; line-height: 1; }
+.auth-dialog .auth-close:hover { background: #292b30; color: var(--text-strong); }
+.auth-dialog .auth-tabs { margin: 0 20px; }
+.auth-dialog .form { gap: 14px; padding: 16px 20px 20px; }
+.auth-dialog .form > p { margin: 0; }
+.auth-dialog .form .primary { align-self: flex-start; min-width: 110px; }
+.auth-dialog .auth-tabs + .form { padding-top: 8px; }
+.auth-dialog .auth-dialog-foot { display: grid; gap: 6px; padding: 0 20px 20px; }
+.auth-dialog .auth-dialog-foot p { margin: 0; }
+@media (max-width: 480px) {
+  .auth-dialog { max-width: calc(100vw - 32px); }
+}
 .metrics { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 26px; margin-bottom: 20px; }
 .metrics > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
 .metrics strong { font-family: var(--mono); font-size: var(--font-xl); font-weight: 500; }
