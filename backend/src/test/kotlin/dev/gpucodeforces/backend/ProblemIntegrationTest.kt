@@ -117,7 +117,8 @@ class ProblemIntegrationTest {
         assertThat(publicBank.items.map { it.id }).containsExactly("vector_add", "matmul_host")
         assertThat(publicBank.tags).containsExactly("CUDA", "Векторы", "Матрицы")
         assertThat(publicBank.items.first().solved).isFalse()
-        assertThat(list(cookie = authorCookie).items.map { it.id }).contains("draft_task")
+        // codes 1, 2 and 10 in the order of numbers: as text "10" would go before "2"
+        assertThat(list(cookie = authorCookie).items.map { it.id }).containsExactly("vector_add", "matmul_host", "draft_task")
         assertThat(list(cookie = otherCookie).items.map { it.id }).doesNotContain("draft_task")
         client.get().uri("/problems/draft_task").exchange().expectStatus().isNotFound
 
@@ -232,7 +233,7 @@ class ProblemIntegrationTest {
                 .resolve("statement.md")
             draft.writeText(
                 draft.readText()
-                    .replace("code: \"1\"", "code: \"9\"")
+                    .replace("code: \"1\"", "code: \"10\"")
                     .replace("authors: []", "authors: [Problem_Author]\ndraft: true"),
             )
             registry.add("platform.problems.directory") { problems.toString() }
