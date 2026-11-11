@@ -7,6 +7,7 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.stereotype.Component
 import org.springframework.web.filter.OncePerRequestFilter
+import java.nio.charset.StandardCharsets
 
 private val MUTATING_METHODS = setOf("POST", "PUT", "DELETE", "PATCH")
 
@@ -23,6 +24,8 @@ class OriginCheckFilter : OncePerRequestFilter() {
             if (origin != null && origin != expected) {
                 response.status = HttpStatus.FORBIDDEN.value()
                 response.contentType = MediaType.APPLICATION_JSON_VALUE
+                // the servlet default is ISO-8859-1, which has no Cyrillic
+                response.characterEncoding = StandardCharsets.UTF_8.name()
                 response.writer.write("""{"message":"Недопустимый источник запроса"}""")
                 return
             }

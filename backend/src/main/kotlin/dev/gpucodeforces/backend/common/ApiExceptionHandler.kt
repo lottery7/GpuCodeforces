@@ -6,8 +6,10 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.http.converter.HttpMessageNotReadableException
 import org.springframework.web.bind.MethodArgumentNotValidException
+import org.springframework.web.bind.MissingServletRequestParameterException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
 import org.springframework.web.ErrorResponse as SpringErrorResponse
 
 @RestControllerAdvice
@@ -20,14 +22,17 @@ class ApiExceptionHandler {
         return ResponseEntity.status(exception.status).body(ErrorResponse(exception.message!!))
     }
 
-    @ExceptionHandler(MethodArgumentNotValidException::class, HttpMessageNotReadableException::class)
+    @ExceptionHandler(
+        MethodArgumentNotValidException::class, HttpMessageNotReadableException::class,
+        MethodArgumentTypeMismatchException::class, MissingServletRequestParameterException::class,
+    )
     fun handleMalformedRequest(exception: Exception): ResponseEntity<ErrorResponse> {
         log.info("400: malformed request: {}", exception.message)
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ErrorResponse("Неверный запрос"))
     }
 
     /**
-     * Spring's own client errors (unknown route, wrong method, missing parameter) keep their status. Anything else is
+     * Spring's other client errors (unknown route, wrong method) keep their status. Anything else is
      * a bug: full stack trace in the log, no internals in the response.
      */
     @ExceptionHandler(Exception::class)

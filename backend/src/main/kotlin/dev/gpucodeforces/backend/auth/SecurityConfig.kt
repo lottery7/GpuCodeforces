@@ -20,6 +20,7 @@ import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter
 import tools.jackson.databind.json.JsonMapper
+import java.nio.charset.StandardCharsets
 
 /**
  * The frontend contract's `security: [{}, {session: []}]` default means most operations are
@@ -73,6 +74,8 @@ class SecurityConfig(
     private fun writeError(response: HttpServletResponse, status: HttpStatus, message: String) {
         response.status = status.value()
         response.contentType = MediaType.APPLICATION_JSON_VALUE
+        // the servlet default is ISO-8859-1, which has no Cyrillic
+        response.characterEncoding = StandardCharsets.UTF_8.name()
         response.writer.write(jsonMapper.writeValueAsString(ErrorResponse(message)))
     }
 
