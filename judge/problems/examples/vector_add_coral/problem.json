@@ -1,0 +1,17 @@
+{
+  "id": "vector-add-coral",
+  "version": "1",
+  "signature": {
+    "function": "solve",
+    "params": [
+      {"name": "A", "type": "INT32", "role": "INPUT", "memory": "HOST", "size": "N"},
+      {"name": "B", "type": "INT32", "role": "INPUT", "memory": "HOST", "size": "N"},
+      {"name": "C", "type": "INT32", "role": "OUTPUT", "memory": "HOST", "size": "N"},
+      {"name": "N", "type": "INT32", "role": "SCALAR"}
+    ]
+  },
+  "checker": {"mode": "EXACT"},
+  "processors": [
+    {"id": "coral-npu", "languages": ["c", "cpp"], "limit": 30000}
+  ]
+}

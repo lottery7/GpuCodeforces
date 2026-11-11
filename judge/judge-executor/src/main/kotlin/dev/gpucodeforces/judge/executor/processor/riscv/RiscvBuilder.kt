@@ -2,6 +2,7 @@ package dev.gpucodeforces.judge.executor.processor.riscv
 
 import dev.gpucodeforces.judge.api.CSignature
 import dev.gpucodeforces.judge.api.Languages
+import dev.gpucodeforces.judge.api.Processors
 import dev.gpucodeforces.judge.api.Signature
 import dev.gpucodeforces.judge.executor.config.ExecutorProperties
 import dev.gpucodeforces.judge.executor.processor.BuildCache
@@ -46,7 +47,7 @@ class RiscvBuilder(
      */
     fun baseline(language: String, sig: Signature): RiscvBinary {
         val compiler = if (language == Languages.CPP) Languages.CPP else Languages.C
-        return when (val built = build("${CSignature.includes(compiler == Languages.CPP).joinToString("") { "#include <$it>\n" }}${CSignature.declaration(sig)} {}\n", compiler, sig)) {
+        return when (val built = build("${CSignature.includes(Processors.RISCV_RVV, compiler == Languages.CPP).joinToString("") { "#include <$it>\n" }}${CSignature.declaration(sig)} {}\n", compiler, sig)) {
             is EmulatorBuild.Ready -> built.artifact
             is EmulatorBuild.Rejected -> throw JudgeInfrastructureException("the empty solve does not compile: ${built.compileLog.take(2000)}")
         }

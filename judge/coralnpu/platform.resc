@@ -1,0 +1,7 @@
+# The machine every `coral-npu` test runs on: the Coral NPU core with its instruction and data memories, and
+# nothing else. Renode starts with this script and then gets `judge_run "<manifest>"` (see judge_run.py).
+mach create "judge"
+machine LoadPlatformDescriptionFromString "npu: CPU.CoralNPU @ sysbus 0x0"
+# virtual time is not tied to the host's clock: the core runs as fast as the host simulates it
+emulation SetGlobalAdvanceImmediately true
+include $ORIGIN/judge_run.py

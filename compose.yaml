@@ -19,7 +19,7 @@ services:
   #   docker compose --profile judge up -d --wait   # RabbitMQ + judge gateway
   #   docker compose --profile gpu up -d --wait     # + judge executor (NVIDIA GPU + nvidia-container-toolkit)
   #   docker compose --profile mock up -d --wait    # + mock executor: no GPU, verdicts from `judge-mock` comments
-  #   JUDGE_PROCESSORS=gpu-cuda,rtl,riscv-rvv docker compose --profile gpu --profile emu up -d --wait
+  #   JUDGE_PROCESSORS=gpu-cuda,rtl,riscv-rvv,coral-npu docker compose --profile gpu --profile emu up -d --wait
   #                                                 # + executor of the emulated processors, no GPU needed
   # Executors on other machines use judge/deploy/compose.executor.yaml and connect to this broker: set
   # RABBITMQ_BIND=0.0.0.0, real RABBITMQ_USER/RABBITMQ_PASSWORD, and list every processor in JUDGE_PROCESSORS.
@@ -108,8 +108,8 @@ services:
       rabbitmq:
         condition: service_healthy
 
-  # Emulated processors (judge/README.md "Processors"): rtl, riscv-rvv. No GPU; every simulation takes one core of
-  # its own (JUDGE_RTL_WORKERS of them at once). Its processors have to be in JUDGE_PROCESSORS of the gateway.
+  # Emulated processors (judge/README.md "Processors"): rtl, riscv-rvv, coral-npu. No GPU; every simulation takes one
+  # core of its own (JUDGE_RTL_WORKERS of them at once). Its processors have to be in JUDGE_PROCESSORS of the gateway.
   judge-executor-emu:
     profiles: [emu]
     build:
@@ -123,9 +123,10 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
-      JUDGE_PROCESSORS: rtl,riscv-rvv
+      JUDGE_PROCESSORS: rtl,riscv-rvv,coral-npu
       JUDGE_RTL_WORKERS: ${JUDGE_RTL_WORKERS:-2}
       JUDGE_RISCV_WORKERS: ${JUDGE_RISCV_WORKERS:-2}
+      JUDGE_CORAL_NPU_WORKERS: ${JUDGE_CORAL_NPU_WORKERS:-2}
       JUDGE_EXECUTOR_ID: ${JUDGE_EMU_EXECUTOR_ID:-emu-node-1}
       JUDGE_WORK_DIR: /run/judge/work
       SPRING_PROFILES_ACTIVE: ${JUDGE_LOG_PROFILE:-default}

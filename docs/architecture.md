@@ -21,7 +21,7 @@ flowchart TB
     gateway["judge-gateway<br/>Spring Boot, :8090"]
     rabbit[["RabbitMQ 4.1<br/>jobs, events, heartbeats, control"]]
     executor["judge-executor<br/>по одному на машину,<br/>очередь на каждый свой процессор"]
-    emu["judge-executor-emu<br/>тот же сервис без GPU:<br/>rtl (Yosys + Verilator),<br/>riscv-rvv (QEMU + плагин)"]
+    emu["judge-executor-emu<br/>тот же сервис без GPU:<br/>rtl (Yosys + Verilator),<br/>riscv-rvv (QEMU + плагин),<br/>coral-npu (Renode)"]
     cudasim["judge-executor-cuda-sim<br/>тот же сервис без GPU:<br/>cuda-sim (GPGPU-Sim, QV100)"]
     mock["judge-executor-mock<br/>вердикт из комментария"]
     sandbox["nsjail + процессор<br/>gpu-cuda: nvcc и NVIDIA GPU<br/>эмуляторы: по процессу на тест"]
@@ -34,7 +34,7 @@ flowchart TB
   gateway -->|"judge.jobs.&lt;processor&gt;"| rabbit
   rabbit -->|judge.events| backend
   rabbit <-->|"задания, события"| executor
-  rabbit <-->|"judge.jobs.rtl, .riscv-rvv"| emu
+  rabbit <-->|"judge.jobs.rtl, .riscv-rvv, .coral-npu"| emu
   rabbit <-->|"judge.jobs.cuda-sim"| cudasim
   rabbit <-->|"профиль mock"| mock
   executor --> sandbox
@@ -547,9 +547,9 @@ classDiagram
 
 `judge-api` — общие контракты gateway, executor и backend, включая каталог процессоров. У `JobProcessor` две
 реализации: настоящий конвейер и mock (Spring-профиль `mock`). Конвейер выбирает `ProcessorBackend` по процессору
-задания; `GpuCudaBackend` — путь на реальной GPU, `RtlBackend` — схема в Verilator, `RiscvBackend` — RISC-V в QEMU с плагином судьи, `CudaSimBackend` — CUDA в GPGPU-Sim. Эмулируемые процессоры
+задания; `GpuCudaBackend` — путь на реальной GPU, `RtlBackend` — схема в Verilator, `RiscvBackend` — RISC-V в QEMU с плагином судьи, `CudaSimBackend` — CUDA в GPGPU-Sim, `CoralNpuBackend` — программа без ОС на ядре Coral NPU в Renode. Эмулируемые процессоры
 наследуют `EmulatorBackend`: в нём общий порядок проверки (сборка, тесты задачи, работник из пула) и цикл по тестам
-`EmulatorRun`, а процессор задаёт только сборку посылки и запуск одного теста. Сборки эмуляторов хранит общий
+`EmulatorRun`, а процессор задаёт только сборку посылки и запуск одного теста (или отказ от теста без запуска симулятора: на `coral-npu` — когда массивы теста не помещаются в память ядра). Сборки эмуляторов хранит общий
 `BuildCache` (каталог на ключ, ошибки сборки тоже кэшируются). `HarnessRunner` разбирает статус-строки обвязки
 `gpu-cuda` в `HarnessLine` и сам решает, могла ли обвязка написать строку в этот момент. Конфигурация и
 утилиты опущены.
@@ -612,10 +612,13 @@ classDiagram
     class RiscvBuilder
     class RiscvHarness
     class CudaSimBackend
+    class CoralNpuBackend
+    class CoralNpuBuilder
+    class CoralNpuHarness
     class EmulatorBackend {
       <<abstract>>
       build(JudgeJob, ProcessorSpec) EmulatorBuild
-      launch(TestRun, artifact) SimulatorLaunch
+      launch(TestRun, artifact) TestLaunch
     }
     class EmulatorRun
     class BuildCache
@@ -682,6 +685,11 @@ classDiagram
   RiscvBuilder ..> BuildCache
   RiscvBuilder ..> Sandbox
   CudaSimBackend --|> EmulatorBackend
+  CoralNpuBackend --|> EmulatorBackend
+  CoralNpuBackend ..> CoralNpuBuilder
+  CoralNpuBuilder ..> CoralNpuHarness
+  CoralNpuBuilder ..> BuildCache
+  CoralNpuBuilder ..> Sandbox
   EmulatorRun ..> Sandbox
   EmulatorRun ..> OutputChecker
   ProblemStore ..> SlotPool : GPU-слот, если есть GPU

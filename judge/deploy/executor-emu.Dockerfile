@@ -1,11 +1,13 @@
 # syntax=docker/dockerfile:1
 # Judge executor of the emulated processors, no GPU: PyTorch for the CPU generates tests; `rtl` synthesizes and
 # simulates circuits with the OSS CAD Suite (Yosys, Verilator); `riscv-rvv` cross-compiles with GCC and runs under
-# QEMU user mode with the judge's plugin. nsjail isolates them all, as in executor.Dockerfile.
+# QEMU user mode with the judge's plugin; `coral-npu` cross-compiles bare-metal programs with GCC and picolibc and
+# runs them on the Coral NPU core of Renode. nsjail isolates them all, as in executor.Dockerfile.
 # Build context: the repository root (see compose.yaml). Builds for linux/amd64 and linux/arm64.
 #
-# Pinned toolchain: the executor verifies the Yosys and Verilator versions at startup and refuses to run on another.
-# The OSS CAD Suite is a nightly build, pinned by its date and the sha256 of each archive.
+# Pinned toolchain: the executor verifies the Yosys, Verilator, QEMU, Renode and GCC versions at startup and refuses to
+# run on another. The OSS CAD Suite is a nightly build, pinned by its date and the sha256 of each archive; Renode is a
+# release, pinned by the sha256 of each archive too.
 ARG UBUNTU_IMAGE=ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852
 ARG GCC_MAJOR=13
 ARG TORCH_VERSION=2.9.1
@@ -22,6 +24,10 @@ ARG VERILATOR_VERSION=5.053
 ARG QEMU_VERSION=11.1.3
 ARG QEMU_SHA256=5a8289c7940dc77d3873c81a6c29ba3afe1446fc9d36e77fa1658cdbecb84b22
 ARG RISCV_GCC_VERSION=13.3
+ARG RENODE_VERSION=1.17.0
+ARG RENODE_SHA256_AMD64=4ba7c68b59e2447f188ef4b4b112fcccd2802582c460beedceb63b84e5605a5f
+ARG RENODE_SHA256_ARM64=e9051578411441bfb47b77de0381cfba3badce03663367fab561472fd7807f1f
+ARG CORAL_NPU_GCC_VERSION=13.2
 
 # ---- nsjail -------------------------------------------------------------------------------------------------
 FROM ${UBUNTU_IMAGE} AS nsjail
@@ -73,6 +79,23 @@ RUN mkdir -p /opt/judge/riscv \
     && gcc -O2 -shared -fPIC -I/opt/qemu/include $(pkg-config --cflags glib-2.0) -o /opt/judge/riscv/judge_plugin.so \
         /tmp/judge_plugin.c $(pkg-config --libs glib-2.0)
 
+# ---- Renode, with its own .NET runtime (coral-npu) ----------------------------------------------------------
+FROM ${UBUNTU_IMAGE} AS renode
+ARG TARGETARCH
+ARG RENODE_VERSION
+ARG RENODE_SHA256_AMD64
+ARG RENODE_SHA256_ARM64
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
+RUN case "${TARGETARCH}" in \
+        amd64) name="renode-${RENODE_VERSION}.linux-portable.tar.gz"; sha="${RENODE_SHA256_AMD64}" ;; \
+        arm64) name="renode-${RENODE_VERSION}.linux-arm64-portable.tar.gz"; sha="${RENODE_SHA256_ARM64}" ;; \
+        *) echo "no Renode for ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL -o /tmp/renode.tgz "https://github.com/renode/renode/releases/download/v${RENODE_VERSION}/${name}" \
+    && echo "${sha}  /tmp/renode.tgz" | sha256sum -c - \
+    && mkdir /opt/renode && tar -xzf /tmp/renode.tgz -C /opt/renode --strip-components=1 \
+    && rm /tmp/renode.tgz
+
 # ---- Kotlin service ----------------------------------------------------------------------------------------
 FROM eclipse-temurin:26-jdk-noble@sha256:9c0e8eddecccc0d5679b317b0c90fa7103ad25cae33df1c00280675eb681c7f8 AS build
 WORKDIR /src
@@ -95,14 +118,18 @@ ARG YOSYS_VERSION
 ARG VERILATOR_VERSION
 ARG QEMU_VERSION
 ARG RISCV_GCC_VERSION
+ARG RENODE_VERSION
+ARG CORAL_NPU_GCC_VERSION
 # Verilator turns the netlist into C++ and builds the simulator with make and the system's g++; it is a perl script.
-# riscv-rvv: the cross compilers, and glib for QEMU and the plugin.
+# riscv-rvv: the cross compilers, and glib for QEMU and the plugin. coral-npu: the bare-metal cross compilers (the
+# package has gcc and g++) and picolibc, the C library they link.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        g++ g++-riscv64-linux-gnu gcc-riscv64-linux-gnu libglib2.0-0t64 libnl-route-3-200 libprotobuf32t64 make perl \
-        python3 python3-venv \
+        g++ g++-riscv64-linux-gnu gcc-riscv64-linux-gnu gcc-riscv64-unknown-elf libglib2.0-0t64 libnl-route-3-200 \
+        libprotobuf32t64 make perl picolibc-riscv64-unknown-elf python3 python3-venv \
     && rm -rf /var/lib/apt/lists/* \
     && test "$(g++ -dumpversion | cut -d. -f1)" = "${GCC_MAJOR}" \
-    && riscv64-linux-gnu-gcc -dumpfullversion | grep -q "^${RISCV_GCC_VERSION}"
+    && riscv64-linux-gnu-gcc -dumpfullversion | grep -q "^${RISCV_GCC_VERSION}" \
+    && riscv64-unknown-elf-gcc -dumpfullversion | grep -q "^${CORAL_NPU_GCC_VERSION}"
 # every package pinned, transitive ones included; the two ARGs above must agree with the file
 COPY judge/deploy/executor-emu-requirements.txt /tmp/requirements.txt
 RUN grep -qx "torch==${TORCH_VERSION}+cpu" /tmp/requirements.txt && grep -qx "numpy==${NUMPY_VERSION}" /tmp/requirements.txt \
@@ -111,6 +138,8 @@ RUN grep -qx "torch==${TORCH_VERSION}+cpu" /tmp/requirements.txt && grep -qx "nu
 COPY --from=oss-cad-suite /opt/oss-cad-suite /opt/oss-cad-suite
 COPY --from=qemu /opt/qemu /opt/qemu
 COPY --from=qemu /opt/judge/riscv /opt/judge/riscv
+COPY --from=renode /opt/renode /opt/renode
+COPY judge/coralnpu /opt/judge/coralnpu
 COPY --from=eclipse-temurin:26-jre-noble@sha256:adfd44c114916dc79fa9a24087fbac34252096edb9892d1c2d9d82db3f8947b3 /opt/java/openjdk /opt/java/openjdk
 COPY --from=nsjail /nsjail/nsjail /usr/local/bin/nsjail
 COPY judge/pytools /opt/judge/pytools
@@ -123,10 +152,12 @@ RUN if [ "${TARGETARCH}" = arm64 ]; then \
     fi
 COPY --from=build /src/judge/judge-executor/build/libs/judge-executor.jar /opt/judge/judge-executor.jar
 
-ENV JUDGE_PROCESSORS=rtl,riscv-rvv \
+ENV JUDGE_PROCESSORS=rtl,riscv-rvv,coral-npu \
     JUDGE_RTL_HOME=/opt/oss-cad-suite \
     JUDGE_QEMU_VERSION=${QEMU_VERSION} \
     JUDGE_RISCV_GCC_VERSION=${RISCV_GCC_VERSION} \
+    JUDGE_RENODE_VERSION=${RENODE_VERSION} \
+    JUDGE_CORAL_NPU_GCC_VERSION=${CORAL_NPU_GCC_VERSION} \
     JUDGE_YOSYS_VERSION=${YOSYS_VERSION} \
     JUDGE_VERILATOR_VERSION=${VERILATOR_VERSION} \
     JUDGE_TORCH_VERSION=${TORCH_VERSION} \

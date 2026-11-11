@@ -45,6 +45,8 @@ judge:
         workers: ${JUDGE_RISCV_WORKERS:2}
       "[cuda-sim]":
         workers: ${JUDGE_CUDA_SIM_WORKERS:2}
+      "[coral-npu]":
+        workers: ${JUDGE_CORAL_NPU_WORKERS:2}
     prefetch-extra: 2
     compile-workers: ${JUDGE_COMPILE_WORKERS:4}
     paths:
@@ -71,6 +73,13 @@ judge:
       plugin: ${JUDGE_RISCV_PLUGIN:/opt/judge/riscv/judge_plugin.so}
       expected-qemu-version: ${JUDGE_QEMU_VERSION:11.1.3}
       expected-gcc-version: ${JUDGE_RISCV_GCC_VERSION:13.3}
+    coral-npu:
+      # Renode and the bare-metal GCC of judge/deploy/executor-emu.Dockerfile; the executor refuses to start on
+      # other versions
+      renode: ${JUDGE_RENODE:/opt/renode/renode}
+      platform: ${JUDGE_CORAL_NPU_PLATFORM:/opt/judge/coralnpu/platform.resc}
+      expected-renode-version: ${JUDGE_RENODE_VERSION:1.17.0}
+      expected-gcc-version: ${JUDGE_CORAL_NPU_GCC_VERSION:13.2}
     cuda-sim:
       # GPGPU-Sim of judge/deploy/executor-cuda-sim.Dockerfile; the executor refuses to start on another commit
       home: ${JUDGE_GPGPUSIM_HOME:/opt/gpgpu-sim}

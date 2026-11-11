@@ -192,7 +192,7 @@ fun failureTitle(verdict: Verdict, scoreType: ScoreType): String = when (verdict
         ScoreType.TIME_MS -> "Time limit exceeded"
         ScoreType.CYCLES -> "Cycle limit exceeded"
         ScoreType.CYCLES_X_DEPTH_X_TRANSISTORS -> "Cycles x depth x transistors limit exceeded"
-        ScoreType.WEIGHTED_INSTRUCTIONS -> "Instruction limit exceeded"
+        ScoreType.WEIGHTED_INSTRUCTIONS, ScoreType.INSTRUCTIONS -> "Instruction limit exceeded"
     }
     Verdict.WRONG_ANSWER -> "Wrong answer"
     Verdict.MEMORY_LIMIT_EXCEEDED -> "Memory limit exceeded"
