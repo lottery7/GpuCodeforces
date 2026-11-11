@@ -35,24 +35,19 @@ class RtlBackend(
     private val builder: RtlBuilder,
     problems: ProblemStore,
     sandbox: Sandbox,
-) : EmulatorBackend<RtlBuildOutcome.Ok>(Processors.RTL, props, problems, sandbox, props.rtl.simulationTimeLimit) {
+) : EmulatorBackend<RtlSimulator>(Processors.RTL, props, problems, sandbox, props.rtl.simulationTimeLimit) {
     private val config = props.rtl
 
     override val version: String get() = "${toolchain.description}, testbench ${RtlTestbench.VERSION}"
     override val model: String get() = "Verilator ${toolchain.verilatorVersion} + Yosys ${toolchain.yosysVersion}"
 
-    override fun build(job: JudgeJob, processor: ProcessorSpec): EmulatorBuild<RtlBuildOutcome.Ok> =
-        when (val build = builder.build(job.source, job.problem.signature, processor.rtl ?: RtlSettings())) {
-            is RtlBuildOutcome.CompileError -> EmulatorBuild.Rejected(Verdict.COMPILATION_ERROR, build.message, build.compileLog)
-            is RtlBuildOutcome.Violation -> EmulatorBuild.Rejected(Verdict.POLICY_VIOLATION, build.violations.joinToString("\n"))
-            is RtlBuildOutcome.Ok -> {
-                log.info("Build ok: {} (cached: {})", build.size, build.cached)
-                EmulatorBuild.Ready(build, build.compileLog)
-            }
+    override fun build(job: JudgeJob, processor: ProcessorSpec): EmulatorBuild<RtlSimulator> =
+        builder.build(job.source, job.problem.signature, processor.rtl ?: RtlSettings()).also {
+            if (it is EmulatorBuild.Ready) log.info("Circuit: {}", it.artifact.size)
         }
 
     /** See [RtlTestbench] for the manifest. */
-    override fun launch(run: TestRun, artifact: RtlBuildOutcome.Ok): SimulatorLaunch {
+    override fun launch(run: TestRun, artifact: RtlSimulator): SimulatorLaunch {
         val test = run.test
         val maxCycles = if (test.spec.measure) unitLimit(run.limit, config.maxCycles, artifact.size.perCycle) else config.maxCycles
         // the testbench keeps every element in 64 bits

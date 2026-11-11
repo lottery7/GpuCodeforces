@@ -51,12 +51,7 @@ class CudaSimBackend(
     override val version: String get() = "$versionLine, harness ${CudaSimHarness.VERSION}"
     override val model: String get() = "GPGPU-Sim ${config.gpu}"
 
-    override fun build(job: JudgeJob, processor: ProcessorSpec): EmulatorBuild<Path> =
-        when (val build = builder.build(job.source, job.problem.signature)) {
-            is CudaSimBuildOutcome.CompileError -> EmulatorBuild.Rejected(Verdict.COMPILATION_ERROR, build.message, build.compileLog)
-            is CudaSimBuildOutcome.Violation -> EmulatorBuild.Rejected(Verdict.POLICY_VIOLATION, build.message, build.compileLog)
-            is CudaSimBuildOutcome.Ok -> EmulatorBuild.Ready(build.binary, build.compileLog)
-        }
+    override fun build(job: JudgeJob, processor: ProcessorSpec): EmulatorBuild<Path> = builder.build(job.source, job.problem.signature)
 
     /**
      * GPGPU-Sim reads `gpgpusim.config` from its working directory and writes the PTX it extracts there, so every

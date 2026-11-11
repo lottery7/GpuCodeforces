@@ -75,7 +75,7 @@ class RiscvBackend(
     private val baselineDir = props.paths.cache.resolve("riscv").resolve("baseline")
 
     /** The submission with the harness, and the harness alone ([RiscvBuilder.baseline]). */
-    class Binaries(val solution: Path, val baseline: RiscvBuildOutcome.Ok)
+    class Binaries(val solution: Path, val baseline: RiscvBinary)
 
     override val version: String get() = "${toolchain.description}, VLEN ${config.vlen}, harness ${RiscvHarness.VERSION}"
     override val model: String get() = "QEMU ${toolchain.qemuVersion} RV64GCV, VLEN ${config.vlen}"
@@ -83,11 +83,9 @@ class RiscvBackend(
     override fun build(job: JudgeJob, processor: ProcessorSpec): EmulatorBuild<Binaries> {
         val signature = job.problem.signature
         return when (val build = builder.build(job.source, job.language, signature)) {
-            is RiscvBuildOutcome.CompileError -> EmulatorBuild.Rejected(Verdict.COMPILATION_ERROR, build.message, build.compileLog)
-            is RiscvBuildOutcome.Ok -> {
-                log.info("Build ok (cached: {})", build.cached)
-                EmulatorBuild.Ready(Binaries(build.binary, builder.baseline(job.language, signature)), build.compileLog)
-            }
+            is EmulatorBuild.Rejected -> build
+            is EmulatorBuild.Ready ->
+                EmulatorBuild.Ready(Binaries(build.artifact.path, builder.baseline(job.language, signature)), build.compileLog)
         }
     }
 
@@ -104,11 +102,11 @@ class RiscvBackend(
      * reads them: their lengths move the stack and change the counts a little. Under nsjail every path the guest sees
      * is fixed.
      */
-    private fun baselineCounts(run: TestRun, baseline: RiscvBuildOutcome.Ok): RiscvCounts {
+    private fun baselineCounts(run: TestRun, baseline: RiscvBinary): RiscvCounts {
         val file = baselineDir.resolve(Hashing.sha256(baseline.key, run.prepared.hash, run.test.index.toString(), RUN_FORMAT))
         if (file.exists()) RiscvCounts.parse(file.readText())?.let { return it }
         val nonce = random.nextNonce()
-        val spec = runSpec(run, baseline.binary, nonce, config.maxInstructions)
+        val spec = runSpec(run, baseline.path, nonce, config.maxInstructions)
         var line: String? = null
         val res = Proc.awaitLines(sandbox.start(spec), spec.command, config.simulationTimeLimit) { if (it.startsWith("$nonce ")) line = it.removePrefix("$nonce ") }
         run.outputs.values.forEach { Files.deleteIfExists(it) }

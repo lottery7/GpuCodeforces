@@ -3,8 +3,14 @@ package dev.gpucodeforces.judge.executor.processor.rtl
 import dev.gpucodeforces.judge.api.RtlSettings
 import dev.gpucodeforces.judge.api.RtlSignature
 import dev.gpucodeforces.judge.api.Signature
+import dev.gpucodeforces.judge.api.Verdict
 import dev.gpucodeforces.judge.executor.config.ExecutorProperties
+import dev.gpucodeforces.judge.executor.processor.BuildCache
+import dev.gpucodeforces.judge.executor.processor.BuildStatus
+import dev.gpucodeforces.judge.executor.processor.EmulatorBuild
+import dev.gpucodeforces.judge.executor.processor.FreshBuild
 import dev.gpucodeforces.judge.executor.processor.JudgeInfrastructureException
+import dev.gpucodeforces.judge.executor.processor.StoredBuild
 import dev.gpucodeforces.judge.executor.sandbox.Sandbox
 import dev.gpucodeforces.judge.executor.sandbox.SandboxSpec
 import dev.gpucodeforces.judge.executor.util.FileTrees
@@ -13,17 +19,10 @@ import dev.gpucodeforces.judge.executor.util.ProcResult
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
-import java.nio.file.attribute.FileTime
 import java.nio.file.attribute.PosixFilePermissions
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.Semaphore
-import java.util.concurrent.locks.ReentrantLock
-import kotlin.concurrent.withLock
 import kotlin.io.path.exists
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
-import org.slf4j.LoggerFactory
 
 /**
  * The synthesized circuit: [transistors] is its area (Yosys' CMOS estimate, a weight per type of cell), [depth] the most
@@ -38,16 +37,8 @@ data class CircuitSize(val cells: Long, val transistors: Long, val depth: Long) 
     )
 }
 
-sealed interface RtlBuildOutcome {
-    val compileLog: String
-
-    /** [simulator] runs one test per process (see [RtlTestbench]); [size] is what the circuit costs per cycle. */
-    data class Ok(val simulator: Path, val size: CircuitSize, override val compileLog: String, val cached: Boolean) : RtlBuildOutcome
-    data class CompileError(override val compileLog: String, val message: String) : RtlBuildOutcome
-    data class Violation(val violations: List<String>) : RtlBuildOutcome {
-        override val compileLog: String get() = ""
-    }
-}
+/** [simulator] runs one test per process (see [RtlTestbench]); [size] is what the circuit costs per cycle. */
+data class RtlSimulator(val simulator: Path, val size: CircuitSize)
 
 /**
  * Turns a submission into a simulator: source checks -> Yosys (`synth -flatten`, area, netlist; the top module is
@@ -64,15 +55,12 @@ class RtlBuilder(
     private val toolchain: RtlToolchain,
     private val sandbox: Sandbox,
 ) {
-    private val log = LoggerFactory.getLogger(javaClass)
     private val config = props.rtl
-    private val buildSlots = Semaphore(props.compileWorkers)
-    private val locks = ConcurrentHashMap<String, ReentrantLock>()
-    private val cacheDir = props.paths.cache.resolve("rtl")
+    private val cache = BuildCache(props.paths.cache.resolve("rtl"), props.compileWorkers)
 
-    fun build(source: String, sig: Signature, settings: RtlSettings): RtlBuildOutcome {
+    fun build(source: String, sig: Signature, settings: RtlSettings): EmulatorBuild<RtlSimulator> {
         val violations = RtlChecks.checkSource(source)
-        if (violations.isNotEmpty()) return RtlBuildOutcome.Violation(violations)
+        if (violations.isNotEmpty()) return EmulatorBuild.Rejected(Verdict.POLICY_VIOLATION, violations.joinToString("\n"))
 
         val testbench = RtlTestbench.generate(sig, settings)
         val ports = RtlSignature.ports(sig, settings)
@@ -80,79 +68,54 @@ class RtlBuilder(
             source, sig.function, ports.joinToString("\n") { it.declaration() }, testbench, toolchain.fingerprint,
             config.buildJobs.toString(), CACHE_FORMAT,
         )
-        val dir = cacheDir.resolve(key.take(2)).resolve(key)
-        return locks.computeIfAbsent(key) { ReentrantLock() }.withLock {
-            load(dir, cached = true) ?: buildFresh(source, sig.function, ports, testbench, dir)
-        }
+        return cache.build(key, ::read) { tmp -> buildFresh(source, sig.function, ports, testbench, tmp) }
     }
 
-    private fun load(dir: Path, cached: Boolean): RtlBuildOutcome? {
-        val status = dir.resolve("status")
-        if (!status.exists()) return null
-        Files.setLastModifiedTime(status, FileTime.fromMillis(System.currentTimeMillis()))
-        val compileLog = dir.resolve("compile.log").readText()
-        return when (status.readText().trim()) {
-            "ok" -> {
-                val (cells, transistors, depth) = dir.resolve("size").readText().trim().split(" ").map(String::toLong)
-                RtlBuildOutcome.Ok(dir.resolve("sim"), CircuitSize(cells, transistors, depth), compileLog, cached)
-            }
-            else -> RtlBuildOutcome.CompileError(compileLog, dir.resolve("message").readText())
-        }
+    private fun read(build: StoredBuild): EmulatorBuild<RtlSimulator> {
+        if (build.status != BuildStatus.OK) return build.rejected()
+        val (cells, transistors, depth) = build.dir.resolve("size").readText().trim().split(" ").map(String::toLong)
+        return EmulatorBuild.Ready(RtlSimulator(build.dir.resolve("sim"), CircuitSize(cells, transistors, depth)), build.compileLog)
     }
 
-    private fun buildFresh(source: String, module: String, ports: List<RtlSignature.Port>, testbench: String, dir: Path): RtlBuildOutcome {
-        val tmp = Files.createDirectories(cacheDir.resolve("tmp")).let { Files.createTempDirectory(it, "b-") }
-        try {
-            FileTrees.makeWritableByAll(tmp)
-            tmp.resolve("solution.sv").writeText(source)
-            tmp.resolve("testbench.cpp").writeText(testbench)
-            val memory = config.buildMemoryLimitMb shl 20
-            val spec = SandboxSpec(
-                command = emptyList(),
-                workDir = tmp,
-                readOnly = mapOf(config.home to config.home.toString()),
-                path = listOf(config.home.resolve("bin").toString()) + SandboxSpec.DEFAULT_PATH,
-                wallTimeLimit = config.buildTimeLimit.plusSeconds(5),
-                memoryLimitBytes = memory,
-                addressSpaceBytes = memory,
-                maxFileBytes = MAX_FILE_BYTES,
-                tmpBytes = 1L shl 30,
+    private fun buildFresh(source: String, module: String, ports: List<RtlSignature.Port>, testbench: String, tmp: Path): FreshBuild {
+        tmp.resolve("solution.sv").writeText(source)
+        tmp.resolve("testbench.cpp").writeText(testbench)
+        val memory = config.buildMemoryLimitMb shl 20
+        val spec = SandboxSpec(
+            command = emptyList(),
+            workDir = tmp,
+            readOnly = mapOf(config.home to config.home.toString()),
+            path = listOf(config.home.resolve("bin").toString()) + SandboxSpec.DEFAULT_PATH,
+            wallTimeLimit = config.buildTimeLimit.plusSeconds(5),
+            memoryLimitBytes = memory,
+            addressSpaceBytes = memory,
+            maxFileBytes = MAX_FILE_BYTES,
+            tmpBytes = 1L shl 30,
+        )
+        val inside = { name: String -> sandbox.inside(spec, tmp.resolve(name)) }
+        tmp.resolve("synth.ys").writeText(yosysScript(module, inside("solution.sv"), inside("stat.json"), inside("path.txt"), inside("netlist.v")))
+
+        val outcome = cache.withSlot {
+            val yosys = sandbox.runToCompletion(spec.copy(command = listOf(config.yosys.toString(), "-q", "-s", inside("synth.ys"))), config.buildTimeLimit, props.compile.maxLogBytes)
+            val synthesis = synthesized(yosys, tmp, module, ports)
+            if (synthesis !is Built.Ok) return@withSlot synthesis
+            val verilator = sandbox.runToCompletion(
+                spec.copy(command = verilatorCommand(inside("netlist.v"), inside("testbench.cpp"))), config.buildTimeLimit, props.compile.maxLogBytes,
             )
-            val inside = { name: String -> sandbox.inside(spec, tmp.resolve(name)) }
-            tmp.resolve("synth.ys").writeText(yosysScript(module, inside("solution.sv"), inside("stat.json"), inside("path.txt"), inside("netlist.v")))
-
-            val started = System.nanoTime()
-            val outcome = buildSlots.withPermit {
-                val yosys = sandbox.runToCompletion(spec.copy(command = listOf(config.yosys.toString(), "-q", "-s", inside("synth.ys"))), config.buildTimeLimit, props.compile.maxLogBytes)
-                val synthesis = synthesized(yosys, tmp, module, ports)
-                if (synthesis !is Built.Ok) return@withPermit synthesis
-                val verilator = sandbox.runToCompletion(
-                    spec.copy(command = verilatorCommand(inside("netlist.v"), inside("testbench.cpp"))), config.buildTimeLimit, props.compile.maxLogBytes,
-                )
-                simulator(verilator, synthesis, tmp)
+            simulator(verilator, synthesis, tmp)
+        }
+        return when (outcome) {
+            is Built.Ok -> {
+                val sim = tmp.resolve("sim")
+                Files.copy(tmp.resolve("obj/sim"), sim, LinkOption.NOFOLLOW_LINKS)
+                Files.setPosixFilePermissions(sim, PosixFilePermissions.fromString("rwxr-xr-x"))
+                tmp.resolve("size").writeText(outcome.size.run { "$cells $transistors $depth" })
+                FileTrees.delete(tmp.resolve("obj"))
+                FreshBuild(BuildStatus.OK, outcome.log)
             }
-            log.info("rtl build of {} finished in {}ms: {}", module, (System.nanoTime() - started) / 1_000_000, outcome::class.simpleName)
+            is Built.Failed -> FreshBuild(BuildStatus.COMPILATION_ERROR, outcome.log, outcome.message)
             // a timeout may come from the load of the machine: built again next time
-            if (outcome is Built.TimedOut) return RtlBuildOutcome.CompileError(outcome.log, outcome.message)
-            when (outcome) {
-                is Built.Ok -> {
-                    val sim = tmp.resolve("sim")
-                    Files.copy(tmp.resolve("obj/sim"), sim, LinkOption.NOFOLLOW_LINKS)
-                    Files.setPosixFilePermissions(sim, PosixFilePermissions.fromString("rwxr-xr-x"))
-                    tmp.resolve("size").writeText(outcome.size.run { "$cells $transistors $depth" })
-                    FileTrees.delete(tmp.resolve("obj"))
-                }
-                is Built.Failed -> tmp.resolve("message").writeText(outcome.message)
-                is Built.TimedOut -> error("handled above")
-            }
-            tmp.resolve("compile.log").writeText(outcome.log)
-            tmp.resolve("status").writeText(if (outcome is Built.Ok) "ok" else "ce")
-            Files.createDirectories(dir.parent)
-            if (!dir.exists()) Files.move(tmp, dir, StandardCopyOption.ATOMIC_MOVE)
-            return load(dir, cached = false)!!
-        } finally {
-            FileTrees.delete(tmp)
-            Sandbox.deleteLog(tmp)
+            is Built.TimedOut -> FreshBuild(BuildStatus.COMPILATION_ERROR, outcome.log, outcome.message, keep = false)
         }
     }
 
@@ -219,15 +182,6 @@ class RtlBuilder(
         "-Wno-fatal", "-Wno-lint", "-Wno-style", "-CFLAGS", "-std=c++17",
         "--top-module", RtlTestbench.TOP, "--Mdir", "obj", "-o", "sim", netlist, testbench,
     )
-
-    private inline fun <T> Semaphore.withPermit(block: () -> T): T {
-        acquire()
-        try {
-            return block()
-        } finally {
-            release()
-        }
-    }
 
     companion object {
         /** Bump when the cached layout or the build steps change. */
