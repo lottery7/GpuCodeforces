@@ -1,5 +1,6 @@
 package dev.gpucodeforces.backend.duel
 
+import dev.gpucodeforces.backend.common.ContentLanguage
 import dev.gpucodeforces.backend.api.DuelsApi
 import dev.gpucodeforces.backend.api.model.CreateDuelRequest
 import dev.gpucodeforces.backend.api.model.DuelMode
@@ -23,8 +24,9 @@ import dev.gpucodeforces.backend.api.model.DuelRequest as DuelRequestApi
 class DuelsController(private val service: DuelService, private val views: DuelViews) : DuelsApi {
     override fun listDuelProblems(processor: String?, q: String?, difficulty: String?, offset: Int, limit: Int): ResponseEntity<DuelProblemPage> {
         val page = service.problems(processor, q, difficulty, offset, limit)
+        val language = ContentLanguage.current()
         val items = page.items.map {
-            DuelProblem().id(it.problemId).code(it.code).title(it.title).difficulty(DuelProblem.DifficultyEnum.fromValue(it.difficulty))
+            DuelProblem().id(it.problemId).code(it.code).title(it.title(language)).difficulty(DuelProblem.DifficultyEnum.fromValue(it.difficulty))
         }
         return ResponseEntity.ok(DuelProblemPage(items, page.total))
     }
@@ -62,7 +64,9 @@ class DuelsController(private val service: DuelService, private val views: DuelV
 class DuelViews(private val users: UserRepository, private val catalog: ProblemCatalog, private val contests: ContestRepository) {
     fun model(request: DuelRequest): DuelRequestApi = models(listOf(request)).single()
 
+    /** For the request being answered: the title of the problem comes in its language. */
     fun models(requests: List<DuelRequest>): List<DuelRequestApi> {
+        val language = ContentLanguage.current()
         val people = users.findAllById(requests.flatMap { listOfNotNull(it.creatorId, it.opponentId) }.toSet()).associateBy { it.id }
         val versions = catalog.versions(requests.mapNotNull { it.problemVersionId }.toSet())
         val rooms = contests.findAllById(requests.mapNotNull { it.contestId }.toSet()).associateBy { it.id }
@@ -77,7 +81,7 @@ class DuelViews(private val users: UserRepository, private val catalog: ProblemC
             .creator(people.getValue(request.creatorId).toApiModel())
             .opponent(request.opponentId?.let { people.getValue(it).toApiModel() })
             .problemId(problem?.problemId)
-            .problemTitle(problem?.title)
+            .problemTitle(problem?.title(language))
             .difficulty(problem?.difficulty?.let { DuelRequestApi.DifficultyEnum.fromValue(it) })
             .startAt(contest?.startAt?.atOffset(ZoneOffset.UTC))
             .surrenderedUserId(contest?.surrenderedUserId?.toString())

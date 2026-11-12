@@ -17,6 +17,7 @@ import dev.gpucodeforces.backend.api.model.ReferenceMeasurementStatus
 import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
 import dev.gpucodeforces.backend.benchmark.ReferenceMeasurementView
 import dev.gpucodeforces.backend.common.BadRequestException
+import dev.gpucodeforces.backend.common.ContentLanguage
 import dev.gpucodeforces.backend.processor.ProcessorCatalog
 import dev.gpucodeforces.backend.processor.scoreApiModel
 import dev.gpucodeforces.backend.processor.toApiModel
@@ -79,6 +80,7 @@ class ProblemsController(
         if (format != null && format !in ProblemFormatData.FORMATS) throw BadRequestException("Неизвестный формат")
         processor?.let(processorCatalog::require)
         val viewer = CurrentUser.resolve()
+        val language = ContentLanguage.current()
         val subject = userId?.let { userService.getById(it) } ?: viewer
         val problemContext = problemService.context(context, viewer)
         // Sorting compares scores of the current GPU environment; a format problem measured in another one shows the
@@ -92,20 +94,21 @@ class ProblemsController(
         val problems = page.versionIds.map { ContextProblem(versions.getValue(it), problemContext) }
         val measured = problems.associate { it.version.id to referenceViews(it.version, problemContext) }
         val results = results(problemContext, problems, measured, subject?.id)
-        val items = problems.map { it.toApiModel(results.getValue(it.version.problemId), measured.getValue(it.version.id)) }
+        val items = problems.map { it.toApiModel(results.getValue(it.version.problemId), measured.getValue(it.version.id), language) }
         val streak = subject?.id?.let(submissionStats::streak) ?: 0
         return ResponseEntity.ok(ListProblems200Response(items, page.total, page.tags, page.solvedCount, page.poolSize, streak))
     }
 
     override fun getProblem(id: String, context: String): ResponseEntity<GetProblem200Response> {
         val viewer = CurrentUser.resolve()
+        val language = ContentLanguage.current()
         val problemContext = problemService.context(context, viewer)
         val problem = problemService.problem(id, problemContext, viewer)
         val version = problem.version
         val spec = problemCatalog.spec(version)
         val format = problemCatalog.format(version)
         val measured = referenceViews(version, problemContext)
-        val summary = problem.toApiModel(results(problemContext, listOf(problem), mapOf(version.id to measured), viewer?.id).getValue(id), measured)
+        val summary = problem.toApiModel(results(problemContext, listOf(problem), mapOf(version.id to measured), viewer?.id).getValue(id), measured, language)
         val details = problemService.processorsOf(problem).map { processor ->
             val processorSpec = spec.processorSpec(processor)!!
             val reference = measured[processor]
@@ -118,7 +121,7 @@ class ProblemsController(
                 version.starters[processor].orEmpty().filterKeys { it in processorSpec.languages },
                 Score(spec.scoreLimit(processorSpec)!!, Processors.get(processor).scoreType).toApiModel(),
                 environments.markdown(spec, version.judgeHash, processor, device ?: "Окружение дуэли", synthetic, format.aggregation()),
-            ).benchmark(benchmark(spec, format, processor, device, synthetic))
+            ).benchmark(benchmark(spec, format, processor, device, synthetic, language))
         }
         // a guess has one processor: the answer belongs to the measurements of that processor
         val guessReference = if (version.format == ProblemFormatData.GUESS) measured.values.singleOrNull() else null
@@ -131,7 +134,7 @@ class ProblemsController(
             GetProblem200Response(
                 summary.id, summary.code, summary.title, GetProblem200Response.DifficultyEnum.fromValue(summary.difficulty.value), summary.tags,
                 summary.solved, summary.solvedCount, summary.lastSubmissionId, summary.lastStatus, summary.processors,
-                version.statementMarkdown,
+                version.statement(language),
                 spec.limits.memoryLimitMb.toInt(),
                 details,
             ).format(GetProblem200Response.FormatEnum.fromValue(version.format))
@@ -155,7 +158,7 @@ class ProblemsController(
         }
         val problem = problemService.problem(version.problemId, ProblemContext.Practice, author)
         return ResponseEntity.status(HttpStatus.CREATED).body(
-            problem.toApiModel(ProblemResult(false, 0, null, emptyMap(), emptyMap()), references.views(version)),
+            problem.toApiModel(ProblemResult(false, 0, null, emptyMap(), emptyMap()), references.views(version), ContentLanguage.current()),
         )
     }
 
@@ -226,10 +229,12 @@ class ProblemsController(
     private fun model(processor: String): String =
         (if (processor == Processors.GPU_CUDA) references.environmentName() else null) ?: processorCatalog.model(processor)
 
-    private fun ContextProblem.toApiModel(result: ProblemResult, measured: Map<String, ReferenceMeasurementView>): ProblemApiModel = ProblemApiModel(
+    private fun ContextProblem.toApiModel(
+        result: ProblemResult, measured: Map<String, ReferenceMeasurementView>, language: ContentLanguage,
+    ): ProblemApiModel = ProblemApiModel(
         version.problemId,
         version.code,
-        version.title,
+        version.title(language),
         ProblemApiModel.DifficultyEnum.fromValue(version.difficulty),
         version.tags,
         result.solved,

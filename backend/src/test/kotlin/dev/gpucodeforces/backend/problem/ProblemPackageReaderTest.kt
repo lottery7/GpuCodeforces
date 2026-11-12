@@ -11,6 +11,7 @@ import dev.gpucodeforces.judge.api.SpecValidator
 import java.nio.file.Path
 import kotlin.io.path.ExperimentalPathApi
 import kotlin.io.path.copyToRecursively
+import kotlin.io.path.deleteExisting
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
 
@@ -33,7 +34,10 @@ class ProblemPackageReaderTest {
         assertThat(problem.id).isEqualTo("vector_add")
         assertThat(problem.frontMatter.code).isEqualTo("1")
         assertThat(problem.frontMatter.difficulty).isEqualTo("easy")
+        assertThat(problem.frontMatter.title).isEqualTo("Сложение векторов")
         assertThat(problem.statementMarkdown).startsWith("Даны два вектора").doesNotContain("difficulty:")
+        assertThat(problem.titleEn).isEqualTo("Vector Addition")
+        assertThat(problem.statementMarkdownEn).startsWith("You are given two vectors").doesNotContain("title:")
         // The backend id replaces the one judge_cli.py needs in problem.json; the generator comes from problem.py.
         assertThat(problem.spec.id).isEqualTo("vector_add")
         assertThat(problem.spec.generator.source).contains("def tests()")
@@ -109,6 +113,36 @@ class ProblemPackageReaderTest {
     }
 
     @Test
+    fun `the English statement is a part of the content as the Russian one is`() {
+        val directory = copyOf("vector_add")
+        val before = reader.read(directory)
+        val english = directory.resolve("statement.en.md")
+        english.writeText(english.readText() + "\nA remark.")
+        val after = reader.read(directory)
+
+        assertThat(after.judgeHash).isEqualTo(before.judgeHash)
+        assertThat(after.contentHash).isNotEqualTo(before.contentHash)
+    }
+
+    @Test
+    fun `rejects a package without the English statement or with more than a title in its front matter`() {
+        val directory = copyOf("vector_add")
+        val english = directory.resolve("statement.en.md")
+        val text = english.readText()
+
+        english.writeText(text.replace("title: Vector Addition", "title: Vector Addition\ndifficulty: easy"))
+        assertThatThrownBy { reader.read(directory) }
+            .isInstanceOf(ProblemPackageException::class.java).hasMessageContaining("statement.en.md").hasMessageContaining("title")
+        english.writeText(text.replace("title: Vector Addition", "title: ''"))
+        assertThatThrownBy { reader.read(directory) }.isInstanceOf(ProblemPackageException::class.java).hasMessageContaining("statement.en.md")
+        english.writeText("---\ntitle: Vector Addition\n---\n")
+        assertThatThrownBy { reader.read(directory) }.isInstanceOf(ProblemPackageException::class.java).hasMessageContaining("statement.en.md")
+        english.deleteExisting()
+        assertThatThrownBy { reader.read(directory) }
+            .isInstanceOf(ProblemPackageException::class.java).hasMessageContaining("нет файла statement.en.md")
+    }
+
+    @Test
     fun `rejects a statement without front matter`() {
         val directory = copyOf("vector_add")
         directory.resolve("statement.md").writeText("# Условие без метаданных")
@@ -170,7 +204,7 @@ class ProblemPackageReaderTest {
     fun `guess packages import code for automatic measurements and version changes to the candidates`() {
         val directory = copyOf("vector_add")
         @Language("JSON")
-        val metadata = """{"format":"guess","explanation":"Пояснение"}"""
+        val metadata = """{"format":"guess","explanation":"Пояснение","explanationEn":"Explanation"}"""
         directory.resolve("format.json").writeText(metadata)
         directory.resolve("first.cu").writeText("void first() {}")
         directory.resolve("second.cu").writeText("void second() {}")
@@ -193,7 +227,7 @@ class ProblemPackageReaderTest {
     fun `guess packages reject missing candidates and invalid metadata`() {
         val directory = copyOf("vector_add")
         @Language("JSON")
-        val metadata = """{"format":"guess","explanation":"Пояснение"}"""
+        val metadata = """{"format":"guess","explanation":"Пояснение","explanationEn":"Explanation"}"""
         directory.resolve("format.json").writeText(metadata)
         assertThatThrownBy { reader.read(directory) }.hasMessageContaining("first.cu")
         directory.resolve("first.cu").writeText("void first() {}")
@@ -203,6 +237,8 @@ class ProblemPackageReaderTest {
         assertThatThrownBy { reader.read(directory) }.hasMessageContaining("неизвестный format")
         directory.resolve("format.json").writeText(metadata.replace("Пояснение", ""))
         assertThatThrownBy { reader.read(directory) }.hasMessageContaining("explanation")
+        directory.resolve("format.json").writeText(metadata.replace(""","explanationEn":"Explanation"""", ""))
+        assertThatThrownBy { reader.read(directory) }.hasMessageContaining("explanationEn")
     }
 
     @Test
@@ -211,7 +247,7 @@ class ProblemPackageReaderTest {
         val standardHash = reader.read(directory).judgeHash
         directory.resolve("starter.cu").writeText("void solve() {}")
         @Language("JSON")
-        val metadata = """{"format":"optimization","benchmark":{"inputDescription":"N = 1 и 4","aggregation":"geometric_mean"}}"""
+        val metadata = """{"format":"optimization","benchmark":{"inputDescription":"N = 1 и 4","inputDescriptionEn":"N = 1 and 4","aggregation":"geometric_mean"}}"""
         directory.resolve("format.json").writeText(metadata)
         val geometric = reader.read(directory)
         assertThat(geometric.format.aggregation()).isEqualTo("geometric_mean")
@@ -236,6 +272,8 @@ class ProblemPackageReaderTest {
 
         directory.resolve("format.json").writeText(metadata.replace("N = 1 и 4", " "))
         assertThatThrownBy { reader.read(directory) }.hasMessageContaining("inputDescription")
+        directory.resolve("format.json").writeText(metadata.replace(""","inputDescriptionEn":"N = 1 and 4"""", ""))
+        assertThatThrownBy { reader.read(directory) }.hasMessageContaining("inputDescriptionEn")
         directory.resolve("format.json").writeText(metadata.replace("geometric_mean", "average"))
         assertThatThrownBy { reader.read(directory) }.hasMessageContaining("aggregation")
     }

@@ -1,5 +1,6 @@
 package dev.gpucodeforces.backend.contest
 
+import dev.gpucodeforces.backend.common.ContentLanguage
 import dev.gpucodeforces.backend.api.ContestsApi
 import dev.gpucodeforces.backend.api.model.ContestInput
 import dev.gpucodeforces.backend.api.model.GetContestStandings200ResponseInner
@@ -41,7 +42,7 @@ class ContestsController(
         val viewer = CurrentUser.resolve()
         val contest = contestService.get(id)
         val problems = contestService.problemsOf(contest.id)
-        val rulesMarkdown = contestService.buildRulesMarkdown(contest, problems, viewer)
+        val rulesMarkdown = contestService.buildRulesMarkdown(contest, problems, viewer, ContentLanguage.current())
         val registered = viewer != null && contestService.isRegistered(contest.id, viewer.id)
         val now = Instant.now()
         return ResponseEntity.ok(contest.toApiModel(problems, viewer, registered, now, rulesMarkdown, contestService.resultsPending(contest, now)))

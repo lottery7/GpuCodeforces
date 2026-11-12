@@ -154,14 +154,18 @@ class ReferenceMeasurementsIntegrationTest {
     private fun importProblem(format: String): Pair<Path, ProblemVersion> {
         val directory = Files.createDirectory(root.resolve("reference-${UUID.randomUUID()}"))
         val template = Path.of("../judge/problems/examples/vector_add")
-        listOf("problem.json", "problem.py", "statement.md").forEach { Files.copy(template.resolve(it), directory.resolve(it)) }
+        listOf("problem.json", "problem.py", "statement.md", "statement.en.md").forEach { Files.copy(template.resolve(it), directory.resolve(it)) }
         Files.writeString(directory.resolve("starter.cu"), source(128))
         val metadata = mutableMapOf<String, Any>(
             "format" to format,
-            "benchmark" to mapOf("inputDescription" to "Полный набор тестов генератора", "aggregation" to "geometric_mean"),
+            "benchmark" to mapOf(
+                "inputDescription" to "Полный набор тестов генератора", "inputDescriptionEn" to "Every test of the generator",
+                "aggregation" to "geometric_mean",
+            ),
         )
         if (format == "guess") {
             metadata["explanation"] = "Размер блока влияет на выполнение этих входов"
+            metadata["explanationEn"] = "The block size changes how these inputs run"
             Files.writeString(directory.resolve("first.cu"), source(128))
             Files.writeString(directory.resolve("second.cu"), source(256))
         }
@@ -481,12 +485,12 @@ class ReferenceMeasurementsIntegrationTest {
         val template = Path.of("../judge/problems/examples/vector_add_rtl")
         listOf("problem.json", "problem.py").forEach { Files.copy(template.resolve(it), directory.resolve(it)) }
         // the judge's example has no statement of the bank format
-        Files.copy(Path.of("../judge/problems/examples/vector_add/statement.md"), directory.resolve("statement.md"))
+        listOf("statement.md", "statement.en.md").forEach { Files.copy(Path.of("../judge/problems/examples/vector_add/$it"), directory.resolve(it)) }
         val circuit = Files.readString(template.resolve("solutions/accepted.sv"))
         Files.writeString(directory.resolve("starter.rtl.sv"), circuit)
         Files.writeString(
             directory.resolve("format.json"),
-            json.writeValueAsString(mapOf("format" to "optimization", "benchmark" to mapOf("inputDescription" to "Тесты", "aggregation" to "max"))),
+            json.writeValueAsString(mapOf("format" to "optimization", "benchmark" to mapOf("inputDescription" to "Тесты", "inputDescriptionEn" to "Tests", "aggregation" to "max"))),
         )
         assertThat(sync.sync().failed).isEmpty()
         val version = catalog.currentVersion(directory.fileName.toString())!!

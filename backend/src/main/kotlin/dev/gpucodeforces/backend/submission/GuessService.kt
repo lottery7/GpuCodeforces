@@ -1,5 +1,6 @@
 package dev.gpucodeforces.backend.submission
 
+import dev.gpucodeforces.backend.common.ContentLanguage
 import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
 import dev.gpucodeforces.backend.problem.ProblemCatalog
@@ -27,7 +28,11 @@ data class GuessSnapshot(
     val explanation: String,
     val benchmarkKey: String,
     val synthetic: Boolean,
+    /** The explanation in English; null where the problem has one text and in answers saved before two languages. */
+    val explanationEn: String? = null,
 ) {
+    fun explanation(language: ContentLanguage): String = explanationEn?.takeIf { language == ContentLanguage.EN } ?: explanation
+
     fun correctChoice(): String = when (firstScore.compareTo(secondScore)) {
         -1 -> "first"
         1 -> "second"
@@ -67,6 +72,7 @@ class GuessService(
         val format = problemCatalog.format(version)
         val snapshot = GuessSnapshot(
             checkNotNull(measured.firstScore), checkNotNull(measured.secondScore), measured.scoreType, format.explanation, key, measured.synthetic,
+            format.explanationEn,
         )
         val correct = choice == snapshot.correctChoice()
         return submissionRepository.save(

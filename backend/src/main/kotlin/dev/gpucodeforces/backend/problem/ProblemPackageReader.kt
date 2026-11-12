@@ -39,10 +39,17 @@ data class StatementFrontMatter(
     val draft: Boolean = false,
 )
 
+/** YAML front matter of `statement.en.md`: the rest of the metadata is in `statement.md`. */
+data class TranslationFrontMatter(val title: String)
+
 class ProblemPackage(
     val id: String,
     val frontMatter: StatementFrontMatter,
+    /** The statement in Russian, from `statement.md`. */
     val statementMarkdown: String,
+    val titleEn: String,
+    /** The statement in English, from `statement.en.md`. */
+    val statementMarkdownEn: String,
     /** Processor -> language -> starter code, for every language of every processor the problem declares. */
     val starters: Map<String, Map<String, String>>,
     /** Complete spec as the judge receives it, generator included. */
@@ -53,9 +60,10 @@ class ProblemPackage(
 )
 
 /**
- * Reads a problem package directory: `statement.md` (front matter + statement), `problem.json` (judge
- * ProblemSpec without the generator), `problem.py` (generator) and optional starters `starter.<processor><ext>`
- * (`starter.rtl.sv`), where the older `starter.cu` stands for the CUDA processors. See docs/backend/problem-package.md.
+ * Reads a problem package directory: `statement.md` (front matter + the statement in Russian), `statement.en.md` (its
+ * English title and text), `problem.json` (judge ProblemSpec without the generator), `problem.py` (generator) and
+ * optional starters `starter.<processor><ext>` (`starter.rtl.sv`), where the older `starter.cu` stands for the CUDA
+ * processors. See docs/backend/problem-package.md.
  */
 @Component
 class ProblemPackageReader(jsonMapper: JsonMapper) {
@@ -69,11 +77,13 @@ class ProblemPackageReader(jsonMapper: JsonMapper) {
         val id = directory.fileName.toString()
         if (!SpecValidator.isValidId(id)) fail("имя каталога должно состоять из латинских букв, цифр, '.', '_' и '-'")
         val statementFile = readFile(directory, STATEMENT_FILE)
+        val englishFile = readFile(directory, ENGLISH_STATEMENT_FILE)
         val specFile = readFile(directory, SPEC_FILE)
         val generator = readFile(directory, GENERATOR_FILE)
         val formatFile = directory.resolve(FORMAT_FILE).takeIf { Files.isRegularFile(it) }?.let { Files.readString(it) }
 
         val (frontMatter, statement) = parseStatement(statementFile)
+        val (english, englishStatement) = parseTranslation(englishFile)
         val spec = parseSpec(id, specFile, generator)
         val format = readFormat(directory, formatFile, spec)
         val starters = readStarters(directory, spec)
@@ -82,15 +92,17 @@ class ProblemPackageReader(jsonMapper: JsonMapper) {
             id = id,
             frontMatter = frontMatter,
             statementMarkdown = statement,
+            titleEn = english.title,
+            statementMarkdownEn = englishStatement,
             starters = starters,
             spec = spec.copy(version = sha256(specFile, generator).take(VERSION_LENGTH)),
             // The generated starters count too: a better template has to reach problems already in the bank.
             contentHash = if (formatFile == null) {
-                sha256(statementFile, specFile, generator, *starterHashParts(starters).toTypedArray())
+                sha256(statementFile, englishFile, specFile, generator, *starterHashParts(starters).toTypedArray())
             } else {
                 sha256(
-                    statementFile, specFile, generator, *starterHashParts(starters).toTypedArray(), formatFile, format.firstCode.orEmpty(),
-                    format.secondCode.orEmpty(),
+                    statementFile, englishFile, specFile, generator, *starterHashParts(starters).toTypedArray(), formatFile,
+                    format.firstCode.orEmpty(), format.secondCode.orEmpty(),
                 )
             },
             judgeHash = when {
@@ -119,7 +131,8 @@ class ProblemPackageReader(jsonMapper: JsonMapper) {
         if (format.format !in ProblemFormatData.FORMATS) fail("неизвестный format в $FORMAT_FILE")
         if (format.firstCode != null || format.secondCode != null) fail("варианты кода задаются файлами first и second с расширением языка")
         format.benchmark?.let { benchmark ->
-            if (benchmark.inputDescription.isBlank() || benchmark.inputDescription.length > 4000) fail("benchmark.inputDescription должен быть непустым, до 4000 символов")
+            checkText("benchmark.inputDescription", benchmark.inputDescription)
+            checkText("benchmark.inputDescriptionEn", benchmark.inputDescriptionEn)
             if (benchmark.aggregation !in BenchmarkDefinition.AGGREGATIONS) fail("неизвестный benchmark.aggregation")
             if (format.format == ProblemFormatData.STANDARD && benchmark.aggregation != BenchmarkDefinition.MAX) {
                 fail("обычные задачи используют benchmark.aggregation=max")
@@ -127,7 +140,8 @@ class ProblemPackageReader(jsonMapper: JsonMapper) {
         }
         return when (format.format) {
             ProblemFormatData.GUESS -> {
-                if (format.explanation.isBlank() || format.explanation.length > 4000) fail("explanation должен быть непустым, до 4000 символов")
+                checkText("explanation", format.explanation)
+                checkText("explanationEn", format.explanationEn)
                 // both variants run on the one processor and language of the problem
                 val processor = spec.declaredProcessors().singleOrNull()?.takeIf { it.languages.size == 1 }
                     ?: fail("угадывание сравнивает варианты на одном процессоре и одном языке: в problem.json нужен ровно один процессор с одним языком")
@@ -208,23 +222,44 @@ class ProblemPackageReader(jsonMapper: JsonMapper) {
     }
 
     private fun parseStatement(content: String): Pair<StatementFrontMatter, String> {
-        val match = FRONT_MATTER.find(content.replace("\r\n", "\n"))
-            ?: fail("$STATEMENT_FILE должен начинаться с YAML-блока между строками ---")
+        val (yaml, statement) = splitFrontMatter(STATEMENT_FILE, content)
         val frontMatter = try {
-            yamlMapper.readValue<StatementFrontMatter>(match.groupValues[1])
+            yamlMapper.readValue<StatementFrontMatter>(yaml)
         } catch (exception: JacksonException) {
             fail("неверный YAML-блок в $STATEMENT_FILE: ${exception.originalMessage}")
         }
         with(frontMatter) {
             if (code.isBlank() || code.length > MAX_CODE_LENGTH) fail("code должен быть непустым, до $MAX_CODE_LENGTH символов")
-            if (title.isBlank() || title.length > MAX_TITLE_LENGTH) fail("title должен быть непустым, до $MAX_TITLE_LENGTH символов")
+            checkTitle(STATEMENT_FILE, title)
             if (difficulty !in DIFFICULTIES) fail("difficulty должен быть одним из $DIFFICULTIES")
             if (tags.any { it.isBlank() }) fail("tags не должны быть пустыми")
             if (authors.any { it.isBlank() }) fail("authors должны быть никами пользователей")
         }
-        val statement = match.groupValues[2].trim()
-        if (statement.isEmpty()) fail("условие в $STATEMENT_FILE пустое")
         return frontMatter to statement
+    }
+
+    /** The English statement repeats only what is said in words: its title and its text. */
+    private fun parseTranslation(content: String): Pair<TranslationFrontMatter, String> {
+        val (yaml, statement) = splitFrontMatter(ENGLISH_STATEMENT_FILE, content)
+        val frontMatter = try {
+            yamlMapper.readValue<TranslationFrontMatter>(yaml)
+        } catch (exception: JacksonException) {
+            fail("неверный YAML-блок в $ENGLISH_STATEMENT_FILE (в нём задаётся только title): ${exception.originalMessage}")
+        }
+        checkTitle(ENGLISH_STATEMENT_FILE, frontMatter.title)
+        return frontMatter to statement
+    }
+
+    private fun splitFrontMatter(file: String, content: String): Pair<String, String> {
+        val match = FRONT_MATTER.find(content.replace("\r\n", "\n"))
+            ?: fail("$file должен начинаться с YAML-блока между строками ---")
+        val statement = match.groupValues[2].trim()
+        if (statement.isEmpty()) fail("условие в $file пустое")
+        return match.groupValues[1] to statement
+    }
+
+    private fun checkTitle(file: String, title: String) {
+        if (title.isBlank() || title.length > MAX_TITLE_LENGTH) fail("title в $file должен быть непустым, до $MAX_TITLE_LENGTH символов")
     }
 
     private fun parseSpec(id: String, specFile: String, generator: String): ProblemSpec {
@@ -291,6 +326,11 @@ class ProblemPackageReader(jsonMapper: JsonMapper) {
         """.trimMargin()
     }
 
+    /** A text of `format.json` shown to people; the field with `En` is its English version. */
+    private fun checkText(field: String, text: String?) {
+        if (text.isNullOrBlank() || text.length > MAX_TEXT_LENGTH) fail("$field в $FORMAT_FILE должен быть непустым, до $MAX_TEXT_LENGTH символов")
+    }
+
     private fun readFile(directory: Path, name: String): String {
         val file = directory.resolve(name)
         if (!Files.isRegularFile(file)) fail("нет файла $name")
@@ -310,6 +350,7 @@ class ProblemPackageReader(jsonMapper: JsonMapper) {
 
     companion object {
         const val STATEMENT_FILE = "statement.md"
+        const val ENGLISH_STATEMENT_FILE = "statement.en.md"
         const val SPEC_FILE = "problem.json"
         const val GENERATOR_FILE = "problem.py"
         /**
@@ -323,6 +364,7 @@ class ProblemPackageReader(jsonMapper: JsonMapper) {
         val DIFFICULTIES = listOf("easy", "medium", "hard")
         private const val MAX_CODE_LENGTH = 16
         private const val MAX_TITLE_LENGTH = 200
+        private const val MAX_TEXT_LENGTH = 4000
         private const val VERSION_LENGTH = 12
         private val FRONT_MATTER = Regex("\\A---\\n(.*?)\\n---\\n?(.*)\\z", RegexOption.DOT_MATCHES_ALL)
     }

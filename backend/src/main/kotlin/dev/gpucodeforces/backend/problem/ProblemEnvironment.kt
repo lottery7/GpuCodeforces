@@ -1,5 +1,6 @@
 package dev.gpucodeforces.backend.problem
 
+import dev.gpucodeforces.backend.common.ContentLanguage
 import dev.gpucodeforces.backend.processor.KnownTest
 import dev.gpucodeforces.judge.api.CSignature
 import dev.gpucodeforces.judge.api.CudaSignature
@@ -133,10 +134,12 @@ private fun testsMarkdown(tests: List<KnownTest>?): String {
  * How results of a format are compared on [processor]: the aggregation over the measured tests, and on the real GPU
  * also how a test is timed. [model] is hidden in the test mode, where nothing runs.
  */
-fun benchmark(spec: ProblemSpec, data: ProblemFormatData, processor: String, model: String?, synthetic: Boolean): Benchmark {
+fun benchmark(
+    spec: ProblemSpec, data: ProblemFormatData, processor: String, model: String?, synthetic: Boolean, language: ContentLanguage,
+): Benchmark {
     val gpu = processor == Processors.GPU_CUDA
     return Benchmark()
-        .inputDescription(data.benchmark?.inputDescription ?: "Набор тестов задачи")
+        .inputDescription(data.benchmark?.inputDescription(language) ?: "Набор тестов задачи")
         .aggregation(BenchmarkAggregation.fromValue(data.aggregation()))
         .timingMode(if (gpu) MeasurementTiming.fromValue(spec.timing.effectiveMode.name.lowercase()) else null)
         .warmupRuns(if (gpu) spec.timing.warmupRuns else null)

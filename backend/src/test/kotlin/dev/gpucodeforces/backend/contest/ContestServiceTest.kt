@@ -1,5 +1,6 @@
 package dev.gpucodeforces.backend.contest
 
+import dev.gpucodeforces.backend.common.ContentLanguage
 import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
 import dev.gpucodeforces.backend.common.BadRequestException
 import dev.gpucodeforces.backend.common.ForbiddenException
@@ -110,9 +111,9 @@ class ContestServiceTest {
 
     @Test
     fun `rules name the processor and its limit`() {
-        val rules = service.buildRulesMarkdown(contestFixture(processor = "rtl"), emptyList(), viewer = null)
+        val rules = service.buildRulesMarkdown(contestFixture(processor = "rtl"), emptyList(), viewer = null, ContentLanguage.RU)
         assertThat(rules).contains("`rtl`").contains("лимит тактов × глубины × транзисторов")
-        assertThat(service.buildRulesMarkdown(contestFixture(), emptyList(), viewer = null)).contains("NVIDIA GeForce RTX 3060").contains("лимит времени")
+        assertThat(service.buildRulesMarkdown(contestFixture(), emptyList(), viewer = null, ContentLanguage.RU)).contains("NVIDIA GeForce RTX 3060").contains("лимит времени")
     }
 
     @Test
@@ -203,8 +204,8 @@ class ContestServiceTest {
         val contest = contestFixture(authors = mutableSetOf(author))
         val problem = ContestProblem(contest.id, "vector-addition", 0)
 
-        val visitorMarkdown = service.buildRulesMarkdown(contest, listOf(problem), viewer = null)
-        val authorMarkdown = service.buildRulesMarkdown(contest, listOf(problem), viewer = author)
+        val visitorMarkdown = service.buildRulesMarkdown(contest, listOf(problem), viewer = null, ContentLanguage.RU)
+        val authorMarkdown = service.buildRulesMarkdown(contest, listOf(problem), viewer = author, ContentLanguage.RU)
 
         assertThat(visitorMarkdown).doesNotContain("vector-addition")
         assertThat(authorMarkdown).contains("vector-addition")

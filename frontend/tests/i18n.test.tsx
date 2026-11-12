@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
@@ -106,5 +106,19 @@ describe('Переключатель языка', () => {
     await userEvent.click(screen.getByRole('button', { name: 'RU' }));
     expect(screen.getByRole('heading', { name: 'Последние посылки' })).toBeVisible();
     expect(document.documentElement.lang).toBe('ru');
+  });
+
+  it('перезапрашивает данные: названия и условия задач сервер отдает на языке запроса', async () => {
+    open();
+    expect(await screen.findByRole('heading', { name: 'Последние посылки' })).toBeVisible();
+    await waitFor(() => expect(api.listLatestSubmissions).toHaveBeenCalledTimes(1));
+    const contests = vi.mocked(api.listContests).mock.calls.length;
+
+    await userEvent.click(screen.getByRole('button', { name: 'EN' }));
+    await waitFor(() => expect(api.listLatestSubmissions).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(api.listContests).mock.calls.length).toBeGreaterThan(contests);
+
+    await userEvent.click(screen.getByRole('button', { name: 'RU' }));
+    await waitFor(() => expect(api.listLatestSubmissions).toHaveBeenCalledTimes(3));
   });
 });

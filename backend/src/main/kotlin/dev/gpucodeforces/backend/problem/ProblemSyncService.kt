@@ -131,6 +131,8 @@ class ProblemSyncService(
         revision = revision,
         format = format.format,
         formatData = jsonMapper.writeValueAsString(format),
+        titleEn = titleEn,
+        statementMarkdownEn = statementMarkdownEn,
     )
 
     /** Clones or fast-forwards [root] to the configured branch and returns the commit id. */

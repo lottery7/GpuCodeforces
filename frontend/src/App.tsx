@@ -1,6 +1,6 @@
 import { Component, lazy, Suspense, useEffect, useRef, type ReactNode } from 'react';
 import { Link, NavLink, Navigate, Route, Routes, useLocation } from 'react-router';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api/client';
 import { useSession } from './auth';
 import { AuthDialogProvider, AuthLanding, useAuthDialog } from './auth-dialog';
@@ -122,6 +122,14 @@ function Shell() {
 
 export default function App() {
   // every page under App is rendered again when the language is switched, the sign-in dialog included
-  useLanguage();
+  const language = useLanguage();
+  const cache = useQueryClient();
+  const loadedIn = useRef(language);
+  useEffect(() => {
+    if (loadedIn.current === language) return;
+    loadedIn.current = language;
+    // titles and statements of problems were loaded in the other language: the backend chooses it by the request
+    void cache.invalidateQueries();
+  }, [language, cache]);
   return <AuthDialogProvider><Shell /></AuthDialogProvider>;
 }

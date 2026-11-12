@@ -51,7 +51,8 @@ class DuelService(
         val term = query?.trim().orEmpty()
         val rows = codingPool(processor).filter { problem ->
             (difficulty == null || problem.difficulty == difficulty) &&
-                (term.isEmpty() || problem.title.contains(term, true) || problem.problemId.contains(term, true) || problem.code.contains(term, true))
+                (term.isEmpty() || problem.title.contains(term, true) || problem.titleEn?.contains(term, true) == true ||
+                    problem.problemId.contains(term, true) || problem.code.contains(term, true))
         }.sortedWith(compareBy<ProblemVersion, String>(bankCodeOrder) { it.code }.thenBy { it.title }.thenBy { it.problemId })
         return DuelProblemList(rows.drop(offset).take(limit), rows.size)
     }

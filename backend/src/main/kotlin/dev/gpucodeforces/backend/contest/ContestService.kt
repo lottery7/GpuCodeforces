@@ -1,5 +1,6 @@
 package dev.gpucodeforces.backend.contest
 
+import dev.gpucodeforces.backend.common.ContentLanguage
 import dev.gpucodeforces.backend.api.model.GetContestStandings200ResponseInner
 import dev.gpucodeforces.backend.benchmark.ReferenceMeasurements
 import dev.gpucodeforces.backend.common.BadRequestException
@@ -212,7 +213,8 @@ class ContestService(
         }
     }
 
-    fun buildRulesMarkdown(contest: Contest, problems: List<ContestProblem>, viewer: User?): String {
+    /** The rules are written in Russian; the titles of the problems under them come in [language]. */
+    fun buildRulesMarkdown(contest: Contest, problems: List<ContestProblem>, viewer: User?, language: ContentLanguage): String {
         val processor = Processors.get(contest.processor)
         val processorRule = "Все посылки проверяются на процессоре ${processor.title} (`${processor.id}`, модель - ${processorCatalog.model(processor.id)}). "
         val header = "## Правила\n\n" + processorRule + if (contest.format == "duel") {
@@ -232,7 +234,7 @@ class ContestService(
         if (contest.phaseAt(Instant.now()) == ContestPhase.UPCOMING && !isAuthor) return header
         val versions = problemCatalog.versions(problems.mapNotNull { it.problemVersionId })
         val list = problems.sortedBy { it.position }.mapIndexed { index, problem ->
-            val title = problem.problemVersionId?.let { versions[it]?.title } ?: problem.id.problemId
+            val title = problem.problemVersionId?.let { versions[it]?.title(language) } ?: problem.id.problemId
             "- ${'A' + index}. $title"
         }.joinToString("\n")
         return "$header\n\n## Задачи\n\n$list"
