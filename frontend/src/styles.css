@@ -525,10 +525,13 @@ button.text-link:hover, button.danger-link:hover, button.filter-reset:hover { te
 .editor-footer { position: sticky; z-index: 20; bottom: 0; min-height: 0; background: var(--chrome); border-radius: 0 0 calc(var(--radius-lg) - 1.2px) calc(var(--radius-lg) - 1.2px); }
 .editor-actions { flex-shrink: 0; border-radius: 0 0 calc(var(--radius-lg) - 1.2px) calc(var(--radius-lg) - 1.2px); }
 .editor-feedback { position: relative; display: flex; flex-direction: column; gap: 7.2px; max-height: min(32dvh, 276px); padding: 9.6px 14.4px; border-top: 1.2px solid var(--border); overflow: auto; overscroll-behavior: contain; }
-.editor-feedback > .close-output { position: absolute; z-index: 1; top: 4.8px; right: 7.2px; display: inline-flex; align-items: center; justify-content: center; width: 33.6px; height: 33.6px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); }
+.editor-feedback > .close-output { position: absolute; z-index: 1; top: 9.6px; right: 9.6px; display: inline-flex; align-items: center; justify-content: center; width: 33.6px; height: 33.6px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); }
 .editor-feedback > .close-output:hover { background: var(--hover-strong); color: var(--text-strong); }
 .editor-feedback:has(> .close-output) > .small, .editor-feedback:has(> .close-output) > .notice, .editor-feedback:has(> .close-output) .tool-window-body > p { min-height: 33.6px; padding-right: 38.4px; }
-.editor-feedback .notice { padding: 4.8px 9.6px; }
+/* The strip under the editor is a frame already: a message in it is a plain line, the text and its action side by side,
+   level with the cross that closes it. */
+.editor-feedback .notice { display: flex; flex-wrap: wrap; align-items: center; gap: 2.4px 16.8px; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.editor-feedback .notice > .text-link { min-height: 33.6px; }
 .editor-feedback .run-console { margin: 0; border: 0; background: transparent; }
 .editor-feedback .tool-window-body { padding: 0; font: var(--font-base)/1.6 var(--font); }
 .editor-feedback .diagnostic { margin: 7.2px 0 0; max-height: min(20dvh, 168px); }
