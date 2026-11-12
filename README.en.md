@@ -6,7 +6,7 @@
 
 **Competitive programming where a correct answer is not enough: the solution has to be fast on a given processor.**
 
-[Promo](https://github.com/lottery7/GpuCodeforces/releases/latest/download/gpu-forces-promo.mp4) ·
+[Promo](https://drive.google.com/file/d/1kVb6aydTNXjQgFZdIFlj8QpWUVyCGLmB/view) ·
 [Slides](https://docs.google.com/presentation/d/1wK260FY0vNzkz17bJX9PXNFOtqUYCWwU7iATTw0A3wU) ·
 [Problem bank](https://github.com/lottery7/GpuCodeforcesProblems) ·
 [Quick start](#quick-start) ·
@@ -73,10 +73,10 @@ Also:
 
 ## Promo and slides
 
-[![The cover of the promo: one problem, five processors](docs/media/en/promo.webp)](https://github.com/lottery7/GpuCodeforces/releases/latest/download/gpu-forces-promo.mp4)
+[![The cover of the promo: one problem, five processors](docs/media/en/promo.webp)](https://drive.google.com/file/d/1kVb6aydTNXjQgFZdIFlj8QpWUVyCGLmB/view)
 
 Two minutes, in Russian: one problem on RISC-V and as a circuit, the guess format, a hack in a contest and the
-rating. The file is in the [latest release](https://github.com/lottery7/GpuCodeforces/releases/latest).
+rating.
 
 [The slides of the project](https://docs.google.com/presentation/d/1wK260FY0vNzkz17bJX9PXNFOtqUYCWwU7iATTw0A3wU), in Russian, are the deck for the DevDays defense.
 
