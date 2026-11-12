@@ -82,7 +82,7 @@ export default function Home() {
 
   return <>
     <section className="hero">
-      <div><h1 className="hero-title">GPU Forces</h1><p className="hero-sub">{t('Соревновательная платформа для программистов, где задачи требуют максимально ускорить вычисления на GPU, векторном RISC-V, NPU и собственных схемах на Verilog.')}</p></div>
+      <div><h1 className="hero-title">GPU Forces</h1><p className="hero-sub">{t('Соревновательная платформа для практики программирования и оптимизации на различных процессорах: GPU с CUDA, векторном RISC-V, NPU и схемах на SystemVerilog.')}</p></div>
     </section>
     <div className="dashboard">
       <section className="dashboard-main">
