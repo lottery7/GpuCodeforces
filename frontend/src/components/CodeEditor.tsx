@@ -26,12 +26,13 @@ export const editorLabel = (language: string) => t((languages[language] ?? langu
 
 const editorTheme = EditorView.theme({
   // sizes follow the 1.2x scale of styles.css
-  '&': { backgroundColor: '#1e1f22', color: '#bcbec4', fontSize: 'var(--font-sm)' },
-  '.cm-content': { fontFamily: 'var(--mono)', padding: '14.4px 0', caretColor: '#dfe1e5' },
-  '.cm-gutters': { backgroundColor: '#1e1f22', color: '#6f737a', borderRight: '1.2px solid #393b40' },
-  '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: '#282b30' },
-  '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': { backgroundColor: '#2e436e !important' },
-  '.cm-cursor': { borderLeftColor: '#dfe1e5' },
+  // colors are the tokens of styles.css, so the editor follows the theme of the page
+  '&': { backgroundColor: 'var(--editor)', color: '#dfe6f5', fontSize: 'var(--font-sm)' },
+  '.cm-content': { fontFamily: 'var(--mono)', padding: '14.4px 0', caretColor: 'var(--text-strong)' },
+  '.cm-gutters': { backgroundColor: 'var(--editor)', color: '#6b7385', borderRight: '1.2px solid var(--border-soft)' },
+  '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'var(--editor-current-line)' },
+  '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': { backgroundColor: 'var(--selection-strong) !important' },
+  '.cm-cursor': { borderLeftColor: 'var(--text-strong)' },
   '.cm-scroller': { overflow: 'auto', fontFamily: 'var(--mono)' },
   '&.cm-focused': { outline: 'none' },
 }, { dark: true });

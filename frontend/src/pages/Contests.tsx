@@ -6,7 +6,7 @@ import type { Contest } from '../api/types';
 import { useSession } from '../auth';
 import { useAuthDialog } from '../auth-dialog';
 import { useProcessors } from '../processors';
-import { Empty, ErrorMessage, PageHeader, SearchInput } from '../ui';
+import { Empty, ErrorMessage, PageHeader, ProcessorName, SearchInput } from '../ui';
 import { dateTime, phaseOf } from '../utils';
 import { t, translated } from '../i18n';
 
@@ -80,7 +80,7 @@ export default function Contests() {
 
   const rows = (group: Contest[]) => group.map(contest => <tr key={contest.id}>
     <td><Link to={`/contest/${encodeURIComponent(contest.id)}`}>{contest.title}</Link></td>
-    <td>{catalog.title(contest.processor)}</td>
+    <td><ProcessorName id={contest.processor} title={catalog.title(contest.processor)} /></td>
     <td><time dateTime={contest.startAt}>{dateTime(contest.startAt)}</time></td>
     <td className="num">{duration(contest)}</td><td className="num">{contest.problemCount}</td>
     <td>{phaseStatus[phaseOf(contest)]}</td>

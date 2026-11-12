@@ -6,7 +6,7 @@ import type { Contest, User } from '../api/types';
 import { useSession } from '../auth';
 import { useAuthDialog } from '../auth-dialog';
 import { GPU_CUDA, useProcessors } from '../processors';
-import { Empty, ErrorMessage, QueryState, UserLink } from '../ui';
+import { Empty, ErrorMessage, ProcessorName, QueryState, UserLink } from '../ui';
 import { dateTime, pendingStatuses } from '../utils';
 import { SubmissionTable } from './Submissions';
 import { t } from '../i18n';
@@ -82,7 +82,6 @@ export default function Home() {
 
   return <>
     <section className="hero">
-      <svg className="hero-logo" viewBox="0 0 40 40" role="img" aria-hidden="true"><rect width="40" height="40" rx="10" fill="#3574f0" /><path d="m14 12 12 8-12 8" fill="none" stroke="#ffffff" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" /></svg>
       <div><h1 className="hero-title">GPU Forces</h1><p className="hero-sub">{t('Соревновательная платформа для программистов, где задачи требуют максимально ускорить вычисления на GPU, векторном RISC-V, NPU и собственных схемах на Verilog.')}</p></div>
     </section>
     <div className="dashboard">
@@ -101,7 +100,7 @@ export default function Home() {
               <ul className="contest-meta">
                 <li><span>{t('Начало')}</span><span>{dateTime(contest.startAt)} {t('МСК')}</span></li>
                 <li><span>{t('Длительность')}</span><span>{duration(contest)}</span></li>
-                <li><span>{t('Процессор')}</span><span>{catalog.title(contest.processor)}</span></li>
+                <li><span>{t('Процессор')}</span><ProcessorName id={contest.processor} title={catalog.title(contest.processor)} /></li>
                 <li><span>{t('Задачи')}</span><span>{contest.problemCount}</span></li>
               </ul>
               <div className="contest-countdown">{t('До начала')} <time dateTime={contest.startAt}>{countdown(contest.startAt, now)}</time></div>

@@ -134,6 +134,12 @@ describe('Форматы задач', () => {
     await waitFor(() => expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ format: 'optimization' }), expect.any(AbortSignal)));
   });
 
+  it('подписывает число решивших: на телефоне задача идет карточкой без заголовков таблицы', async () => {
+    vi.spyOn(api, 'listProblems').mockResolvedValue({ items: [{ ...task, solvedCount: 7 }], total: 1, tags: [], solvedCount: 0, totalCount: 1, streak: 0 });
+    open('/problems');
+    expect(await screen.findByRole('cell', { name: '7' })).toHaveAttribute('data-label', 'Решили');
+  });
+
   it.each([true, false])('раскрывает ответ только автору: %s', async own => {
     session.user = own ? owner : opponent;
     vi.spyOn(api, 'getSubmission').mockResolvedValue(answer);
