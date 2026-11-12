@@ -7,6 +7,7 @@
 **Competitive programming where a correct answer is not enough: the solution has to be fast on a given processor.**
 
 [Promo](https://github.com/lottery7/GpuCodeforces/releases/latest/download/gpu-forces-promo.mp4) ·
+[Slides](https://docs.google.com/presentation/d/1wK260FY0vNzkz17bJX9PXNFOtqUYCWwU7iATTw0A3wU) ·
 [Problem bank](https://github.com/lottery7/GpuCodeforcesProblems) ·
 [Quick start](#quick-start) ·
 [Architecture](docs/architecture.md) ·
@@ -70,12 +71,14 @@ Also:
   git, and the platform pulls the repository by itself. Every problem has a leaderboard per processor.
 - **The interface and the problem statements are in Russian and English**, switched in the header.
 
-## Promo
+## Promo and slides
 
 [![The cover of the promo: one problem, five processors](docs/media/en/promo.webp)](https://github.com/lottery7/GpuCodeforces/releases/latest/download/gpu-forces-promo.mp4)
 
 Two minutes, in Russian: one problem on RISC-V and as a circuit, the guess format, a hack in a contest and the
 rating. The file is in the [latest release](https://github.com/lottery7/GpuCodeforces/releases/latest).
+
+[The slides of the project](https://docs.google.com/presentation/d/1wK260FY0vNzkz17bJX9PXNFOtqUYCWwU7iATTw0A3wU), in Russian, are the deck for the DevDays defense.
 
 ## Quick start
 
@@ -95,8 +98,26 @@ needed. The first build takes a while: the images compile QEMU and GPGPU-Sim.
 | With an NVIDIA GPU (`gpu-cuda`): Linux or WSL2, driver 570+, `nvidia-container-toolkit` | `docker compose --profile app --profile gpu up -d --wait --build` |
 | A look at the interface without real judging | `JUDGE_MODE=mock docker compose --profile app --profile mock up -d --wait --build` |
 
-The user with the handle `admin` gets the administrator page `/admin`. Building from source, local development
-and tests are described in [docs/development.md](docs/development.md).
+The user with the handle `admin` gets the administrator page `/admin`.
+
+## Building from source
+
+JDK 26, `python3` and a running Docker daemon are required: the PostgreSQL integration tests run on Docker. The
+frontend needs Node 24 and pnpm.
+
+```sh
+./gradlew build
+```
+
+The command builds the backend and the judge services and runs all tests; Gradle does not have to be installed.
+The frontend is built separately:
+
+```sh
+cd frontend && pnpm install --frozen-lockfile && pnpm build
+```
+
+Local development, running the services one by one and CI are described in
+[docs/development.md](docs/development.md).
 
 ## Documentation
 
@@ -112,4 +133,5 @@ is kept in PostgreSQL, and verdicts travel through RabbitMQ.
 | [frontend/README.md](frontend/README.md) | The web interface |
 | [docs/frontend/openapi.yaml](docs/frontend/openapi.yaml) | The API contract |
 
-Made at the DevDays hackathon, autumn 2026, ITMO.
+Made at the DevDays hackathon, autumn 2026, ITMO. The description of the project and the team are on the
+[page of the project in the DevDays wiki](https://cs-uni.ru/index.php?title=%D0%9F%D0%BB%D0%B0%D1%82%D1%84%D0%BE%D1%80%D0%BC%D0%B0_%D0%B4%D0%BB%D1%8F_%D1%81%D0%BE%D1%80%D0%B5%D0%B2%D0%BD%D0%BE%D0%B2%D0%B0%D0%BD%D0%B8%D0%B9_%D0%BF%D0%BE_%D0%B0%D0%BB%D0%B3%D0%BE%D1%80%D0%B8%D1%82%D0%BC%D0%B0%D0%BC_%D0%BD%D0%B0_GPU) (in Russian).
