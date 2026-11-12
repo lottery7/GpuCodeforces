@@ -261,5 +261,8 @@ docker build -f frontend/Dockerfile -t gpu-forces-frontend .
 пересоздание контейнера backend не требует перезапуска frontend. При другом
 размещении замените `resolver` и адрес в `$backend`.
 В production контейнер доступен через TLS-терминатор во внутренней сети.
-Терминатор должен сохранять Host и перезаписывать X-Forwarded-Proto,
-backend - учитывать заголовки только от доверенного прокси.
+Терминатор должен сохранять Host и перезаписывать X-Forwarded-Proto.
+Backend восстанавливает схему запроса из X-Forwarded-Proto
+(`server.forward-headers-strategy: native`) и учитывает заголовок только
+от прокси с частного или локального адреса. Так же работает туннель
+(ngrok, cloudflared), запущенный на той же машине или в той же сети.

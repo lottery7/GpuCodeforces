@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection
+import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
 import org.springframework.test.web.servlet.client.RestTestClient
 import org.testcontainers.junit.jupiter.Container
@@ -82,6 +83,28 @@ class RequestValidationIntegrationTest {
             .expectStatus().isForbidden
             .expectBody(ErrorResponse::class.java).returnResult().responseBody!!
         assertThat(foreignOrigin.message).isEqualTo("Недопустимый источник запроса")
+    }
+
+    @Test
+    fun `a page opened over https through a TLS terminator may change data`() {
+        val handle = "tls_" + UUID.randomUUID().toString().take(8)
+        val setCookie = client.post().uri("/users")
+            .header("Origin", "https://localhost:$port")
+            .header("X-Forwarded-Proto", "https")
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(RegisterUserRequest(handle, "$handle@example.com", "password123"))
+            .exchange()
+            .expectStatus().isCreated
+            .returnResult(String::class.java).responseHeaders.getFirst(HttpHeaders.SET_COOKIE)!!
+        assertThat(setCookie).contains("Secure")
+
+        // without the terminator's header the same Origin is a foreign one
+        client.post().uri("/users")
+            .header("Origin", "https://localhost:$port")
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(RegisterUserRequest("${handle}_2", "${handle}_2@example.com", "password123"))
+            .exchange()
+            .expectStatus().isForbidden
     }
 
     companion object {

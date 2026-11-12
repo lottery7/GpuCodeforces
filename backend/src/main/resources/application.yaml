@@ -54,6 +54,12 @@ logging:
     # Every line carries the submission and the user it concerns (see SubmissionService, RequestLogFilter).
     level: "%5p [sub=%X{submission:-} user=%X{user:-}]"
 
+server:
+  # Behind a TLS terminator (nginx, a tunnel) the request arrives over http: Tomcat restores the scheme from
+  # X-Forwarded-Proto, and only when the request comes from a private or loopback address. OriginCheckFilter and
+  # the Secure flag of the session cookie depend on it.
+  forward-headers-strategy: native
+
 management:
   endpoints:
     web:
