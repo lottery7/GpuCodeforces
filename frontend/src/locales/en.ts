@@ -402,6 +402,8 @@ export const en: Record<string, string> = {
   'Соревнование завершено. Новые решения в практике не изменят его результаты.': 'The contest is over. New solutions in practice will not change its results.',
   'Задачу пока нельзя сдавать ни на одном процессоре платформы.': 'The problem cannot be solved on any processor of the platform yet.',
   'Условие задачи': 'Problem statement',
+  'Граница между условием и редактором': 'Border between the statement and the editor',
+  'Перетащите, чтобы изменить ширину. Двойной щелчок вернёт исходную.': 'Drag to change the width. A double click restores the original one.',
   'Условие': 'Statement',
   'Среда и замер': 'Environment and measurement',
   'Решено задач': 'Problems solved',

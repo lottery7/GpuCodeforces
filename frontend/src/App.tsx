@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from './api/client';
 import { useSession } from './auth';
 import { AuthDialogProvider, AuthLanding, useAuthDialog } from './auth-dialog';
-import { ErrorMessage, PageHeader } from './ui';
+import { ErrorMessage, Logo, PageHeader } from './ui';
 import { userPath } from './utils';
 import Notifications from './components/Notifications';
 import RuntimeNotice from './components/RuntimeNotice';
@@ -80,7 +80,7 @@ function Shell() {
   return <>
     <a className="skip-link" href="#content">{t('К содержимому')}</a>
     <header className="site-header"><div className="header-inner">
-      <Link className="brand" to="/">GPU Forces</Link>
+      <Link className="brand" to="/"><Logo />GPU Forces</Link>
       <nav className="main-nav" aria-label={t('Основная навигация')}>{links()}</nav>
       <div className="language-switch" role="group" aria-label={t('Язык интерфейса')}>{languages.map(item => <button key={item.id} type="button" lang={item.id} title={item.title} aria-pressed={language === item.id} onClick={() => setLanguage(item.id)}>{item.short}</button>)}</div>
       <div className="header-notifications"><Notifications /></div>

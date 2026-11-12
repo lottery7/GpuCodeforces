@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import { api, ApiError } from '../api/client';
@@ -10,12 +10,15 @@ import GuessResult from '../components/GuessResult';
 import DuelBoard from '../components/DuelBoard';
 import BenchmarkInfo from '../components/BenchmarkInfo';
 import ReferenceStatus from '../components/ReferenceStatus';
+import SplitWorkspace from '../components/SplitWorkspace';
 import { readDraft, rememberEditorLogin, writeDraft, type DraftTarget } from '../drafts';
 import { formatLimit, scoreUnits, useProcessors } from '../processors';
 import { Difficulty, Empty, ErrorMessage, Markdown, PageHeader, QueryState, ScoreValue, Tabs, UserLink, useFeedbackVisibility } from '../ui';
 import { canJoinContest, contextFromSearch, difficultyLabels, formatLabels, guessLabels, problemPath, shortId } from '../utils';
 import { SubmissionList } from './Submissions';
 import { t } from '../i18n';
+
+const GuessWorkspace = ({ children }: { children: [ReactNode, ReactNode] }) => <div className="guess-workspace">{children}</div>;
 
 function phaseOf(contest: Contest | undefined, now: number) {
   if (!contest) return null;
@@ -340,6 +343,8 @@ export default function Problem() {
   const isGuess = problem.data?.format === 'guess';
   const isDuel = contest.data?.format === 'duel' && !upsolving && !virtualId;
   const tab = (isGuess || isDuel) && requestedTab === 'leaders' ? 'statement' : requestedTab;
+  // a guess shows two codes under the statement, there is no border to move
+  const Workspace = isGuess ? GuessWorkspace : SplitWorkspace;
   useEffect(() => {
     const previous = previousPhase.current;
     if (phase && previous?.context === context && previous.phase && previous.phase !== phase) {
@@ -359,25 +364,30 @@ export default function Problem() {
     query.set('language', next.language);
     setParams(query, { replace: true });
   }
+  // The head is two tight rows, where it is from with the title and limits, then the tabs with the processor: the height goes to the statement and the editor.
   return <QueryState query={problem}>{problem.data && <>
-    <div className="breadcrumbs"><Link to={context === 'practice' ? '/problems' : virtualId ? `/virtual/${encodeURIComponent(virtualId)}` : `/contest/${encodeURIComponent(contestId || '')}`}>{context === 'practice' ? t('Практика') : contest.data?.title || t('Контест')}</Link>{upsolving && <span> {t('/ Дорешивание')}</span>}{virtualId && <span> {t('/ Виртуальное участие')}</span>}</div>
+    <div className="problem-top">
+      <div className="breadcrumbs"><Link to={context === 'practice' ? '/problems' : virtualId ? `/virtual/${encodeURIComponent(virtualId)}` : `/contest/${encodeURIComponent(contestId || '')}`}>{context === 'practice' ? t('Практика') : contest.data?.title || t('Контест')}</Link>{upsolving && <span> {t('/ Дорешивание')}</span>}{virtualId && <span> {t('/ Виртуальное участие')}</span>}</div>
+      <PageHeader title={`${problem.data.code}. ${problem.data.title}`} actions={tab === 'statement' ? <a className="text-link editor-anchor" href="#editor">{isGuess ? t('К вариантам ответа') : t('К редактору')}</a> : undefined} />
+      <div className="problem-meta"><span>{formatLabels[problem.data.format ?? 'standard']}</span><span><Difficulty difficulty={problem.data.difficulty} /></span>{!isGuess && <>{detail && <span>{t('Лимит:')} {formatLimit(detail.limit)} {scoreUnits[detail.limit.type]}</span>}<span>{t('Память:')} {problem.data.memoryLimitMb} {t('МБ')}</span></>}</div>
+    </div>
     {virtual.error && <div><ErrorMessage error={virtual.error} /><button className="text-link" onClick={() => void virtual.refetch()}>{t('Повторить загрузку участия')}</button></div>}
     {virtual.data && <p className="notice">{t('Виртуальный контест. Осталось')} {Math.max(0, Math.ceil((Date.parse(virtual.data.endsAt) - virtualNow) / 1000))} {t('с.')}</p>}
-    <PageHeader title={`${problem.data.code}. ${problem.data.title}`} actions={tab === 'statement' ? <a className="text-link editor-anchor" href="#editor">{isGuess ? t('К вариантам ответа') : t('К редактору')}</a> : undefined} />
-    <div className="problem-meta"><span>{formatLabels[problem.data.format ?? 'standard']}</span><span><Difficulty difficulty={problem.data.difficulty} /></span>{!isGuess && <>{detail && <span>{t('Лимит:')} {formatLimit(detail.limit)} {scoreUnits[detail.limit.type]}</span>}<span>{t('Память:')} {problem.data.memoryLimitMb} {t('МБ')}</span></>}</div>
-    {target && <TargetPicker problem={problem.data} target={target} onChange={pickTarget} />}
-    <Tabs selected={tab} items={[
-      { id: 'statement', label: isGuess ? t('Условие и ответ') : t('Условие и решение'), to: problemPath(id, context, undefined, target ?? undefined) },
-      { id: 'submissions', label: isGuess ? t('История ответов') : t('Мои посылки'), to: problemPath(id, context, 'submissions', target ?? undefined) },
-      ...(!isGuess && !isDuel ? [{ id: 'leaders', label: t('Лидеры'), to: problemPath(id, context, 'leaders', target ?? undefined) }] : []),
-    ]} />
+    <div className="problem-bar">
+      <Tabs selected={tab} items={[
+        { id: 'statement', label: isGuess ? t('Условие и ответ') : t('Условие и решение'), to: problemPath(id, context, undefined, target ?? undefined) },
+        { id: 'submissions', label: isGuess ? t('История ответов') : t('Мои посылки'), to: problemPath(id, context, 'submissions', target ?? undefined) },
+        ...(!isGuess && !isDuel ? [{ id: 'leaders', label: t('Лидеры'), to: problemPath(id, context, 'leaders', target ?? undefined) }] : []),
+      ]} />
+      {target && <TargetPicker problem={problem.data} target={target} onChange={pickTarget} />}
+    </div>
     {context !== 'practice' && contest.error && <div><ErrorMessage error={contest.error} /><button className="text-link" disabled={contest.isFetching} onClick={() => void contest.refetch()}>{t('Повторить загрузку соревнования')}</button></div>}
     {phase === 'finished' && !isDuel && <p className="notice">{t('Соревнование завершено. Новые решения в практике не изменят его результаты.')}</p>}
     {isDuel && contest.data && <DuelBoard contest={contest.data} finished={phase === 'finished'} clockOffset={clockOffset} contestUpdatedAt={contestSnapshot.current && contestSnapshot.current.id === contestId && contestSnapshot.current.userId === user?.id ? contestSnapshot.current.startedAt : 0} />}
-    {!target || !detail || !summary ? <Empty>{t('Задачу пока нельзя сдавать ни на одном процессоре платформы.')}</Empty> : tab === 'statement' ? <div className={isGuess ? 'guess-workspace' : 'problem-workspace'}>
+    {!target || !detail || !summary ? <Empty>{t('Задачу пока нельзя сдавать ни на одном процессоре платформы.')}</Empty> : tab === 'statement' ? <Workspace>
       <section className="statement statement-pane" id="statement" ref={statementRef} tabIndex={-1} aria-label={t('Условие задачи')}><div className="tool-window-head">{t('Условие')}</div><div className="statement-body"><Markdown>{problem.data.statementMarkdown}</Markdown>{problem.data.format === 'standard' ? <details className="methodology"><summary>{t('Среда и замер')}</summary><Markdown>{detail.environmentMarkdown}</Markdown></details> : <BenchmarkInfo benchmark={detail.benchmark} />}</div></section>
       {isGuess ? <GuessPane key={`${user?.id || 'guest'}:${id}:${context}:${problem.data.versionId ?? ''}:${summary.referenceMeasurement?.key ?? ''}`} problem={problem.data} processor={summary} context={context} contest={contest.data} phase={phase} contestLoading={context !== 'practice' && (contest.isPending || Boolean(contest.error) || Boolean(virtualId && (virtual.isPending || virtual.error)))} /> : <EditorPane key={`${user?.id || 'guest'}:${id}:${context}:${target.processor}:${target.language}`} problem={problem.data} detail={detail} summary={summary} target={target} context={context} contest={contest.data} phase={phase} onCloseOutput={returnToStatement} contestLoading={context !== 'practice' && (contest.isPending || Boolean(contest.error) || Boolean(virtualId && (virtual.isPending || virtual.error)))} />}
-    </div> : tab === 'submissions' ? <SubmissionList key={`${id}:${context}:${user?.id || 'guest'}`} problemId={id} context={context} /> : <Leaders problemId={id} processor={target.processor} context={context} finished={phase === 'finished' && (virtualId ? !virtual.data?.pending : contest.data?.finalized !== false)} />}
+    </Workspace> : tab === 'submissions' ? <SubmissionList key={`${id}:${context}:${user?.id || 'guest'}`} problemId={id} context={context} /> : <Leaders problemId={id} processor={target.processor} context={context} finished={phase === 'finished' && (virtualId ? !virtual.data?.pending : contest.data?.finalized !== false)} />}
 
   </>}</QueryState>;
 }

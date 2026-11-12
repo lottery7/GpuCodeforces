@@ -9,6 +9,12 @@ import { formatScore, scoreUnits } from './processors';
 import { difficultyLabels, pendingStatuses, statusLabels, userPath } from './utils';
 import { serverText, t } from './i18n';
 
+/** The mark of the platform, a chevron on the blue square. It always stands next to the name, so assistive technology skips it. */
+export const Logo = () => <span className="logo-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round"><path d="M7 5l8 7-8 7" /></svg></span>;
+
+/** A processor's title with the mark of its color; the color of each processor is set in styles.css by its id. */
+export const ProcessorName = ({ id, title }: { id: string; title: string }) => <span className="processor-name" data-processor={id}>{title}</span>;
+
 export function PageHeader({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
   useEffect(() => { document.title = 'GPU Forces - ' + title; }, [title]);
   return <div className="page-head"><div><h1>{title}</h1>{description && <p className="muted">{description}</p>}</div>{actions && <div className="inline">{actions}</div>}</div>;

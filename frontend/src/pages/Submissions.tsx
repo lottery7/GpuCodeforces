@@ -5,7 +5,7 @@ import { api } from '../api/client';
 import type { Submission, SubmissionQuery } from '../api/types';
 import { useSession } from '../auth';
 import { useProcessors } from '../processors';
-import { Empty, ErrorMessage, LoginRequired, PageHeader, Pagination, QueryState, ScoreValue, Status, UserLink } from '../ui';
+import { Empty, ErrorMessage, LoginRequired, PageHeader, Pagination, ProcessorName, QueryState, ScoreValue, Status, UserLink } from '../ui';
 import { dateTime, pendingStatuses, problemPath, shortId, statusLabels } from '../utils';
 import { t } from '../i18n';
 
@@ -20,7 +20,7 @@ export function SubmissionTable({ items, inProblem = false, showUser = false }: 
       {!inProblem && <td><Link to={problemPath(item.problemId, item.context || item.contestId || 'practice', undefined, { processor: item.processor, language: item.language })}>{item.problemTitle}</Link><div className="subline">{item.contestId ? <Link to={`/contest/${encodeURIComponent(item.contestId)}`}>{item.contestTitle || t('Контест')}</Link> : t('Практика')}{item.context?.startsWith('virtual:') && t(' · Виртуально')}{item.context?.startsWith('upsolve:') && t(' · Дорешивание')}</div></td>}
 
       {showUser && <td><UserLink user={item.user} /></td>}
-      <td>{processors.title(item.processor)}<div className="subline">{processors.language(item.processor, item.language)?.title ?? item.language}</div></td>
+      <td><ProcessorName id={item.processor} title={processors.title(item.processor)} /><div className="subline">{processors.language(item.processor, item.language)?.title ?? item.language}</div></td>
       <td><Status status={item.status} />{item.status === 'accepted' && item.format !== 'guess' && !item.comparable && <div className="subline">{t('Вне текущих рекордов')}</div>}</td>
       <td className="num mono">{item.format === 'guess' ? item.status === 'accepted' ? '+' : '-' : <ScoreValue score={item.status === 'accepted' ? item.score : null} />}</td>
       <td><time dateTime={item.createdAt}>{dateTime(item.createdAt)}</time></td>
