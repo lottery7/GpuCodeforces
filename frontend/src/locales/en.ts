@@ -261,7 +261,7 @@ export const en: Record<string, string> = {
   'GPU Forces - Главная': 'GPU Forces - Home',
   'Ваш рейтинг': 'Your rating',
   'Лучшие по рейтингу': 'Top rated',
-  'Соревновательная платформа для программистов, где задачи требуют максимально ускорить вычисления на GPU, векторном RISC-V, NPU и собственных схемах на Verilog.': 'A competitive platform for programmers where problems ask you to make computations as fast as possible on a GPU, a vector RISC-V CPU, an NPU and your own circuits in Verilog.',
+  'Соревновательная платформа для практики программирования и оптимизации на различных процессорах: GPU с CUDA, векторном RISC-V, NPU и схемах на SystemVerilog.': 'A competitive platform for practicing programming and optimization on various processors: GPU with CUDA, vector RISC-V, NPU and circuits in SystemVerilog.',
   'Последние посылки': 'Latest submissions',
   'Все посылки': 'All submissions',
   'Посылок пока нет.': 'No submissions yet.',
