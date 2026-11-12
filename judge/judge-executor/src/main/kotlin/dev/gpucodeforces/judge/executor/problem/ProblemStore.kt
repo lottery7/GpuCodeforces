@@ -130,6 +130,9 @@ class ProblemStore(
                 }
             }
             Files.setLastModifiedTime(dir.resolve(READY), FileTime.fromMillis(System.currentTimeMillis()))
+            // The generator writes inputs/ only with the first input array, and a problem may have none (its answer
+            // depends on the scalars alone); every sandbox mounts this directory, so it has to exist.
+            Files.createDirectories(dir.resolve(INPUTS))
             return layout(spec, hash, dir, readTests(spec, processor, dir)).also { acquired = true }
         } finally {
             if (!acquired) release(hash)
@@ -150,11 +153,11 @@ class ProblemStore(
                 spec = t,
                 counts = counts,
                 inputs = sig.arrays.filter { it.role == ParamRole.INPUT || it.role == ParamRole.INOUT }
-                    .associate { it.name to dir.resolve("inputs/t$idx/${it.name}.bin") },
+                    .associate { it.name to dir.resolve("$INPUTS/t$idx/${it.name}.bin") },
                 expected = sig.outputs.associate { it.name to dir.resolve("expected/t$idx/${it.name}.bin") },
             )
         }
-        return PreparedProblem(hash, dir = dir, inputsDir = dir.resolve("inputs"), tests)
+        return PreparedProblem(hash, dir = dir, inputsDir = dir.resolve(INPUTS), tests)
     }
 
     /**
@@ -353,6 +356,7 @@ class ProblemStore(
     companion object {
         private const val READY = "READY"
         private const val TESTS = "tests.json"
+        private const val INPUTS = "inputs"
         private const val MAX_TESTS_FILE_BYTES = 1L shl 20
         private const val POISON = 0xFF.toByte()
 

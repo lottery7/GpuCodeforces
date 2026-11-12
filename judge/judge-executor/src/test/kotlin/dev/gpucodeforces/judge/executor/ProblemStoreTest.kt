@@ -83,9 +83,10 @@ class ProblemStoreTest {
             os.makedirs(out, exist_ok=True)
             if behaviour != "no-tests":
                 open(out + "/tests.json", "w").write(tests)
-            os.makedirs(out + "/inputs/t1")
             os.makedirs(out + "/expected/t1")
-            open(out + "/inputs/t1/A.bin", "wb").write(bytes(16))
+            if behaviour != "no-inputs":
+                os.makedirs(out + "/inputs/t1")
+                open(out + "/inputs/t1/A.bin", "wb").write(bytes(16))
             if behaviour == "extra":
                 open(out + "/inputs/t1/answers.bin", "wb").write(bytes(16))
             if behaviour == "symlink":
@@ -135,6 +136,20 @@ class ProblemStoreTest {
         assertTrue(!test.expected.getValue("C").startsWith(second.inputsDir), "reference answers must stay out of the mounted inputs")
         val leftovers = tmp.resolve("cache/problems").listDirectoryEntries().filter { it != second.dir }
         assertEquals(emptyList(), leftovers)
+    }
+
+    @Test
+    fun `a problem without input arrays still has a directory of inputs to mount`() {
+        val outputOnly = problem("no-inputs").let { spec ->
+            spec.copy(signature = Signature(params = spec.signature.params.filter { it.role != ParamRole.INPUT }))
+        }
+        val store = store()
+        val prepared = store.acquire(outputOnly, gpu, {}, { false })
+        store.release(prepared.hash)
+
+        assertTrue(Files.isDirectory(prepared.inputsDir))
+        assertEquals(emptyMap(), prepared.tests.single().inputs)
+        assertEquals(16, prepared.tests.single().expected.getValue("C").fileSize())
     }
 
     @Test
