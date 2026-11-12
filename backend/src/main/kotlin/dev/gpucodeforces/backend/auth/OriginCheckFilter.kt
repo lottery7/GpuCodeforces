@@ -13,7 +13,8 @@ private val MUTATING_METHODS = setOf("POST", "PUT", "DELETE", "PATCH")
 
 /**
  * Replaces CSRF tokens with the contract's same-origin rule: mutating requests must carry an
- * Origin header that matches this server's own origin (frontend and API share an origin).
+ * Origin header that matches this server's own origin (frontend and API share an origin). Behind a TLS
+ * terminator the scheme comes from X-Forwarded-Proto (server.forward-headers-strategy).
  */
 @Component
 class OriginCheckFilter : OncePerRequestFilter() {
