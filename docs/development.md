@@ -10,7 +10,7 @@ Multi-module Kotlin/Gradle project with a React frontend:
 |---|---|
 | `backend` | Spring Boot application |
 | `judge-api`, `judge-gateway`, `judge-executor` (in `judge/`) | Testing system, see [Testing system](#testing-system) |
-| `frontend` | React application (npm, not part of the Gradle build), see [frontend/README.md](../frontend/README.md) |
+| `frontend` | React application (pnpm, not part of the Gradle build), see [frontend/README.md](../frontend/README.md) |
 
 Add future Gradle modules with `include(":module-name")` in `settings.gradle.kts`.
 UML diagrams of the architecture (in Russian) are in [docs/architecture.md](architecture.md).
@@ -21,6 +21,7 @@ UML diagrams of the architecture (in Russian) are in [docs/architecture.md](arch
 - Docker with a running daemon for PostgreSQL and integration tests.
 - Gradle is provided by the wrapper; no global installation is needed.
 - `python3` for the `judge-executor` tests.
+- Node 24 and pnpm for the frontend; the pnpm version is pinned in `frontend/package.json`.
 - For the GPU executor only: Linux or WSL2, NVIDIA driver 570+ and `nvidia-container-toolkit`.
 
 Versions: Kotlin 2.4.21, Gradle 9.7.0, Spring Boot 4.1.2.
@@ -123,7 +124,7 @@ docker compose --profile judge up -d --wait          # RabbitMQ + judge gateway
 docker compose --profile mock up -d --wait --build   # + mock executor, no GPU needed
 docker compose --profile gpu up -d --wait --build    # + real executor on an NVIDIA GPU
 JUDGE_PROCESSORS=gpu-cuda,rtl docker compose --profile gpu --profile emu up -d --wait --build
-                                                     # + executor of the emulated processors (rtl), no GPU
+                                                     # + executor of the emulated processors; it needs no GPU itself
 ```
 
 | Service | Address |

@@ -7,6 +7,7 @@
 **Соревнования по программированию, где мало решить задачу: её надо решить быстро на заданном процессоре.**
 
 [Ролик](https://github.com/lottery7/GpuCodeforces/releases/latest/download/gpu-forces-promo.mp4) ·
+[Презентация](https://docs.google.com/presentation/d/1wK260FY0vNzkz17bJX9PXNFOtqUYCWwU7iATTw0A3wU) ·
 [Банк задач](https://github.com/lottery7/GpuCodeforcesProblems) ·
 [Быстрый старт](#быстрый-старт) ·
 [Архитектура](docs/architecture.md) ·
@@ -27,7 +28,7 @@
 | Процессор | Что пишет участник | Счёт, меньше — лучше |
 |---|---|---|
 | `gpu-cuda` | CUDA для настоящей видеокарты NVIDIA | миллисекунды |
-| `cuda-sim` | тот же CUDA в симуляторе GPGPU-Sim на модели Tesla V100 | такты симулируемой видеокарты |
+| `cuda-sim` | тот же CUDA в симуляторе GPGPU-Sim на модели Quadro V100 | такты симулируемой видеокарты |
 | `riscv-rvv` | C, C++ или ассемблер для векторного RISC-V в QEMU | инструкции плюс штраф за промахи кэша |
 | `coral-npu` | C или C++ для ядра Coral NPU в Renode: 8 КБ кода, 32 КБ данных | инструкции |
 | `rtl` | схема на SystemVerilog: синтез в Yosys, симуляция в Verilator | такты × глубина логики × транзисторы |
@@ -70,12 +71,14 @@
   платформа забирает репозиторий сама. У задачи своя таблица лидеров на каждом процессоре.
 - **Интерфейс и условия задач на русском и английском**, язык переключается в шапке.
 
-## Ролик
+## Ролик и презентация
 
 [![Обложка ролика: одна задача — пять вычислителей](docs/media/ru/promo.webp)](https://github.com/lottery7/GpuCodeforces/releases/latest/download/gpu-forces-promo.mp4)
 
 За две минуты: одна задача на RISC-V и в виде схемы, формат «угадай», взлом в контесте и рейтинг.
 Файл лежит в [последнем релизе](https://github.com/lottery7/GpuCodeforces/releases/latest).
+
+[Презентация проекта](https://docs.google.com/presentation/d/1wK260FY0vNzkz17bJX9PXNFOtqUYCWwU7iATTw0A3wU) — слайды к защите на DevDays.
 
 ## Быстрый старт
 
@@ -95,8 +98,26 @@ JUDGE_PROCESSORS=rtl,riscv-rvv,coral-npu,cuda-sim docker compose --profile app -
 | С видеокартой NVIDIA (`gpu-cuda`): Linux или WSL2, драйвер 570+, `nvidia-container-toolkit` | `docker compose --profile app --profile gpu up -d --wait --build` |
 | Посмотреть интерфейс без настоящей проверки | `JUDGE_MODE=mock docker compose --profile app --profile mock up -d --wait --build` |
 
-Пользователь с ником `admin` получает страницу администратора `/admin`. Сборка из исходников, локальная
-разработка и тесты описаны в [docs/development.md](docs/development.md).
+Пользователь с ником `admin` получает страницу администратора `/admin`.
+
+## Сборка из исходников
+
+Нужны JDK 26, `python3` и запущенный Docker: на нём идут интеграционные тесты с PostgreSQL. Для фронтенда —
+Node 24 и pnpm.
+
+```sh
+./gradlew build
+```
+
+Команда собирает backend и сервисы судьи и запускает все тесты; Gradle ставить не нужно. Фронтенд собирается
+отдельно:
+
+```sh
+cd frontend && pnpm install --frozen-lockfile && pnpm build
+```
+
+Локальная разработка, запуск сервисов по отдельности и CI описаны в
+[docs/development.md](docs/development.md).
 
 ## Документация
 
@@ -112,4 +133,5 @@ Backend и судья написаны на Kotlin и Spring Boot, фронте�
 | [frontend/README.md](frontend/README.md) | Веб-интерфейс |
 | [docs/frontend/openapi.yaml](docs/frontend/openapi.yaml) | Контракт API |
 
-Проект сделан на хакатоне DevDays, осень 2026, ИТМО.
+Проект сделан на хакатоне DevDays, осень 2026, ИТМО. Описание проекта и состав команды — на
+[странице проекта в вики DevDays](https://cs-uni.ru/index.php?title=%D0%9F%D0%BB%D0%B0%D1%82%D1%84%D0%BE%D1%80%D0%BC%D0%B0_%D0%B4%D0%BB%D1%8F_%D1%81%D0%BE%D1%80%D0%B5%D0%B2%D0%BD%D0%BE%D0%B2%D0%B0%D0%BD%D0%B8%D0%B9_%D0%BF%D0%BE_%D0%B0%D0%BB%D0%B3%D0%BE%D1%80%D0%B8%D1%82%D0%BC%D0%B0%D0%BC_%D0%BD%D0%B0_GPU).

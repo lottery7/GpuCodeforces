@@ -111,7 +111,7 @@
 `PROCESSORS` (`platform.processors.enabled`, по умолчанию `gpu-cuda`) - какие процессоры каталога судьи
 предлагает платформа; это тот же список, что `JUDGE_PROCESSORS` у gateway. `platform.processors.models` задаёт,
 что показать как модель процессора: для `gpu-cuda` - `GPU_NAME`, для эмуляторов - их закреплённые версии и модель
-("Yosys 0.70 + Verilator 5.053", "GPGPU-Sim, NVIDIA Tesla V100 (QV100)"); процессор без модели показывает своё название.
+("Yosys 0.70 + Verilator 5.053", "GPGPU-Sim, NVIDIA Quadro V100 (QV100)"); процессор без модели показывает своё название.
 `GET /api/processors` отдаёт включённые процессоры: id, название, модель, языки и тип score. Backend не
 опрашивает gateway и не хранит состояние процессоров.
 
