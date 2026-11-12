@@ -65,10 +65,10 @@ on that processor change it.
 
 Also:
 
-- **A bank of twenty problems** lives in a repository of its own,
+- **A bank of thirty-three problems** lives in a repository of its own,
   [lottery7/GpuCodeforcesProblems](https://github.com/lottery7/GpuCodeforcesProblems). A problem is a package in
   git, and the platform pulls the repository by itself. Every problem has a leaderboard per processor.
-- **The interface is in Russian and English**, switched in the header.
+- **The interface and the problem statements are in Russian and English**, switched in the header.
 
 ## Promo
 

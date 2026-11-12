@@ -69,6 +69,8 @@ Gateway и executor продолжают возвращать score тестов
 
 Сигнатура выше превращается в `void solve(const float* A, float* C, int N)` (C++-линковка). Решение с другой сигнатурой получает `COMPILATION_ERROR`.
 
+Входных массивов может не быть вовсе: ответ тогда зависит только от скаляров (`void solve(uint8_t* C, int N)`), `generate()` возвращает `{}`, а у рукописного теста `"inputs": {}`.
+
 ### Чекер
 
 - `TOLERANCE`: для float `|out − exp| ≤ atol + rtol·|exp|`. NaN совпадает только с NaN, ±Inf — только с тем же Inf. Целые сравниваются точно.

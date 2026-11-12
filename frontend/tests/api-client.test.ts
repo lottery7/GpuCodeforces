@@ -1,5 +1,6 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { ApiError, createApi } from '../src/api/client';
+import { setLanguage } from '../src/i18n';
 import type { Problem, ProblemDetail, User } from '../src/api/types';
 
 const user: User = {
@@ -27,6 +28,20 @@ describe('API client', () => {
     expect(await requests[1]!.json()).toEqual({ mode: 'invite', processor: 'gpu-cuda', opponentHandle: 'new_cuda', problemId: 'vector' });
     await expect(api.readNotification('note')).resolves.toBeUndefined();
     expect(new URL(requests[2]!.url).pathname).toBe('/api/notifications/note/read');
+  });
+
+  it('asks for problem texts in the language of the interface at the moment of the request', async () => {
+    const { requests, fetcher } = capture(() => Response.json({ items: [], total: 0, tags: [], solvedCount: 0, poolSize: 0, streak: 0 }));
+    const api = createApi('http://localhost/api', fetcher);
+    await api.listProblems();
+    setLanguage('en');
+    try {
+      await api.listProblems();
+      await api.getProblem('vector-addition');
+    } finally {
+      setLanguage('ru');
+    }
+    expect(requests.map(request => request.headers.get('Accept-Language'))).toEqual(['ru', 'en', 'en']);
   });
 
   it('uses generated response types and includes session credentials on every request', async () => {

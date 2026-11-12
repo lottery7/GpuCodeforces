@@ -63,7 +63,7 @@ class ProblemListing(private val jdbc: NamedParameterJdbcTemplate) {
         @Language("SQL") val source = if (contest == null) """
             FROM gpucodeforces.problems p
             JOIN LATERAL (
-                SELECT id, problem_id, code, title, difficulty, tags, authors, draft, judge_hash, format, processors
+                SELECT id, problem_id, code, title, title_en, difficulty, tags, authors, draft, judge_hash, format, processors
                 FROM gpucodeforces.problem_versions WHERE id = p.current_version_id LIMIT 1
             ) v ON true
             WHERE p.current_version_id IS NOT NULL
@@ -72,7 +72,7 @@ class ProblemListing(private val jdbc: NamedParameterJdbcTemplate) {
             FROM gpucodeforces.contest_problems cp
             LEFT JOIN gpucodeforces.problems p ON p.id = cp.problem_id
             JOIN LATERAL (
-                SELECT id, problem_id, code, title, difficulty, tags, authors, draft, judge_hash, format, processors
+                SELECT id, problem_id, code, title, title_en, difficulty, tags, authors, draft, judge_hash, format, processors
                 FROM gpucodeforces.problem_versions WHERE id = coalesce(cp.problem_version_id, p.current_version_id) LIMIT 1
             ) v ON true
             WHERE cp.contest_id = CAST(:contestId AS uuid)
@@ -90,7 +90,7 @@ class ProblemListing(private val jdbc: NamedParameterJdbcTemplate) {
                           AND (CAST(:duelFinishedBefore AS timestamptz) IS NULL OR s.finished_at IS NULL OR s.finished_at <= :duelFinishedBefore))))
         """
         @Language("SQL") val filters = """
-            AND (CAST(:query AS text) = '' OR strpos(lower(v.code || ' ' || v.title), :query) > 0)
+            AND (CAST(:query AS text) = '' OR strpos(lower(v.code || ' ' || v.title || ' ' || coalesce(v.title_en, '')), :query) > 0)
             AND (CAST(:difficulty AS text) IS NULL OR v.difficulty = :difficulty)
             AND (CAST(:tag AS text) IS NULL OR EXISTS (SELECT 1 FROM unnest(v.tags) t WHERE lower(t) = lower(:tag)))
             AND (CAST(:format AS text) IS NULL OR v.format = :format)

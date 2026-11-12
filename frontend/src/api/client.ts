@@ -1,7 +1,7 @@
 import createClient from 'openapi-fetch';
 import type { paths } from './schema';
 import type { ComparisonInput, ContestInput, ContestQuery, DuelInput, DuelProblemQuery, DuelQuery, DuelRequest, ExampleInput, GuessInput, LoginInput, NotificationQuery, ProblemQuery, RegisterInput, SubmissionQuery, SubmitInput, UserQuery } from './types';
-import { t } from '../i18n';
+import { getLanguage, t } from '../i18n';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -27,6 +27,9 @@ async function result<T>(request: Promise<{ data?: T; error?: unknown; response:
 
 export function createApi(baseUrl = '/api', fetcher?: typeof fetch) {
   const http = createClient<paths>({ baseUrl, credentials: 'include', ...(fetcher ? { fetch: fetcher } : {}) });
+  // What a problem author wrote in two languages (a title, a statement, an explanation) the backend returns in one:
+  // the language of this header, read at the moment of the request.
+  http.use({ onRequest({ request }) { request.headers.set('Accept-Language', getLanguage()); return request; } });
   return {
     getRuntime: (signal?: AbortSignal) => result(http.GET('/runtime', { signal })),
     listDuelProblems: (query: DuelProblemQuery = {}, signal?: AbortSignal) => result(http.GET('/duels/problems', { params: { query }, signal })),

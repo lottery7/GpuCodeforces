@@ -21,6 +21,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection
+import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.test.context.DynamicPropertyRegistry
@@ -124,6 +125,21 @@ class ProblemIntegrationTest {
 
         assertThat(list("?difficulty=medium").items.map { it.id }).containsExactly("matmul_host")
         assertThat(list("?q=СЛОЖЕНИЕ").items.map { it.id }).containsExactly("vector_add")
+
+        // A title and a statement come in the language of Accept-Language, in Russian without it; a problem is
+        // found by its title in either language.
+        fun titles(language: String) = client.get().uri("/problems").header(HttpHeaders.ACCEPT_LANGUAGE, language)
+            .exchange().expectStatus().isOk.expectBody(ListProblems200Response::class.java).returnResult().responseBody!!.items.map { it.title }
+        fun problem(language: String) = client.get().uri("/problems/vector_add").header(HttpHeaders.ACCEPT_LANGUAGE, language)
+            .exchange().expectStatus().isOk.expectBody(GetProblem200Response::class.java).returnResult().responseBody!!
+        assertThat(publicBank.items.map { it.title }).containsExactly("Сложение векторов", "Умножение матриц из памяти CPU")
+        assertThat(titles("en")).containsExactly("Vector Addition", "Matrix Multiplication from CPU Memory")
+        assertThat(titles("ru-RU, en;q=0.8")).containsExactly("Сложение векторов", "Умножение матриц из памяти CPU")
+        assertThat(titles("fr")).containsExactly("Сложение векторов", "Умножение матриц из памяти CPU")
+        assertThat(list("?q=vector ADD").items.map { it.id }).containsExactly("vector_add")
+        assertThat(problem("en-GB, en;q=0.9, ru;q=0.5").title).isEqualTo("Vector Addition")
+        assertThat(problem("en").statementMarkdown).startsWith("You are given two vectors")
+        assertThat(problem("ru").statementMarkdown).startsWith("Даны два вектора")
         assertThat(list("?tag=матрицы").items.map { it.id }).containsExactly("matmul_host")
         val firstByDifficulty = list("?sort=difficulty&limit=1")
         assertThat(firstByDifficulty.total).isEqualTo(2)

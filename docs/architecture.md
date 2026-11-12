@@ -275,9 +275,11 @@ classDiagram
     UUID id
     String code
     String title
+    String titleEn
     String difficulty
     Boolean draft
     String statementMarkdown
+    String statementMarkdownEn
     List~String~ processors
     Map starters
     String format

@@ -1,5 +1,6 @@
 package dev.gpucodeforces.backend.submission
 
+import dev.gpucodeforces.backend.common.ContentLanguage
 import dev.gpucodeforces.backend.api.SubmissionsApi
 import dev.gpucodeforces.backend.api.model.BenchmarkAggregation
 import dev.gpucodeforces.backend.api.model.GuessChoice
@@ -97,7 +98,9 @@ class SubmissionViews(
     private val references: ReferenceMeasurements,
     private val virtuals: VirtualParticipationRepository,
 ) {
+    /** For the request being answered: the titles of the problems come in its language. */
     fun summaries(rows: List<SubmissionRow>): List<SubmissionApiModel> {
+        val language = ContentLanguage.current()
         val versions = problemCatalog.versions(rows.map { it.problemVersionId }.toSet())
         val users = userRepository.findAllById(rows.map { it.userId }.toSet()).associateBy { it.id }
         val contests = contestRepository.findAllById(rows.mapNotNull { it.contestId }.toSet()).associateBy { it.id }
@@ -113,7 +116,7 @@ class SubmissionViews(
             SubmissionApiModel(
                 row.id.toString(),
                 row.problemId,
-                versions.getValue(row.problemVersionId).title,
+                versions.getValue(row.problemVersionId).title(language),
                 users.getValue(row.userId).toApiModel(),
                 row.contestId?.toString(),
                 contest?.title,
@@ -177,9 +180,12 @@ class SubmissionViews(
         summary.code(submission.code).diagnostic(submission.diagnostic)
         submission.guessChoice?.let { choice ->
             val data = submission.guessResult?.let { jsonMapper.readValue(it, GuessSnapshot::class.java) } ?: return summary
+            val explanation = data.explanation(ContentLanguage.current())
+            // the diagnostic of an answer is the explanation saved with it (GuessService): it follows the language too
+            summary.diagnostic(explanation)
             summary.guessResult(GuessResult(
                 GuessChoice.fromValue(choice), GuessChoice.fromValue(data.correctChoice()),
-                scoreApiModel(data.firstScore, data.scoreType), scoreApiModel(data.secondScore, data.scoreType), data.explanation,
+                scoreApiModel(data.firstScore, data.scoreType), scoreApiModel(data.secondScore, data.scoreType), explanation,
             ).benchmarkKey(data.benchmarkKey).synthetic(data.synthetic))
         }
         return summary

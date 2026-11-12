@@ -34,6 +34,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection
+import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
 import org.springframework.test.web.servlet.client.RestTestClient
 import org.springframework.test.context.bean.override.mockito.MockitoBean
@@ -112,6 +113,7 @@ class FormatsIntegrationTest {
         val format = ProblemFormatData(
             format = "guess",
             firstCode = "void first() {}", secondCode = "void second() {}", explanation = "Первый вариант быстрее",
+            explanationEn = "The first code is faster",
         )
         val version = versions.save(ProblemVersion(
             id = UUID.randomUUID(), problemId = problemId, code = "G", title = "Угадай", difficulty = "easy",
@@ -182,6 +184,12 @@ class FormatsIntegrationTest {
         assertThat(result.score).isNull()
         assertThat(result.comparable).isFalse()
         assertThat(result.guessResult!!.correctChoice.value).isEqualTo("first")
+        // the explanation saved with the answer comes in the language the page asks for
+        assertThat(result.guessResult!!.explanation).isEqualTo("Первый вариант быстрее")
+        val inEnglish = client.get().uri("/submissions/${result.id}").cookie("session", cookie).header(HttpHeaders.ACCEPT_LANGUAGE, "en")
+            .exchange().expectStatus().isOk.expectBody(Submission::class.java).returnResult().responseBody!!
+        assertThat(inEnglish.guessResult!!.explanation).isEqualTo("The first code is faster")
+        assertThat(inEnglish.diagnostic).isEqualTo("The first code is faster")
         client.post().uri("/problems/$id/guess").contentType(MediaType.APPLICATION_JSON).cookie("session", cookie)
             .body(mapOf("choice" to "second", "benchmarkKey" to "${version.id}:environment-1")).exchange().expectStatus().isBadRequest
 

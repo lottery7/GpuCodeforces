@@ -1,5 +1,6 @@
 package dev.gpucodeforces.backend.problem
 
+import dev.gpucodeforces.backend.common.ContentLanguage
 import jakarta.persistence.Column
 import jakarta.persistence.Entity
 import jakarta.persistence.Id
@@ -52,6 +53,7 @@ class ProblemVersion(
     val authors: List<String>,
     @Column(nullable = false)
     val draft: Boolean,
+    /** The statement in Russian; [statementMarkdownEn] is the English one. */
     @Column(name = "statement_markdown", nullable = false)
     val statementMarkdown: String,
     /** Processors the problem can be judged on, in the order of problem.json; duplicated from [judgeSpec] for filters. */
@@ -77,7 +79,16 @@ class ProblemVersion(
     val formatData: String = "{}",
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: Instant = Instant.now(),
+    /** Null in a version imported before packages had two languages: [title] is then its only title. */
+    @Column(name = "title_en")
+    val titleEn: String? = null,
+    @Column(name = "statement_markdown_en")
+    val statementMarkdownEn: String? = null,
 ) {
+    fun title(language: ContentLanguage): String = titleEn?.takeIf { language == ContentLanguage.EN } ?: title
+
+    fun statement(language: ContentLanguage): String = statementMarkdownEn?.takeIf { language == ContentLanguage.EN } ?: statementMarkdown
+
     fun isAuthor(handle: String?): Boolean = handle != null && authors.any { it.equals(handle, ignoreCase = true) }
 
     override fun equals(other: Any?) = this === other || (other is ProblemVersion && id == other.id)

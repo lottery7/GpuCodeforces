@@ -100,6 +100,8 @@ class ComparisonService(
                 revision = null,
                 format = ProblemFormatData.GUESS,
                 formatData = data,
+                titleEn = firstVersion.titleEn,
+                statementMarkdownEn = firstVersion.statementMarkdownEn,
             ),
         )
         problem.currentVersionId = version.id
