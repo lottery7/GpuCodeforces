@@ -6,7 +6,7 @@
 
 **Соревнования по программированию, где мало решить задачу: её надо решить быстро на заданном процессоре.**
 
-[Ролик](https://github.com/lottery7/GpuCodeforces/releases/latest/download/gpu-forces-promo.mp4) ·
+[Ролик](https://drive.google.com/file/d/1kVb6aydTNXjQgFZdIFlj8QpWUVyCGLmB/view) ·
 [Презентация](https://docs.google.com/presentation/d/1wK260FY0vNzkz17bJX9PXNFOtqUYCWwU7iATTw0A3wU) ·
 [Банк задач](https://github.com/lottery7/GpuCodeforcesProblems) ·
 [Быстрый старт](#быстрый-старт) ·
@@ -73,10 +73,9 @@
 
 ## Ролик и презентация
 
-[![Обложка ролика: одна задача — пять вычислителей](docs/media/ru/promo.webp)](https://github.com/lottery7/GpuCodeforces/releases/latest/download/gpu-forces-promo.mp4)
+[![Обложка ролика: одна задача — пять вычислителей](docs/media/ru/promo.webp)](https://drive.google.com/file/d/1kVb6aydTNXjQgFZdIFlj8QpWUVyCGLmB/view)
 
 За две минуты: одна задача на RISC-V и в виде схемы, формат «угадай», взлом в контесте и рейтинг.
-Файл лежит в [последнем релизе](https://github.com/lottery7/GpuCodeforces/releases/latest).
 
 [Презентация проекта](https://docs.google.com/presentation/d/1wK260FY0vNzkz17bJX9PXNFOtqUYCWwU7iATTw0A3wU) — слайды к защите на DevDays.
 
