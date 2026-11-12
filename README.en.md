@@ -28,7 +28,7 @@ The same problem is solved on different hardware, and every processor scores it 
 | Processor | What a participant writes | Score, smaller is better |
 |---|---|---|
 | `gpu-cuda` | CUDA for a real NVIDIA GPU | milliseconds |
-| `cuda-sim` | the same CUDA, run in GPGPU-Sim on a model of the Tesla V100 | simulated GPU cycles |
+| `cuda-sim` | the same CUDA, run in GPGPU-Sim on a model of the Quadro V100 | simulated GPU cycles |
 | `riscv-rvv` | C, C++ or assembly for a vector RISC-V CPU in QEMU | instructions plus a penalty for cache misses |
 | `coral-npu` | C or C++ for the Coral NPU core in Renode: 8 KB of code, 32 KB of data | instructions |
 | `rtl` | a SystemVerilog circuit, synthesized by Yosys and simulated by Verilator | cycles × logic depth × transistors |
