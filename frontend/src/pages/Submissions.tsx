@@ -13,17 +13,17 @@ const limit = 20;
 
 export function SubmissionTable({ items, inProblem = false, showUser = false }: { items: Submission[]; inProblem?: boolean; showUser?: boolean }) {
   const processors = useProcessors();
-  return <div className="panel table-wrap"><table className="data-table" aria-label={t('История посылок')}>
+  return <div className="panel table-wrap"><table className={`data-table submission-table${inProblem ? ' in-problem' : ''}`} aria-label={t('История посылок')}>
     <thead><tr><th className="num">{t('Посылка')}</th>{!inProblem && <th>{t('Задача')}</th>}{showUser && <th>{t('Участник')}</th>}<th>{t('Процессор')}</th><th>{t('Вердикт')}</th><th className="num">{t('Результат')}</th><th>{t('Отправлено, МСК')}</th></tr></thead>
     <tbody>{items.map(item => <tr key={item.id}>
-      <td className="num mono"><Link to={`/submission/${encodeURIComponent(item.id)}`} title={item.id}>#{shortId(item.id)}</Link></td>
-      {!inProblem && <td><Link to={problemPath(item.problemId, item.context || item.contestId || 'practice', undefined, { processor: item.processor, language: item.language })}>{item.problemTitle}</Link><div className="subline">{item.contestId ? <Link to={`/contest/${encodeURIComponent(item.contestId)}`}>{item.contestTitle || t('Контест')}</Link> : t('Практика')}{item.context?.startsWith('virtual:') && t(' · Виртуально')}{item.context?.startsWith('upsolve:') && t(' · Дорешивание')}</div></td>}
+      <td className="num mono sub-id"><Link to={`/submission/${encodeURIComponent(item.id)}`} title={item.id}>#{shortId(item.id)}</Link></td>
+      {!inProblem && <td className="sub-task"><Link to={problemPath(item.problemId, item.context || item.contestId || 'practice', undefined, { processor: item.processor, language: item.language })}>{item.problemTitle}</Link><div className="subline">{item.contestId ? <Link to={`/contest/${encodeURIComponent(item.contestId)}`}>{item.contestTitle || t('Контест')}</Link> : t('Практика')}{item.context?.startsWith('virtual:') && t(' · Виртуально')}{item.context?.startsWith('upsolve:') && t(' · Дорешивание')}</div></td>}
 
-      {showUser && <td><UserLink user={item.user} /></td>}
-      <td><ProcessorName id={item.processor} title={processors.title(item.processor)} /><div className="subline">{processors.language(item.processor, item.language)?.title ?? item.language}</div></td>
-      <td><Status status={item.status} />{item.status === 'accepted' && item.format !== 'guess' && !item.comparable && <div className="subline">{t('Вне текущих рекордов')}</div>}</td>
-      <td className="num mono">{item.format === 'guess' ? item.status === 'accepted' ? '+' : '-' : <ScoreValue score={item.status === 'accepted' ? item.score : null} />}</td>
-      <td><time dateTime={item.createdAt}>{dateTime(item.createdAt)}</time></td>
+      {showUser && <td className="sub-user"><UserLink user={item.user} /></td>}
+      <td className="sub-processor"><ProcessorName id={item.processor} title={processors.title(item.processor)} /><div className="subline">{processors.language(item.processor, item.language)?.title ?? item.language}</div></td>
+      <td className="sub-verdict"><Status status={item.status} />{item.status === 'accepted' && item.format !== 'guess' && !item.comparable && <div className="subline">{t('Вне текущих рекордов')}</div>}</td>
+      <td className="num mono sub-score">{item.format === 'guess' ? item.status === 'accepted' ? '+' : '-' : <ScoreValue score={item.status === 'accepted' ? item.score : null} />}</td>
+      <td className="sub-time"><time dateTime={item.createdAt}>{dateTime(item.createdAt)}</time></td>
     </tr>)}</tbody>
   </table></div>;
 }
