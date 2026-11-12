@@ -1,14 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 232" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" role="img" aria-label="Shades of Gray on RISC-V: three accepted solutions of one problem">
-  <rect x="0.5" y="0.5" width="879" height="231" rx="12" fill="#1e1f22" stroke="#393b40"/>
-  <text x="32" y="42" fill="#dfe1e5" font-size="17" font-weight="600">Shades of Gray on RISC-V: three accepted solutions of one problem</text>
-  <text x="32" y="66" fill="#9da0a8" font-size="13">The score is instructions plus a penalty for cache misses. Smaller is better.</text>
-  <text x="32" y="110" fill="#bcbec4" font-size="14">Plain loop</text>
-  <rect x="270" y="96" width="430" height="18" rx="3" fill="#4e5157"/>
-  <text x="712" y="110" fill="#dfe1e5" font-size="14" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">1,964,724</text>
-  <text x="32" y="150" fill="#bcbec4" font-size="14">Hand-unrolled loop</text>
-  <rect x="270" y="136" width="326" height="18" rx="3" fill="#4e5157"/>
-  <text x="608" y="150" fill="#dfe1e5" font-size="14" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">1,488,193</text>
-  <text x="32" y="190" fill="#bcbec4" font-size="14">RVV vector instructions</text>
-  <rect x="270" y="176" width="17" height="18" rx="3" fill="#3574f0"/>
-  <text x="299" y="190" fill="#dfe1e5" font-size="14" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">76,711<tspan fill="#6b9bfa" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-weight="600" dx="14">25 times smaller</tspan></text>
+  <rect x="0.5" y="0.5" width="879" height="231" rx="12" fill="#171a22" stroke="#2a2f3c"/>
+  <text x="32" y="42" fill="#eef1f7" font-size="17" font-weight="600">Shades of Gray on RISC-V: three accepted solutions of one problem</text>
+  <text x="32" y="66" fill="#9aa3b5" font-size="13">The score is instructions plus a penalty for cache misses. Smaller is better.</text>
+  <text x="32" y="110" fill="#c6cddc" font-size="14">Plain loop</text>
+  <rect x="270" y="96" width="430" height="18" rx="3" fill="#343a4a"/>
+  <text x="712" y="110" fill="#eef1f7" font-size="14" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">1,964,724</text>
+  <text x="32" y="150" fill="#c6cddc" font-size="14">Hand-unrolled loop</text>
+  <rect x="270" y="136" width="326" height="18" rx="3" fill="#343a4a"/>
+  <text x="608" y="150" fill="#eef1f7" font-size="14" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">1,488,193</text>
+  <text x="32" y="190" fill="#c6cddc" font-size="14">RVV vector instructions</text>
+  <rect x="270" y="176" width="17" height="18" rx="3" fill="#2f6ae6"/>
+  <text x="299" y="190" fill="#eef1f7" font-size="14" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace">76,711<tspan fill="#7fb0ff" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-weight="600" dx="14">25 times smaller</tspan></text>
 </svg>
