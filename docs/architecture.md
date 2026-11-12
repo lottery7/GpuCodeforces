@@ -1,6 +1,6 @@
 # Архитектура
 
-UML-диаграммы текущего состояния проекта. Подробности — в [README](../README.md),
+UML-диаграммы текущего состояния проекта. Подробности — в [development.md](development.md),
 [docs/backend/submissions.md](backend/submissions.md) и [judge/README.md](../judge/README.md).
 
 ## Развёртывание
